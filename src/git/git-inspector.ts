@@ -4,7 +4,7 @@ import type { GitSnapshot } from "../domain/types.js";
 
 const MAX_OUTPUT = 1024 * 1024;
 
-function git(cwd: string, args: string[], allowFailure = false): string {
+function git(cwd: string, args: string[], allowFailure = false, input?: string): string {
   try {
     return execFileSync("git", args, {
       cwd,
@@ -12,7 +12,8 @@ function git(cwd: string, args: string[], allowFailure = false): string {
       timeout: 10_000,
       maxBuffer: MAX_OUTPUT,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      ...(input === undefined ? {} : { input }),
     }).trim();
   } catch (error) {
     if (allowFailure) return "";
@@ -38,11 +39,29 @@ export function inspectGit(repositoryRoot: string): GitSnapshot {
   };
 }
 
-export function captureDiff(repositoryRoot: string, maxBytes = 65_536): { content: string; truncated: boolean } {
+export function captureDiff(
+  repositoryRoot: string,
+  baselineHead: string | null,
+  finalHead: string | null,
+  maxBytes = 65_536,
+): { content: string; truncated: boolean; sources: string[] } {
+  const sections: Array<{ source: string; content: string }> = [];
+  if (finalHead && baselineHead !== finalHead) {
+    const emptyTree = baselineHead ? null : git(repositoryRoot, ["mktree"], true, "");
+    const committed = git(
+      repositoryRoot,
+      ["diff", "--no-ext-diff", "--unified=3", baselineHead ?? emptyTree, finalHead].filter((value): value is string => Boolean(value)),
+      true,
+    );
+    if (committed) sections.push({ source: "committed", content: committed });
+  }
   const working = git(repositoryRoot, ["diff", "--no-ext-diff", "--unified=3"], true);
   const staged = git(repositoryRoot, ["diff", "--cached", "--no-ext-diff", "--unified=3"], true);
-  const content = [working, staged].filter(Boolean).join("\n\n--- staged ---\n\n");
+  if (working) sections.push({ source: "working", content: working });
+  if (staged) sections.push({ source: "staged", content: staged });
+  const content = sections.map((section) => `--- ${section.source} ---\n${section.content}`).join("\n\n");
+  const sources = sections.map((section) => section.source);
   const buffer = Buffer.from(content, "utf8");
-  if (buffer.length <= maxBytes) return { content, truncated: false };
-  return { content: buffer.subarray(0, maxBytes).toString("utf8"), truncated: true };
+  if (buffer.length <= maxBytes) return { content, truncated: false, sources };
+  return { content: buffer.subarray(0, maxBytes).toString("utf8"), truncated: true, sources };
 }

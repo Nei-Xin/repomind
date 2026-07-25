@@ -99,13 +99,13 @@ export class RepositoryMemoryCore {
     }
 
     const session = db.raw.prepare(
-      "SELECT status FROM sessions WHERE id=? AND repository_id=?",
-    ).get(input.sessionId, this.context.marker.projectId) as { status: string } | undefined;
+      "SELECT status, baseline_head FROM sessions WHERE id=? AND repository_id=?",
+    ).get(input.sessionId, this.context.marker.projectId) as { status: string; baseline_head: string | null } | undefined;
     if (!session) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
     if (session.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
 
     const finalSnapshot = inspectGit(this.context.root);
-    const diff = captureDiff(this.context.root);
+    const diff = captureDiff(this.context.root, session.baseline_head, finalSnapshot.head);
     const files = extractFiles(finalSnapshot.status);
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
@@ -113,7 +113,7 @@ export class RepositoryMemoryCore {
       const evidenceIds: string[] = [];
       evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, { remainingWork: input.remainingWork ?? [] }, null));
       evidenceIds.push(this.insertEvidence(input.sessionId, "git_snapshot", JSON.stringify(finalSnapshot), { phase: "final" }, finalSnapshot.head));
-      if (diff.content) evidenceIds.push(this.insertEvidence(input.sessionId, "git_diff", diff.content, { truncated: diff.truncated, files }, finalSnapshot.head));
+      if (diff.content) evidenceIds.push(this.insertEvidence(input.sessionId, "git_diff", diff.content, { truncated: diff.truncated, sources: diff.sources, files }, finalSnapshot.head));
 
       const testEvidence = new Map<string, string>();
       for (const test of input.tests ?? []) {

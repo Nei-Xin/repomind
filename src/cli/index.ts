@@ -7,6 +7,7 @@ import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
 import { runMcpServer } from "../mcp/server.js";
+import { stringifyCliJson } from "./json.js";
 
 const HELP = `RepoMind 0.1.0
 
@@ -51,7 +52,7 @@ function required(value: string | undefined, flag: string): string {
 }
 
 function output(value: unknown): void {
-  if (values.json || typeof value !== "string") console.log(JSON.stringify(value, null, 2));
+  if (values.json || typeof value !== "string") console.log(stringifyCliJson(value));
   else console.log(value);
 }
 
@@ -134,6 +135,6 @@ main().catch((error: unknown) => {
   const payload = error instanceof RepoMindError
     ? { code: error.code, message: error.message, details: error.details }
     : { code: "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) };
-  console.error(values.json ? JSON.stringify(payload) : `${payload.code}: ${payload.message}`);
+  console.error(values.json ? stringifyCliJson(payload) : `${payload.code}: ${payload.message}`);
   process.exitCode = 1;
 });

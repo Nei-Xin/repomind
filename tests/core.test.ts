@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { initializeRepository } from "../src/repository.js";
-import { createTestRepository } from "./helpers.js";
+import { createTestRepository, git } from "./helpers.js";
 
 describe("repository memory core", () => {
   let repository: string;
@@ -86,6 +86,57 @@ describe("repository memory core", () => {
       second.close();
     } finally {
       rmSync(otherRepository, { recursive: true, force: true });
+    }
+  });
+
+  it("captures commits created between the baseline and final HEAD", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const started = core.startSession({ task: "Document committed migration behavior" });
+    writeFileSync(join(repository, "README.txt"), "initial\ncommitted migration validation\n", "utf8");
+    git(repository, "add", "README.txt");
+    git(repository, "commit", "-m", "document migration validation");
+
+    const committed = core.commitSession({
+      sessionId: started.sessionId,
+      idempotencyKey: "committed-diff-1",
+      status: "success",
+      summary: "Documented committed migration validation.",
+    });
+    expect(committed.evidenceCreated).toBe(3);
+    const memory = core.search("committed migration validation")[0]!;
+    const details = core.inspect(memory.id);
+    const diffEvidence = (details.evidence as Array<Record<string, unknown>>).find((item) => item.kind === "git_diff");
+    expect(diffEvidence?.content_preview).toContain("committed migration validation");
+    expect(JSON.parse(String(diffEvidence?.metadata_json))).toMatchObject({ sources: ["committed"] });
+    core.close();
+  });
+
+  it("captures the complete tree when a session starts before the first Git commit", () => {
+    const emptyRepository = mkdtempSync(join(tmpdir(), "repomind-empty-repo-"));
+    try {
+      git(emptyRepository, "init", "-b", "main");
+      git(emptyRepository, "config", "user.email", "repomind-test@example.invalid");
+      git(emptyRepository, "config", "user.name", "RepoMind Test");
+      initializeRepository(emptyRepository).database.close();
+      const core = new RepositoryMemoryCore(emptyRepository);
+      const started = core.startSession({ task: "Create the repository baseline" });
+      expect(started.baseline.head).toBeNull();
+      writeFileSync(join(emptyRepository, "FIRST.txt"), "first committed content\n", "utf8");
+      git(emptyRepository, "add", ".");
+      git(emptyRepository, "commit", "-m", "initial repository commit");
+      core.commitSession({
+        sessionId: started.sessionId,
+        idempotencyKey: "first-commit-1",
+        status: "success",
+        summary: "Created the initial repository baseline.",
+      });
+      const memory = core.search("initial repository baseline")[0]!;
+      const details = core.inspect(memory.id);
+      const diffEvidence = (details.evidence as Array<Record<string, unknown>>).find((item) => item.kind === "git_diff");
+      expect(diffEvidence?.content_preview).toContain("first committed content");
+      core.close();
+    } finally {
+      rmSync(emptyRepository, { recursive: true, force: true });
     }
   });
 });
