@@ -7,6 +7,7 @@ import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
 import { runMcpServer } from "../mcp/server.js";
+import { VERSION } from "../version.js";
 import { loadDataset } from "../eval/dataset.js";
 import { evaluateDataset } from "../eval/runner.js";
 import { runScenarioSuite } from "../eval/scenarios.js";
@@ -15,7 +16,7 @@ import { stringifyCliJson } from "./json.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
 
-const HELP = `RepoMind 0.3.0
+const HELP = `RepoMind ${VERSION}
 
 Usage:
   repomind init [--repo <path>] [--new-id]

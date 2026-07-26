@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RepositoryMemoryCore } from "../core.js";
 import { RepoMindError } from "../errors.js";
+import { VERSION } from "../version.js";
 
 function result(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
@@ -16,7 +17,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "repomind", version: "0.3.0" });
+  const server = new McpServer({ name: "repomind", version: VERSION });
   const cores = new Map<string, RepositoryMemoryCore>();
   const sessionRepositories = new Map<string, string>();
   const memoryRepositories = new Map<string, string>();
