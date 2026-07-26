@@ -2,6 +2,12 @@
   "name": "repomind",
   "version": "0.3.0",
   "description": "Evidence-backed repository memory for coding agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nei-Xin/repomind.git"
+  },
+  "homepage": "https://github.com/Nei-Xin/repomind#readme",
+  "bugs": "https://github.com/Nei-Xin/repomind/issues",
   "type": "module",
   "bin": {
     "repomind": "dist/cli/index.js"
