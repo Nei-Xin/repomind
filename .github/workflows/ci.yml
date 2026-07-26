@@ -21,3 +21,23 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  bench:
+    # The full fixture set replays a Git repository per fixture per arm, which
+    # is too slow for the default suite; npm test covers a smoke subset.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run bench
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comparison-report
+          path: comparison-report.json
+          if-no-files-found: ignore

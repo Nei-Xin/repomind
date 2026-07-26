@@ -20,7 +20,8 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "benchmarks"
   ],
   "keywords": [
     "mcp",
@@ -35,7 +36,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/cli/index.js"
+    "start": "node dist/cli/index.js",
+    "bench": "node dist/cli/index.js eval --compare --strict --json > comparison-report.json"
   },
   "engines": {
     "node": ">=22.5.0"

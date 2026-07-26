@@ -5,3 +5,4 @@ coverage/
 *.db-shm
 *.db-wal
 *.log
+comparison-report.json

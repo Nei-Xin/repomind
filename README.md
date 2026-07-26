@@ -107,6 +107,9 @@ Measure retrieval quality and cross-session guarantees (see [`docs/benchmark.md`
 ```bash
 repomind eval --dataset benchmarks/datasets/basic-retrieval.json --json
 repomind eval --scenarios --json
+repomind eval --compare --markdown
 ```
+
+The comparison benchmark scores the context bundle each memory strategy delivers under a fixed token budget, against a no-memory baseline, full-history injection, and flat lexical RAG. It measures context quality, not agent task success — see [`docs/benchmark-comparison.md`](docs/benchmark-comparison.md) for what it deliberately does not prove.
 
 [`docs/architecture.md`](docs/architecture.md) explains how the pieces fit and [`docs/memory-model.md`](docs/memory-model.md) explains what is stored and why; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`docs/troubleshooting.md`](docs/troubleshooting.md) covers error codes and common situations, and [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.
