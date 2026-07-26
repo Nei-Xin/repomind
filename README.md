@@ -109,4 +109,4 @@ repomind eval --dataset benchmarks/datasets/basic-retrieval.json --json
 repomind eval --scenarios --json
 ```
 
-[`docs/architecture.md`](docs/architecture.md) explains how the pieces fit; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.
+[`docs/architecture.md`](docs/architecture.md) explains how the pieces fit and [`docs/memory-model.md`](docs/memory-model.md) explains what is stored and why; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`docs/troubleshooting.md`](docs/troubleshooting.md) covers error codes and common situations, and [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.
