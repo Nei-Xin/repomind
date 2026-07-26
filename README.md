@@ -68,12 +68,13 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes eight tools:
+The MCP server exposes nine tools:
 
 - `repo_session_start`
 - `repo_memory_search`
 - `repo_session_commit`
 - `repo_memory_inspect`
+- `repo_memory_record`
 - `repo_memory_validate`
 - `repo_memory_correct`
 - `repo_memory_invalidate`

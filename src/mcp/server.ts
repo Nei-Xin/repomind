@@ -213,6 +213,40 @@ export function createMcpServer(): McpServer {
   );
 
   server.tool(
+    "repo_memory_record",
+    "Record an explicit repository fact as a manual evidence-backed memory.",
+    {
+      repo_path: z.string().min(1),
+      type: z.enum(["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"]),
+      title: z.string().min(1),
+      content: z.string().min(1),
+      confidence: z.number().min(0).max(1).optional(),
+      scope_type: z.enum(["repository", "module", "path"]).optional(),
+      scope_value: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      related_files: z.array(z.string()).optional(),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).record({
+          type: input.type,
+          title: input.title,
+          content: input.content,
+          ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+          ...(input.scope_type ? { scopeType: input.scope_type } : {}),
+          ...(input.scope_value ? { scopeValue: input.scope_value } : {}),
+          ...(input.tags ? { tags: input.tags } : {}),
+          ...(input.related_files ? { relatedFiles: input.related_files } : {}),
+        });
+        memoryRepositories.set(value.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
     "repo_memory_forget",
     "Permanently delete a memory and, by default, any evidence used only by that memory. Requires confirm=true.",
     {

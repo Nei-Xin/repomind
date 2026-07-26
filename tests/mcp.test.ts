@@ -39,11 +39,24 @@ describe("MCP server", () => {
         "repo_memory_forget",
         "repo_memory_inspect",
         "repo_memory_invalidate",
+        "repo_memory_record",
         "repo_memory_search",
         "repo_memory_validate",
         "repo_session_commit",
         "repo_session_start",
       ]);
+      const recordResponse = await client.callTool({
+        name: "repo_memory_record",
+        arguments: {
+          repo_path: repository,
+          type: "convention",
+          title: "Recorded through MCP",
+          content: "Facts can be recorded without an LLM through the MCP protocol.",
+        },
+      });
+      expect(recordResponse.isError).not.toBe(true);
+      const recordText = recordResponse.content[0]?.type === "text" ? recordResponse.content[0].text : "{}";
+      expect(JSON.parse(recordText)).toMatchObject({ id: expect.stringMatching(/^mem_/), stored: true, conflicts: [] });
       const response = await client.callTool({
         name: "repo_session_start",
         arguments: { task: "Inspect SQLite conventions", repo_path: repository, client_name: "vitest" },
