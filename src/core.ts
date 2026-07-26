@@ -24,7 +24,7 @@ import type {
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
-import { redactSecrets } from "./security/redaction.js";
+import { redactDeep, redactSecrets } from "./security/redaction.js";
 
 type SqlValue = string | number | null;
 
@@ -44,6 +44,18 @@ function parseStatusReason(value: unknown): MemoryStatusReason | null {
   } catch {
     return null;
   }
+}
+
+/** Files touched within this window are re-hashed rather than trusted; see
+ * the racy-clean problem Git solves the same way. */
+const RACY_MTIME_WINDOW_MS = 2_000;
+
+interface StoreMemoryResult {
+  id: string;
+  /** True when this call made the memory live: newly created or reactivated. */
+  stored: boolean;
+  reactivated: boolean;
+  conflicts: string[];
 }
 
 const DECLARATIVE_TYPES: ReadonlySet<MemoryType> = new Set([
@@ -105,6 +117,8 @@ export class RepositoryMemoryCore {
     if (!input.task.trim()) throw new RepoMindError("INVALID_INPUT", "task must not be empty");
     const snapshot = inspectGit(this.context.root);
     const sessionId = `ses_${randomUUID()}`;
+    const rawTask = input.task.trim();
+    const task = redactSecrets(rawTask).content;
     const now = Date.now();
     const db = this.context.database;
     db.transaction(() => {
@@ -114,17 +128,18 @@ export class RepositoryMemoryCore {
         VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
       `).run(
         sessionId, this.context.marker.projectId, this.context.checkoutId,
-        input.clientName ?? null, input.clientSessionId ?? null, input.task.trim(),
+        input.clientName ?? null, input.clientSessionId ?? null, task,
         snapshot.branch, snapshot.head, snapshot.dirty ? 1 : 0, now,
       );
-      this.insertEvidence(sessionId, "user_requirement", input.task.trim(), {}, null);
+      // Passed unredacted so insertEvidence records how many secrets it removed.
+      this.insertEvidence(sessionId, "user_requirement", rawTask, {}, null);
       this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline" }, snapshot.head);
     });
     return {
       sessionId,
       repositoryId: this.context.marker.projectId,
       baseline: snapshot,
-      memories: this.search(input.task, { limit: input.maxMemories ?? 5 }),
+      memories: this.search(task, { limit: input.maxMemories ?? 5 }),
     };
   }
 
@@ -209,18 +224,19 @@ export class RepositoryMemoryCore {
     });
   }
 
-  record(input: RecordMemoryInput): { id: string; stored: boolean; conflicts: string[] } {
+  record(input: RecordMemoryInput): StoreMemoryResult {
     if (!input.title.trim() || !input.content.trim()) throw new RepoMindError("INVALID_INPUT", "title and content must not be empty");
-    let result = { id: "", stored: false, conflicts: [] as string[] };
+    let result: StoreMemoryResult = { id: "", stored: false, reactivated: false, conflicts: [] };
     this.context.database.transaction(() => {
       const evidenceId = this.insertEvidence(null, "manual", input.content, { title: input.title }, null);
-      result = this.storeMemory(input, "manual", [evidenceId]);
+      result = this.storeMemory(input, "manual", [evidenceId], { reactivateRetired: true });
     });
     return result;
   }
 
   validateMemory(input: ValidateMemoryInput): ValidateMemoryResult {
     if (!input.memoryId.trim() || !input.reason.trim()) throw new RepoMindError("INVALID_INPUT", "memoryId and reason must not be empty");
+    const reason = redactSecrets(input.reason).content.trim();
     this.refreshStaleMemoryStates(input.memoryId);
     const db = this.context.database.raw;
     const memory = db.prepare("SELECT status, status_reason_json FROM memories WHERE id=? AND repository_id=?")
@@ -231,14 +247,21 @@ export class RepositoryMemoryCore {
     }
     const files = db.prepare("SELECT file_path FROM memory_files WHERE memory_id=? ORDER BY file_path")
       .all(input.memoryId) as Array<{ file_path: string }>;
-    const currentFiles = files.map((file) => ({ filePath: file.file_path, fileHash: this.currentFileHash(file.file_path) }));
+    const currentFiles = files.map((file) => {
+      const fingerprintOfFile = this.fileFingerprint(file.file_path);
+      return { filePath: file.file_path, fileHash: fingerprintOfFile.hash, size: fingerprintOfFile.size, mtimeMs: fingerprintOfFile.mtimeMs };
+    });
+    const reportedFiles = currentFiles.map((file) => ({ filePath: file.filePath, fileHash: file.fileHash }));
     const snapshot = inspectGit(this.context.root);
     const now = Date.now();
     this.context.database.transaction(() => {
-      const evidenceId = this.insertEvidence(null, "validation", input.reason.trim(), { memoryId: input.memoryId, files: currentFiles }, snapshot.head);
+      const evidenceId = this.insertEvidence(null, "validation", reason, {
+        memoryId: input.memoryId,
+        files: reportedFiles,
+      }, snapshot.head);
       for (const file of currentFiles) {
-        db.prepare("UPDATE memory_files SET file_hash=? WHERE memory_id=? AND file_path=?")
-          .run(file.fileHash, input.memoryId, file.filePath);
+        db.prepare("UPDATE memory_files SET file_hash=?, file_size=?, file_mtime_ms=? WHERE memory_id=? AND file_path=?")
+          .run(file.fileHash, file.size, file.mtimeMs, input.memoryId, file.filePath);
       }
       db.prepare("UPDATE memories SET status='active', status_reason_json=NULL, last_validated_at=?, updated_at=? WHERE id=?")
         .run(now, now, input.memoryId);
@@ -250,12 +273,12 @@ export class RepositoryMemoryCore {
         `aud_${randomUUID()}`,
         input.memoryId,
         JSON.stringify({ status: memory.status, statusReason: parseStatusReason(memory.status_reason_json) }),
-        JSON.stringify({ status: "active", lastValidatedAt: now, files: currentFiles }),
-        input.reason.trim(),
+        JSON.stringify({ status: "active", lastValidatedAt: now, files: reportedFiles }),
+        reason,
         now,
       );
     });
-    return { memoryId: input.memoryId, status: "active", lastValidatedAt: now, files: currentFiles };
+    return { memoryId: input.memoryId, status: "active", lastValidatedAt: now, files: reportedFiles };
   }
 
   correctMemory(input: CorrectMemoryInput): CorrectMemoryResult {
@@ -265,6 +288,7 @@ export class RepositoryMemoryCore {
     if (input.confidence !== undefined && (input.confidence < 0 || input.confidence > 1)) {
       throw new RepoMindError("INVALID_INPUT", "confidence must be between 0 and 1");
     }
+    const reason = redactSecrets(input.reason).content.trim();
     this.refreshStaleMemoryStates(input.memoryId);
     const db = this.context.database.raw;
     const memory = db.prepare("SELECT * FROM memories WHERE id=? AND repository_id=?")
@@ -292,19 +316,24 @@ export class RepositoryMemoryCore {
     const snapshot = inspectGit(this.context.root);
     let replacementMemoryId = "";
     let replacementStored = false;
+    let replacementConflicts: string[] = [];
     this.context.database.transaction(() => {
-      const evidenceId = this.insertEvidence(null, "correction", input.reason.trim(), { correctedMemoryId: input.memoryId }, snapshot.head);
+      const evidenceId = this.insertEvidence(null, "correction", reason, { correctedMemoryId: input.memoryId }, snapshot.head);
       const replacementResult = this.storeMemory(replacement, "manual", [evidenceId], { ignoreConflictsWith: input.memoryId });
       replacementStored = replacementResult.stored;
       replacementMemoryId = replacementResult.id;
+      replacementConflicts = replacementResult.conflicts;
+      // The replacement may legitimately be uncertain when it still contradicts
+      // another live memory; only a replacement that is itself retired is wrong.
       const replacementStatus = db.prepare("SELECT status FROM memories WHERE id=? AND repository_id=?")
         .get(replacementMemoryId, this.context.marker.projectId) as { status: string } | undefined;
-      if (!replacementStatus || replacementStatus.status !== "active") {
-        throw new RepoMindError("INVALID_INPUT", "Correction target must be an active memory");
+      if (!replacementStatus) throw new RepoMindError("MEMORY_NOT_FOUND", `Replacement memory ${replacementMemoryId} was not found`);
+      if (replacementStatus.status === "superseded" || replacementStatus.status === "invalid") {
+        throw new RepoMindError("INVALID_INPUT", `The corrected content matches memory ${replacementMemoryId}, which is ${replacementStatus.status}; forget it first or use different content`);
       }
       db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(input.memoryId, evidenceId);
       const now = Date.now();
-      const statusReason: MemoryStatusReason = { kind: "superseded", replacementMemoryId, reason: input.reason.trim() };
+      const statusReason: MemoryStatusReason = { kind: "superseded", replacementMemoryId, reason };
       db.prepare("UPDATE memories SET status='superseded', status_reason_json=?, updated_at=? WHERE id=?")
         .run(stableJson(statusReason), now, input.memoryId);
       db.prepare(`
@@ -319,11 +348,11 @@ export class RepositoryMemoryCore {
         input.memoryId,
         JSON.stringify({ status: currentStatus, statusReason: parseStatusReason(memory.status_reason_json) }),
         JSON.stringify({ status: "superseded", statusReason }),
-        input.reason.trim(),
+        reason,
         now,
       );
     });
-    return { memoryId: input.memoryId, status: "superseded", replacementMemoryId, replacementStored };
+    return { memoryId: input.memoryId, status: "superseded", replacementMemoryId, replacementStored, conflicts: replacementConflicts };
   }
 
   invalidateMemory(input: InvalidateMemoryInput): InvalidateMemoryResult {
@@ -338,9 +367,10 @@ export class RepositoryMemoryCore {
     }
     const snapshot = inspectGit(this.context.root);
     const now = Date.now();
-    const statusReason: MemoryStatusReason = { kind: "invalid", reason: input.reason.trim() };
+    const reason = redactSecrets(input.reason).content.trim();
+    const statusReason: MemoryStatusReason = { kind: "invalid", reason };
     this.context.database.transaction(() => {
-      const evidenceId = this.insertEvidence(null, "invalidation", input.reason.trim(), { memoryId: input.memoryId }, snapshot.head);
+      const evidenceId = this.insertEvidence(null, "invalidation", reason, { memoryId: input.memoryId }, snapshot.head);
       db.prepare("INSERT INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(input.memoryId, evidenceId);
       db.prepare("UPDATE memories SET status='invalid', status_reason_json=?, updated_at=? WHERE id=?")
         .run(stableJson(statusReason), now, input.memoryId);
@@ -352,7 +382,7 @@ export class RepositoryMemoryCore {
         input.memoryId,
         JSON.stringify({ status: memory.status, statusReason: parseStatusReason(memory.status_reason_json) }),
         JSON.stringify({ status: "invalid", statusReason }),
-        input.reason.trim(),
+        reason,
         now,
       );
     });
@@ -384,7 +414,7 @@ export class RepositoryMemoryCore {
       db.prepare(`
         INSERT INTO forget_log(id, repository_id, memory_id, memory_type, scope, evidence_deleted, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(`fgt_${randomUUID()}`, this.context.marker.projectId, input.memoryId, memory.type, scope, evidenceDeleted, input.reason.trim(), Date.now());
+      `).run(`fgt_${randomUUID()}`, this.context.marker.projectId, input.memoryId, memory.type, scope, evidenceDeleted, redactSecrets(input.reason).content.trim(), Date.now());
     });
     return { memoryId: input.memoryId, scope, evidenceDeleted };
   }
@@ -530,7 +560,9 @@ export class RepositoryMemoryCore {
   private insertEvidence(sessionId: string | null, kind: EvidenceKind, content: string, metadata: Record<string, unknown>, commitHash: string | null): string {
     const id = `evd_${randomUUID()}`;
     const redacted = redactSecrets(content);
-    const enrichedMetadata = redacted.redactions ? { ...metadata, redactions: redacted.redactions } : metadata;
+    const redactedMetadata = redactDeep(metadata);
+    const totalRedactions = redacted.redactions + redactedMetadata.redactions;
+    const enrichedMetadata = totalRedactions ? { ...redactedMetadata.value, redactions: totalRedactions } : redactedMetadata.value;
     this.context.database.raw.prepare(`
       INSERT INTO evidence(id, repository_id, session_id, kind, content, content_hash, commit_hash, metadata_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -547,10 +579,28 @@ export class RepositoryMemoryCore {
     }));
   }
 
-  private currentFileHash(filePath: string): string | null {
+  /** Resolves a repository-relative path, refusing anything outside the root. */
+  private resolveInsideRoot(filePath: string): string | null {
     const absolute = resolve(this.context.root, filePath);
     const fromRoot = relative(this.context.root, absolute);
     if (!fromRoot || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) return null;
+    return absolute;
+  }
+
+  private fileStat(filePath: string): { size: number; mtimeMs: number } | null {
+    const absolute = this.resolveInsideRoot(filePath);
+    if (!absolute) return null;
+    try {
+      const stats = statSync(absolute);
+      return stats.isFile() ? { size: stats.size, mtimeMs: Math.trunc(stats.mtimeMs) } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private currentFileHash(filePath: string): string | null {
+    const absolute = this.resolveInsideRoot(filePath);
+    if (!absolute) return null;
     try {
       return existsSync(absolute) && statSync(absolute).isFile() ? hash(readFileSync(absolute)) : null;
     } catch {
@@ -558,10 +608,16 @@ export class RepositoryMemoryCore {
     }
   }
 
+  private fileFingerprint(filePath: string): { hash: string | null; size: number | null; mtimeMs: number | null } {
+    const stat = this.fileStat(filePath);
+    if (!stat) return { hash: null, size: null, mtimeMs: null };
+    return { hash: this.currentFileHash(filePath), size: stat.size, mtimeMs: stat.mtimeMs };
+  }
+
   private refreshStaleMemoryStates(memoryId?: string): void {
     const db = this.context.database.raw;
     const rows = db.prepare(`
-      SELECT m.id, m.status, m.status_reason_json, mf.file_path, mf.file_hash
+      SELECT m.id, m.status, m.status_reason_json, mf.file_path, mf.file_hash, mf.file_size, mf.file_mtime_ms
       FROM memories m JOIN memory_files mf ON mf.memory_id=m.id
       WHERE m.repository_id=? AND m.status IN ('active','uncertain')${memoryId ? " AND m.id=?" : ""}
       ORDER BY m.id, mf.file_path
@@ -571,7 +627,10 @@ export class RepositoryMemoryCore {
       status_reason_json: string | null;
       file_path: string;
       file_hash: string | null;
+      file_size: number | null;
+      file_mtime_ms: number | null;
     }>;
+    if (!rows.length) return;
     const grouped = new Map<string, typeof rows>();
     for (const row of rows) {
       const group = grouped.get(row.id) ?? [];
@@ -579,19 +638,46 @@ export class RepositoryMemoryCore {
       grouped.set(row.id, group);
     }
 
+    // One file referenced by many memories must be read at most once per call,
+    // and a file whose size and mtime still match its recorded values is not
+    // re-hashed at all.
+    const hashCache = new Map<string, string | null>();
+    const currentHashOf = (filePath: string): string | null => {
+      if (hashCache.has(filePath)) return hashCache.get(filePath)!;
+      const value = this.currentFileHash(filePath);
+      hashCache.set(filePath, value);
+      return value;
+    };
+    const statCache = new Map<string, { size: number; mtimeMs: number } | null>();
+    const statOf = (filePath: string): { size: number; mtimeMs: number } | null => {
+      if (statCache.has(filePath)) return statCache.get(filePath)!;
+      const value = this.fileStat(filePath);
+      statCache.set(filePath, value);
+      return value;
+    };
+
+    const checkedAt = Date.now();
     const updates: Array<{ id: string; previousStatus: string; previousReason: string | null; reason: MemoryStatusReason & { kind: "stale_files" } }> = [];
+    const backfill: Array<{ memoryId: string; filePath: string; size: number; mtimeMs: number }> = [];
     for (const [id, files] of grouped) {
       const first = files[0]!;
       const existingReason = parseStatusReason(first.status_reason_json);
       if (first.status === "uncertain" && existingReason?.kind !== "stale_files") continue;
       const staleFiles: StaleReason[] = [];
       for (const file of files) {
-        const currentHash = this.currentFileHash(file.file_path);
+        const stat = statOf(file.file_path);
+        // Trust unchanged size+mtime only once the recorded mtime is safely in
+        // the past: an edit landing inside the same filesystem tick can keep
+        // both values identical, so recently touched files are always re-hashed.
+        const raciness = stat ? checkedAt - stat.mtimeMs : 0;
+        if (stat && file.file_hash && file.file_size === stat.size && file.file_mtime_ms === stat.mtimeMs && raciness > RACY_MTIME_WINDOW_MS) continue;
+        const currentHash = stat ? currentHashOf(file.file_path) : null;
         let kind: StaleReason["kind"] | null = null;
         if (file.file_hash && !currentHash) kind = "file_deleted";
         else if (!file.file_hash && currentHash) kind = "file_created";
         else if (file.file_hash && currentHash && file.file_hash !== currentHash) kind = "file_modified";
         if (kind) staleFiles.push({ kind, filePath: file.file_path, expectedHash: file.file_hash, currentHash });
+        else if (stat && currentHash === file.file_hash) backfill.push({ memoryId: id, filePath: file.file_path, size: stat.size, mtimeMs: stat.mtimeMs });
       }
       if (!staleFiles.length) continue;
       const reason = { kind: "stale_files" as const, files: staleFiles };
@@ -599,8 +685,12 @@ export class RepositoryMemoryCore {
       updates.push({ id, previousStatus: first.status, previousReason: first.status_reason_json, reason });
     }
 
-    if (!updates.length) return;
+    if (!updates.length && !backfill.length) return;
     this.context.database.transaction(() => {
+      for (const entry of backfill) {
+        db.prepare("UPDATE memory_files SET file_size=?, file_mtime_ms=? WHERE memory_id=? AND file_path=?")
+          .run(entry.size, entry.mtimeMs, entry.memoryId, entry.filePath);
+      }
       for (const update of updates) {
         const now = Date.now();
         const reasonJson = stableJson(update.reason);
@@ -625,33 +715,63 @@ export class RepositoryMemoryCore {
     input: RecordMemoryInput,
     source: "extracted" | "manual",
     evidenceIds: string[],
-    options: { ignoreConflictsWith?: string } = {},
-  ): { id: string; stored: boolean; conflicts: string[] } {
+    options: { ignoreConflictsWith?: string; reactivateRetired?: boolean } = {},
+  ): StoreMemoryResult {
     const db = this.context.database.raw;
     const fingerprint = this.memoryFingerprint(input);
-    const existing = db.prepare("SELECT id FROM memories WHERE repository_id=? AND fingerprint=?")
-      .get(this.context.marker.projectId, fingerprint) as { id: string } | undefined;
-    if (existing) {
-      for (const evidenceId of evidenceIds) db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId);
-      return { id: existing.id, stored: false, conflicts: [] };
-    }
-    const id = `mem_${randomUUID()}`;
-    const now = Date.now();
-    const tags = [...new Set(input.tags ?? [])];
-    const files = [...new Set(input.relatedFiles ?? [])];
+    const tags = [...new Set((input.tags ?? []).map((tag) => redactSecrets(tag).content.trim()).filter(Boolean))];
+    const files = [...new Set((input.relatedFiles ?? []).map((file) => redactSecrets(file).content.trim()).filter(Boolean))];
     const title = redactSecrets(input.title).content.trim();
     const content = redactSecrets(input.content).content.trim();
     const scopeType = input.scopeType ?? "repository";
     const scopeValue = input.scopeValue ?? null;
-    let conflicting: Array<{ id: string; status: string; status_reason_json: string | null }> = [];
-    if (DECLARATIVE_TYPES.has(input.type)) {
-      conflicting = db.prepare(`
+    const findConflicts = (excludeId: string): Array<{ id: string; status: string; status_reason_json: string | null }> => {
+      if (!DECLARATIVE_TYPES.has(input.type)) return [];
+      const rows = db.prepare(`
         SELECT id, status, status_reason_json FROM memories
         WHERE repository_id=? AND type=? AND scope_type=? AND scope_value IS ?
-          AND status IN ('active','uncertain') AND lower(trim(title))=? AND fingerprint<>?
-      `).all(this.context.marker.projectId, input.type, scopeType, scopeValue, title.toLowerCase(), fingerprint) as typeof conflicting;
-      if (options.ignoreConflictsWith) conflicting = conflicting.filter((row) => row.id !== options.ignoreConflictsWith);
+          AND status IN ('active','uncertain') AND lower(trim(title))=? AND id<>?
+      `).all(this.context.marker.projectId, input.type, scopeType, scopeValue, title.toLowerCase(), excludeId) as
+        Array<{ id: string; status: string; status_reason_json: string | null }>;
+      return options.ignoreConflictsWith ? rows.filter((row) => row.id !== options.ignoreConflictsWith) : rows;
+    };
+
+    const existing = db.prepare("SELECT id, status FROM memories WHERE repository_id=? AND fingerprint=?")
+      .get(this.context.marker.projectId, fingerprint) as { id: string; status: string } | undefined;
+    if (existing) {
+      const retired = existing.status === "superseded" || existing.status === "invalid";
+      if (!retired) {
+        for (const evidenceId of evidenceIds) db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId);
+        return { id: existing.id, stored: false, reactivated: false, conflicts: [] };
+      }
+      // A retired memory owns its content fingerprint forever (UNIQUE constraint).
+      // Directly recording that fact again is an explicit assertion that it
+      // holds, so revive it with an audit trail. Extraction and correction do
+      // not: neither expresses intent to resurrect a memory someone retired.
+      if (!options.reactivateRetired) return { id: existing.id, stored: false, reactivated: false, conflicts: [] };
+      const revivedAt = Date.now();
+      for (const evidenceId of evidenceIds) db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId);
+      db.prepare("UPDATE memories SET status='active', status_reason_json=NULL, updated_at=?, last_validated_at=? WHERE id=?")
+        .run(revivedAt, revivedAt, existing.id);
+      db.prepare(`
+        INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+        VALUES (?, ?, 'memory_reactivated', ?, ?, ?, ?)
+      `).run(
+        `aud_${randomUUID()}`,
+        existing.id,
+        JSON.stringify({ status: existing.status }),
+        JSON.stringify({ status: "active", source }),
+        `Manually recorded again while ${existing.status}`,
+        revivedAt,
+      );
+      const revivedConflicts = findConflicts(existing.id);
+      if (revivedConflicts.length) this.markConflicts(existing.id, revivedConflicts);
+      return { id: existing.id, stored: true, reactivated: true, conflicts: revivedConflicts.map((row) => row.id) };
     }
+
+    const id = `mem_${randomUUID()}`;
+    const now = Date.now();
+    const conflicting = findConflicts(id);
     db.prepare(`
       INSERT INTO memories(id, repository_id, type, title, content, confidence, status, scope_type, scope_value,
         source, tags_json, fingerprint, created_at, updated_at, last_validated_at)
@@ -660,15 +780,16 @@ export class RepositoryMemoryCore {
       scopeType, scopeValue, source, JSON.stringify(tags), fingerprint, now, now, now);
     for (const evidenceId of evidenceIds) db.prepare("INSERT INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(id, evidenceId);
     for (const file of files) {
-      const fileHash = this.currentFileHash(file);
-      db.prepare("INSERT INTO memory_files(memory_id, file_path, file_hash) VALUES (?, ?, ?)").run(id, file, fileHash);
+      const fingerprintOfFile = this.fileFingerprint(file);
+      db.prepare("INSERT INTO memory_files(memory_id, file_path, file_hash, file_size, file_mtime_ms) VALUES (?, ?, ?, ?, ?)")
+        .run(id, file, fingerprintOfFile.hash, fingerprintOfFile.size, fingerprintOfFile.mtimeMs);
     }
     db.prepare("INSERT INTO memory_fts(memory_id, repository_id, title, content, search_tokens) VALUES (?, ?, ?, ?, ?)")
       .run(id, this.context.marker.projectId, title, content, searchTokens(title, content, tags, files));
     db.prepare("INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at) VALUES (?, ?, 'created', ?, ?, ?)")
       .run(`aud_${randomUUID()}`, id, JSON.stringify({ status: "active", source }), `${source} memory created`, now);
     if (conflicting.length) this.markConflicts(id, conflicting);
-    return { id, stored: true, conflicts: conflicting.map((row) => row.id) };
+    return { id, stored: true, reactivated: false, conflicts: conflicting.map((row) => row.id) };
   }
 
   private markConflicts(newMemoryId: string, conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>): void {

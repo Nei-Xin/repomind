@@ -51,3 +51,30 @@ export function redactSecrets(content: string): RedactionResult {
   }
   return { content: result, redactions };
 }
+
+export interface DeepRedactionResult<T> {
+  value: T;
+  redactions: number;
+}
+
+/**
+ * Redacts every string leaf of a JSON-shaped value. Structured metadata is
+ * redacted leaf by leaf rather than after serialization so a pattern that
+ * spans a JSON escape sequence cannot corrupt the document.
+ */
+export function redactDeep<T>(value: T): DeepRedactionResult<T> {
+  let redactions = 0;
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") {
+      const result = redactSecrets(node);
+      redactions += result.redactions;
+      return result.content;
+    }
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([key, item]) => [key, walk(item)]));
+    }
+    return node;
+  };
+  return { value: walk(value) as T, redactions };
+}

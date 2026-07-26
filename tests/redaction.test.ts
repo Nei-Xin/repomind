@@ -92,6 +92,75 @@ describe("evidence and memory redaction", () => {
     core.close();
   });
 
+  it("redacts secrets duplicated into evidence metadata, not only content", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const session = core.startSession({ task: "Rotate credentials" });
+    const token = `ghp_${"a".repeat(36)}`;
+    core.commitSession({
+      sessionId: session.sessionId,
+      idempotencyKey: "metadata-1",
+      status: "success",
+      summary: "Rotated the deploy credentials",
+      tests: [{ command: `GITHUB_TOKEN=${token} npm test`, exitCode: 0, summary: "passed" }],
+      commands: [{ command: `curl -H "Authorization: Bearer ${"z".repeat(24)}" https://api.example.com`, exitCode: 0, summary: "ok" }],
+      remainingWork: [`Revoke ${token}`],
+    });
+    const rows = core.context.database.raw.prepare("SELECT kind, content, metadata_json FROM evidence").all() as
+      Array<{ kind: string; content: string; metadata_json: string }>;
+    for (const row of rows) {
+      expect(row.content, `content of ${row.kind}`).not.toContain(token);
+      expect(row.metadata_json, `metadata of ${row.kind}`).not.toContain(token);
+      expect(row.metadata_json, `metadata of ${row.kind}`).not.toContain("zzzzzzzzzzzzzzzzzzzzzzzz");
+    }
+    const testRow = rows.find((row) => row.kind === "test_result")!;
+    expect(JSON.parse(testRow.metadata_json)).toMatchObject({ command: "GITHUB_TOKEN=[REDACTED:github-token] npm test" });
+
+    // Inspect is the path that hands evidence back to an agent.
+    const memory = core.search("Rotated deploy credentials")[0]!;
+    expect(JSON.stringify(core.inspect(memory.id))).not.toContain(token);
+    core.close();
+  });
+
+  it("redacts secrets in the session task and in memory tags and file paths", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const token = `sk-${"b".repeat(24)}`;
+    core.startSession({ task: `Remove the leaked ${token} from CI` });
+    const sessionRow = core.context.database.raw.prepare("SELECT task FROM sessions").get() as { task: string };
+    expect(sessionRow.task).toBe("Remove the leaked [REDACTED:api-key] from CI");
+
+    const recorded = core.record({
+      type: "convention",
+      title: "Tagged convention",
+      content: "Tags must not carry secrets.",
+      tags: [`token:${token}`],
+      relatedFiles: [`config/${token}.json`],
+    });
+    const memoryRow = core.context.database.raw.prepare("SELECT tags_json FROM memories WHERE id=?").get(recorded.id) as { tags_json: string };
+    const ftsRow = core.context.database.raw.prepare("SELECT search_tokens FROM memory_fts WHERE memory_id=?").get(recorded.id) as { search_tokens: string };
+    const fileRow = core.context.database.raw.prepare("SELECT file_path FROM memory_files WHERE memory_id=?").get(recorded.id) as { file_path: string };
+    expect(memoryRow.tags_json).not.toContain(token);
+    expect(ftsRow.search_tokens).not.toContain(token);
+    expect(fileRow.file_path).not.toContain(token);
+    expect(core.search(token.slice(3, 20))).toEqual([]);
+    core.close();
+  });
+
+  it("redacts secrets in governance reasons and the forget tombstone", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const token = `ghp_${"c".repeat(36)}`;
+    const recorded = core.record({ type: "decision", title: "Token decision", content: "Tokens live in the vault." });
+    core.invalidateMemory({ memoryId: recorded.id, reason: `Disproven while rotating ${token}` });
+    const audit = core.context.database.raw.prepare("SELECT reason, next_json FROM memory_audit_log WHERE action='memory_invalidated'").get() as
+      { reason: string; next_json: string };
+    expect(audit.reason).not.toContain(token);
+    expect(audit.next_json).not.toContain(token);
+
+    core.forgetMemory({ memoryId: recorded.id, reason: `Contained ${token}` });
+    const tombstone = core.context.database.raw.prepare("SELECT reason FROM forget_log").get() as { reason: string };
+    expect(tombstone.reason).toBe("Contained [REDACTED:github-token]");
+    core.close();
+  });
+
   it("excludes sensitive files from captured diffs and records the exclusion", () => {
     const core = new RepositoryMemoryCore(repository);
     const session = core.startSession({ task: "Add application configuration" });
