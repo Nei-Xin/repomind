@@ -2,7 +2,7 @@
 
 RepoMind is a local, evidence-backed memory layer for coding agents. It captures repository task evidence, stores reusable L1 memories, and exposes them through a CLI and MCP server.
 
-This repository currently implements the first MVP: repository identity, SQLite/FTS5 storage, Git snapshots, session start/commit, deterministic memory extraction, search, inspection, and four MCP tools.
+The current `v0.3.0` implementation includes repository identity, SQLite/FTS5 storage, Git snapshots, session start/commit, deterministic memory extraction, search, inspection, file-hash stale-memory detection, and audited validation, correction, and invalidation workflows.
 
 ## Requirements
 
@@ -47,6 +47,8 @@ repomind search "SQLite loader" --json
 repomind inspect <memory-id> --json
 ```
 
+When a related file changes or is deleted, later search and inspect calls mark the memory `uncertain` and return a concrete warning plus expected/current file hashes. RepoMind does not automatically delete or invalidate the memory because a file change means the conclusion needs review, not necessarily that it is wrong.
+
 Record an explicit repository fact without an LLM:
 
 ```bash
@@ -66,12 +68,21 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MVP exposes:
+The MCP server exposes seven tools:
 
 - `repo_session_start`
 - `repo_memory_search`
 - `repo_session_commit`
 - `repo_memory_inspect`
+- `repo_memory_validate`
+- `repo_memory_correct`
+- `repo_memory_invalidate`
+
+See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integration.md`](docs/opencode-integration.md), and the client examples under [`examples/`](examples/) for setup and end-to-end verification flows.
+
+See [`docs/stale-detection.md`](docs/stale-detection.md) for the `active` to `uncertain` behavior and a reproducible validation flow.
+
+See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions.
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 
