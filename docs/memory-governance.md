@@ -11,6 +11,12 @@ any status -> physically deleted    forget
 
 Search returns `active` and `uncertain` memories by default. It excludes `superseded` and `invalid` memories, while inspect keeps their complete Evidence, relation, status reason, and Audit history available.
 
+## Conflict detection
+
+When a new declarative memory (`architecture`, `convention`, `decision`, `dependency`, `location`, `requirement`, `risk`) shares the type, scope, and title of an existing `active` or `uncertain` memory but states different content, RepoMind refuses to merge them silently. It stores the new memory, links the pair with a `contradicts` relation, marks both `uncertain` with a `conflict` status reason, and writes `memory_conflict_detected` Audit entries. Search then returns both sides with an explicit conflict warning.
+
+Resolve a conflict with the same governance tools: `validate` the side that holds, `correct` or `invalidate` the side that does not. Episodic types (`command`, `failure`, `solution`) never conflict automatically because repeating them with different outcomes is normal history, not contradiction.
+
 ## Validate
 
 Validation accepts the repository's current related-file hashes as the new baseline. It clears the stale reason, updates `last_validated_at`, adds `validation` Evidence, and writes a `memory_validated` Audit entry.

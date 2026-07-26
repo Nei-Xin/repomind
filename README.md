@@ -2,7 +2,7 @@
 
 RepoMind is a local, evidence-backed memory layer for coding agents. It captures repository task evidence, stores reusable L1 memories, and exposes them through a CLI and MCP server.
 
-The current `v0.3.0` implementation includes repository identity, SQLite/FTS5 storage, Git snapshots, session start/commit, deterministic memory extraction, search, inspection, file-hash stale-memory detection, and audited validation, correction, and invalidation workflows.
+The current implementation includes repository identity, SQLite/FTS5 storage, Git snapshots, session start/commit, deterministic memory extraction, search, inspection, file-hash stale-memory detection, deterministic conflict detection, secret redaction, and audited validation, correction, invalidation, and forget workflows.
 
 ## Requirements
 

@@ -57,6 +57,7 @@ export interface StaleReason {
 
 export type MemoryStatusReason =
   | { kind: "stale_files"; files: StaleReason[] }
+  | { kind: "conflict"; withMemoryId: string }
   | { kind: "superseded"; replacementMemoryId: string; reason: string }
   | { kind: "invalid"; reason: string };
 
@@ -149,7 +150,7 @@ export interface CommitSessionResult {
   sessionId: string;
   status: SessionStatus;
   evidenceCreated: number;
-  memories: { stored: number; skipped: number };
+  memories: { stored: number; skipped: number; conflicts: number };
 }
 
 export interface RecordMemoryInput {

@@ -139,4 +139,21 @@ CREATE TABLE forget_log (
 CREATE INDEX forget_log_repository ON forget_log(repository_id, created_at);
 `,
   },
+  {
+    version: 5,
+    sql: `
+CREATE TABLE memory_relations_v5 (
+  source_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  target_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  relation_type TEXT NOT NULL CHECK(relation_type IN ('supersedes','contradicts')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(source_memory_id, target_memory_id, relation_type),
+  CHECK(source_memory_id <> target_memory_id)
+);
+INSERT INTO memory_relations_v5 SELECT source_memory_id, target_memory_id, relation_type, created_at FROM memory_relations;
+DROP TABLE memory_relations;
+ALTER TABLE memory_relations_v5 RENAME TO memory_relations;
+CREATE INDEX memory_relations_target ON memory_relations(target_memory_id, relation_type);
+`,
+  },
 ] as const;

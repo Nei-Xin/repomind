@@ -37,12 +37,21 @@ function parseStatusReason(value: unknown): MemoryStatusReason | null {
   try {
     const parsed = JSON.parse(value) as Partial<MemoryStatusReason>;
     if (parsed.kind === "stale_files" && Array.isArray(parsed.files)) return parsed as MemoryStatusReason;
+    if (parsed.kind === "conflict" && typeof parsed.withMemoryId === "string") return parsed as MemoryStatusReason;
     if (parsed.kind === "superseded" && typeof parsed.replacementMemoryId === "string" && typeof parsed.reason === "string") return parsed as MemoryStatusReason;
     if (parsed.kind === "invalid" && typeof parsed.reason === "string") return parsed as MemoryStatusReason;
     return null;
   } catch {
     return null;
   }
+}
+
+const DECLARATIVE_TYPES: ReadonlySet<MemoryType> = new Set([
+  "architecture", "convention", "decision", "dependency", "location", "requirement", "risk",
+]);
+
+function conflictWarning(withMemoryId: string): string {
+  return `This memory conflicts with memory ${withMemoryId}; verify before relying on either.`;
 }
 
 function staleWarning(reasons: StaleReason[]): string {
@@ -167,19 +176,21 @@ export class RepositoryMemoryCore {
 
       let stored = 0;
       let skipped = 0;
+      let conflicts = 0;
+      const track = (outcome: { stored: boolean; conflicts: string[] }): void => {
+        outcome.stored ? stored++ : skipped++;
+        conflicts += outcome.conflicts.length;
+      };
       const summaryEvidence = evidenceIds[0];
       for (const decision of input.decisions ?? []) {
-        const wasStored = this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: files }, "extracted", [summaryEvidence!]);
-        wasStored ? stored++ : skipped++;
+        track(this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: files }, "extracted", [summaryEvidence!]));
       }
       for (const test of (input.tests ?? []).filter((item) => item.exitCode === 0)) {
         const content = `${test.command}\n${test.summary}`;
-        const wasStored = this.storeMemory({ type: "command", title: `Verified command: ${test.command}`, content, confidence: 0.95, tags: ["test", "verified-command"], relatedFiles: files }, "extracted", [testEvidence.get(test.command)!]);
-        wasStored ? stored++ : skipped++;
+        track(this.storeMemory({ type: "command", title: `Verified command: ${test.command}`, content, confidence: 0.95, tags: ["test", "verified-command"], relatedFiles: files }, "extracted", [testEvidence.get(test.command)!]));
       }
       if (input.status === "success" && input.summary.trim()) {
-        const wasStored = this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: files }, "extracted", evidenceIds);
-        wasStored ? stored++ : skipped++;
+        track(this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: files }, "extracted", evidenceIds));
       }
 
       db.raw.prepare(`
@@ -189,7 +200,7 @@ export class RepositoryMemoryCore {
         sessionId: input.sessionId,
         status: finalStatus,
         evidenceCreated: evidenceIds.length,
-        memories: { stored, skipped },
+        memories: { stored, skipped, conflicts },
       };
       db.raw.prepare(`
         INSERT INTO commit_receipts(session_id, idempotency_key, request_hash, result_json, created_at) VALUES (?, ?, ?, ?, ?)
@@ -198,17 +209,14 @@ export class RepositoryMemoryCore {
     });
   }
 
-  record(input: RecordMemoryInput): { id: string; stored: boolean } {
+  record(input: RecordMemoryInput): { id: string; stored: boolean; conflicts: string[] } {
     if (!input.title.trim() || !input.content.trim()) throw new RepoMindError("INVALID_INPUT", "title and content must not be empty");
-    let id = "";
-    let stored = false;
+    let result = { id: "", stored: false, conflicts: [] as string[] };
     this.context.database.transaction(() => {
       const evidenceId = this.insertEvidence(null, "manual", input.content, { title: input.title }, null);
-      const result = this.storeMemory(input, "manual", [evidenceId]);
-      stored = result;
-      id = this.memoryIdByFingerprint(input);
+      result = this.storeMemory(input, "manual", [evidenceId]);
     });
-    return { id, stored };
+    return result;
   }
 
   validateMemory(input: ValidateMemoryInput): ValidateMemoryResult {
@@ -286,8 +294,9 @@ export class RepositoryMemoryCore {
     let replacementStored = false;
     this.context.database.transaction(() => {
       const evidenceId = this.insertEvidence(null, "correction", input.reason.trim(), { correctedMemoryId: input.memoryId }, snapshot.head);
-      replacementStored = this.storeMemory(replacement, "manual", [evidenceId]);
-      replacementMemoryId = this.memoryIdByFingerprint(replacement);
+      const replacementResult = this.storeMemory(replacement, "manual", [evidenceId], { ignoreConflictsWith: input.memoryId });
+      replacementStored = replacementResult.stored;
+      replacementMemoryId = replacementResult.id;
       const replacementStatus = db.prepare("SELECT status FROM memories WHERE id=? AND repository_id=?")
         .get(replacementMemoryId, this.context.marker.projectId) as { status: string } | undefined;
       if (!replacementStatus || replacementStatus.status !== "active") {
@@ -430,7 +439,11 @@ export class RepositoryMemoryCore {
         score: Number(row.rank) === 100 ? 0.25 : 1 / (1 + Math.abs(Number(row.rank))),
         ...(row.status === "uncertain"
           ? {
-              warning: staleReason ? staleWarning(staleReason.files) : "This memory may be stale or conflicting.",
+              warning: staleReason
+                ? staleWarning(staleReason.files)
+                : statusReason?.kind === "conflict"
+                  ? conflictWarning(statusReason.withMemoryId)
+                  : "This memory may be stale or conflicting.",
               ...(staleReason ? { staleReasons: staleReason.files } : {}),
             }
           : {}),
@@ -464,7 +477,11 @@ export class RepositoryMemoryCore {
       ...memory,
       tags: JSON.parse(String(memory.tags_json)),
       statusReason,
-      ...(staleReason ? { warning: staleWarning(staleReason.files) } : {}),
+      ...(staleReason
+        ? { warning: staleWarning(staleReason.files) }
+        : statusReason?.kind === "conflict"
+          ? { warning: conflictWarning(statusReason.withMemoryId) }
+          : {}),
       evidence,
       files,
       relations,
@@ -604,20 +621,19 @@ export class RepositoryMemoryCore {
     });
   }
 
-  private memoryIdByFingerprint(input: RecordMemoryInput): string {
-    const row = this.context.database.raw.prepare("SELECT id FROM memories WHERE repository_id=? AND fingerprint=?")
-      .get(this.context.marker.projectId, this.memoryFingerprint(input)) as { id: string };
-    return row.id;
-  }
-
-  private storeMemory(input: RecordMemoryInput, source: "extracted" | "manual", evidenceIds: string[]): boolean {
+  private storeMemory(
+    input: RecordMemoryInput,
+    source: "extracted" | "manual",
+    evidenceIds: string[],
+    options: { ignoreConflictsWith?: string } = {},
+  ): { id: string; stored: boolean; conflicts: string[] } {
     const db = this.context.database.raw;
     const fingerprint = this.memoryFingerprint(input);
     const existing = db.prepare("SELECT id FROM memories WHERE repository_id=? AND fingerprint=?")
       .get(this.context.marker.projectId, fingerprint) as { id: string } | undefined;
     if (existing) {
       for (const evidenceId of evidenceIds) db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId);
-      return false;
+      return { id: existing.id, stored: false, conflicts: [] };
     }
     const id = `mem_${randomUUID()}`;
     const now = Date.now();
@@ -625,12 +641,23 @@ export class RepositoryMemoryCore {
     const files = [...new Set(input.relatedFiles ?? [])];
     const title = redactSecrets(input.title).content.trim();
     const content = redactSecrets(input.content).content.trim();
+    const scopeType = input.scopeType ?? "repository";
+    const scopeValue = input.scopeValue ?? null;
+    let conflicting: Array<{ id: string; status: string; status_reason_json: string | null }> = [];
+    if (DECLARATIVE_TYPES.has(input.type)) {
+      conflicting = db.prepare(`
+        SELECT id, status, status_reason_json FROM memories
+        WHERE repository_id=? AND type=? AND scope_type=? AND scope_value IS ?
+          AND status IN ('active','uncertain') AND lower(trim(title))=? AND fingerprint<>?
+      `).all(this.context.marker.projectId, input.type, scopeType, scopeValue, title.toLowerCase(), fingerprint) as typeof conflicting;
+      if (options.ignoreConflictsWith) conflicting = conflicting.filter((row) => row.id !== options.ignoreConflictsWith);
+    }
     db.prepare(`
       INSERT INTO memories(id, repository_id, type, title, content, confidence, status, scope_type, scope_value,
         source, tags_json, fingerprint, created_at, updated_at, last_validated_at)
       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, this.context.marker.projectId, input.type, title, content, input.confidence ?? 1,
-      input.scopeType ?? "repository", input.scopeValue ?? null, source, JSON.stringify(tags), fingerprint, now, now, now);
+      scopeType, scopeValue, source, JSON.stringify(tags), fingerprint, now, now, now);
     for (const evidenceId of evidenceIds) db.prepare("INSERT INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(id, evidenceId);
     for (const file of files) {
       const fileHash = this.currentFileHash(file);
@@ -640,6 +667,45 @@ export class RepositoryMemoryCore {
       .run(id, this.context.marker.projectId, title, content, searchTokens(title, content, tags, files));
     db.prepare("INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at) VALUES (?, ?, 'created', ?, ?, ?)")
       .run(`aud_${randomUUID()}`, id, JSON.stringify({ status: "active", source }), `${source} memory created`, now);
-    return true;
+    if (conflicting.length) this.markConflicts(id, conflicting);
+    return { id, stored: true, conflicts: conflicting.map((row) => row.id) };
+  }
+
+  private markConflicts(newMemoryId: string, conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>): void {
+    const db = this.context.database.raw;
+    const now = Date.now();
+    const first = conflicting[0]!;
+    const newReason: MemoryStatusReason = { kind: "conflict", withMemoryId: first.id };
+    db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
+      .run(stableJson(newReason), now, newMemoryId);
+    db.prepare(`
+      INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+      VALUES (?, ?, 'memory_conflict_detected', ?, ?, ?, ?)
+    `).run(
+      `aud_${randomUUID()}`,
+      newMemoryId,
+      JSON.stringify({ status: "active" }),
+      JSON.stringify({ status: "uncertain", statusReason: newReason }),
+      conflictWarning(first.id),
+      now,
+    );
+    for (const other of conflicting) {
+      const otherReason: MemoryStatusReason = { kind: "conflict", withMemoryId: newMemoryId };
+      db.prepare("INSERT OR IGNORE INTO memory_relations(source_memory_id, target_memory_id, relation_type, created_at) VALUES (?, ?, 'contradicts', ?)")
+        .run(newMemoryId, other.id, now);
+      db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
+        .run(stableJson(otherReason), now, other.id);
+      db.prepare(`
+        INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+        VALUES (?, ?, 'memory_conflict_detected', ?, ?, ?, ?)
+      `).run(
+        `aud_${randomUUID()}`,
+        other.id,
+        JSON.stringify({ status: other.status, statusReason: parseStatusReason(other.status_reason_json) }),
+        JSON.stringify({ status: "uncertain", statusReason: otherReason }),
+        conflictWarning(newMemoryId),
+        now,
+      );
+    }
   }
 }
