@@ -1,0 +1,104 @@
+{
+  "name": "basic-retrieval",
+  "description": "Baseline retrieval-quality dataset: seeded L1 memories with queries a coding agent would realistically issue. Measures Recall@K, MRR, and search latency for the FTS pipeline.",
+  "memories": [
+    {
+      "type": "command",
+      "title": "Run unit tests",
+      "content": "npm test executes the Vitest suite once in run mode.",
+      "tags": ["vitest", "testing"]
+    },
+    {
+      "type": "command",
+      "title": "Run a single test file",
+      "content": "npm test -- tests/core.test.ts runs one Vitest file.",
+      "tags": ["vitest", "testing"]
+    },
+    {
+      "type": "decision",
+      "title": "Local storage engine",
+      "content": "The SQLite database is the local source of truth; vector indexes are derived data that can always be rebuilt.",
+      "tags": ["storage", "sqlite"]
+    },
+    {
+      "type": "convention",
+      "title": "Public API types",
+      "content": "Every public API exports an explicit TypeScript type.",
+      "tags": ["typescript"]
+    },
+    {
+      "type": "failure",
+      "title": "Windows loader failure",
+      "content": "Loading the native SQLite extension failed on Windows because of an architecture mismatch between Node.js and the compiled binary.",
+      "relatedFiles": ["src/storage/database.ts"],
+      "tags": ["windows", "sqlite"]
+    },
+    {
+      "type": "solution",
+      "title": "Windows loader fix",
+      "content": "Reinstalling dependencies with the matching architecture restored the native loader on Windows.",
+      "relatedFiles": ["src/storage/database.ts"],
+      "tags": ["windows", "sqlite"]
+    },
+    {
+      "type": "location",
+      "title": "MCP tool registration",
+      "content": "MCP tools are registered in src/mcp/server.ts.",
+      "relatedFiles": ["src/mcp/server.ts"],
+      "tags": ["mcp"]
+    },
+    {
+      "type": "dependency",
+      "title": "Node version requirement",
+      "content": "The project requires Node.js 22.5 or newer because it uses node:sqlite.",
+      "tags": ["node"]
+    },
+    {
+      "type": "risk",
+      "title": "Migration backward compatibility",
+      "content": "Schema migrations must stay backward compatible with every released database version.",
+      "tags": ["migrations"]
+    },
+    {
+      "type": "architecture",
+      "title": "Core decoupling",
+      "content": "The repository memory core must not depend on the MCP SDK so the CLI and future adapters can reuse it.",
+      "tags": ["architecture"]
+    }
+  ],
+  "queries": [
+    {
+      "query": "how do I run the unit tests",
+      "expect": ["Run unit tests", "Run a single test file"],
+      "types": ["command"]
+    },
+    {
+      "query": "which database stores memories",
+      "expect": ["Local storage engine"]
+    },
+    {
+      "query": "windows sqlite extension error",
+      "expect": ["Windows loader failure", "Windows loader fix"]
+    },
+    {
+      "query": "where are MCP tools registered",
+      "expect": ["MCP tool registration"]
+    },
+    {
+      "query": "minimum node version",
+      "expect": ["Node version requirement"]
+    },
+    {
+      "query": "src/mcp/server.ts",
+      "expect": ["MCP tool registration"]
+    },
+    {
+      "query": "explicit TypeScript exports convention",
+      "expect": ["Public API types"]
+    },
+    {
+      "query": "schema migration compatibility risk",
+      "expect": ["Migration backward compatibility"]
+    }
+  ]
+}

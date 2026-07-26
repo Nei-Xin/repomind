@@ -7,6 +7,8 @@ import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
 import { runMcpServer } from "../mcp/server.js";
+import { loadDataset } from "../eval/dataset.js";
+import { evaluateDataset } from "../eval/runner.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -30,6 +32,7 @@ Usage:
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
+  repomind eval --dataset <path> [--limit <n>] [--json]
   repomind mcp
 `;
 
@@ -54,6 +57,7 @@ const { values, positionals } = parseArgs({
     input: { type: "string" },
     scope: { type: "string" },
     yes: { type: "boolean", default: false },
+    dataset: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -95,6 +99,13 @@ async function main(): Promise<void> {
     } finally {
       context.database.close();
     }
+    return;
+  }
+  if (command === "eval") {
+    const dataset = loadDataset(required(values.dataset, "--dataset"));
+    const limit = values.limit ? Number(values.limit) : 5;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new RepoMindError("INVALID_INPUT", `Invalid --limit ${values.limit}`);
+    output(evaluateDataset(dataset, limit));
     return;
   }
   if (command === "doctor") {

@@ -1,0 +1,43 @@
+# Retrieval benchmark
+
+`repomind eval` measures retrieval quality against a fixed, versioned dataset. It is the first building block of the staged benchmark plan (`REPOMIND_PROJECT_PLAN.md` section 32): it quantifies whether search finds the right memories, before the larger task-level comparison (no memory vs. flat RAG vs. RepoMind) is built.
+
+## How it works
+
+1. The dataset (`benchmarks/datasets/*.json`) declares seed memories and queries. Each query lists the memory titles that count as relevant.
+2. The runner creates a throwaway Git repository and a throwaway data directory, so results are reproducible and never touch existing repository memories.
+3. Every memory is recorded through the normal `record` path (including redaction, FTS indexing, and conflict detection), then every query runs through the normal `search` path.
+4. The report states, per query and in aggregate:
+   - **Recall@K** — the fraction of expected memories present in the top K results (K = `--limit`, default 5).
+   - **MRR** — mean reciprocal rank of the first relevant result.
+   - **latency** — wall-clock `search` time, reported as P50/P95 across queries.
+   - **missedQueries** — every query that failed to retrieve an expected memory. Misses are reported, never padded over.
+
+## Run it
+
+```bash
+repomind eval --dataset benchmarks/datasets/basic-retrieval.json --json
+```
+
+## Example result
+
+Measured on Windows 11, Node.js 22.20, 10 seeded memories, 8 queries, K = 5:
+
+```json
+{
+  "queries": 8,
+  "meanRecallAtK": 1,
+  "mrr": 0.938,
+  "p50LatencyMs": 0.614,
+  "p95LatencyMs": 1.771,
+  "missedQueries": []
+}
+```
+
+Latency numbers depend on hardware and data volume; always report OS, Node version, and dataset size next to them. The spec target (FTS P95 < 150 ms at 10,000 memories) is a goal, and this 10-memory dataset does not demonstrate it.
+
+## Known limitations
+
+- The dataset is small and hand-written; it validates the retrieval pipeline, not end-to-end agent benefit.
+- The task-level benchmark from the spec (task success rate, token cost, repeated exploration, stale-memory misuse across agent modes) is not built yet.
+- There is no vector retrieval mode to compare against until embeddings land.
