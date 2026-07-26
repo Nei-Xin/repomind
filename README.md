@@ -100,8 +100,11 @@ npm test
 npm run build
 ```
 
-Measure retrieval quality against the fixed dataset (see [`docs/benchmark.md`](docs/benchmark.md)):
+Measure retrieval quality and cross-session guarantees (see [`docs/benchmark.md`](docs/benchmark.md)):
 
 ```bash
 repomind eval --dataset benchmarks/datasets/basic-retrieval.json --json
+repomind eval --scenarios --json
 ```
+
+Architecture decisions are recorded under [`docs/adr/`](docs/adr/).

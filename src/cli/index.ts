@@ -9,6 +9,7 @@ import { initializeRepository } from "../repository.js";
 import { runMcpServer } from "../mcp/server.js";
 import { loadDataset } from "../eval/dataset.js";
 import { evaluateDataset } from "../eval/runner.js";
+import { runScenarioSuite } from "../eval/scenarios.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -32,7 +33,7 @@ Usage:
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
-  repomind eval --dataset <path> [--limit <n>] [--json]
+  repomind eval (--dataset <path> | --scenarios) [--limit <n>] [--json]
   repomind mcp
 `;
 
@@ -58,6 +59,7 @@ const { values, positionals } = parseArgs({
     scope: { type: "string" },
     yes: { type: "boolean", default: false },
     dataset: { type: "string" },
+    scenarios: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -102,6 +104,10 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "eval") {
+    if (values.scenarios) {
+      output(runScenarioSuite());
+      return;
+    }
     const dataset = loadDataset(required(values.dataset, "--dataset"));
     const limit = values.limit ? Number(values.limit) : 5;
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new RepoMindError("INVALID_INPUT", `Invalid --limit ${values.limit}`);

@@ -36,8 +36,38 @@ Measured on Windows 11, Node.js 22.20, 10 seeded memories, 8 queries, K = 5:
 
 Latency numbers depend on hardware and data volume; always report OS, Node version, and dataset size next to them. The spec target (FTS P95 < 150 ms at 10,000 memories) is a goal, and this 10-memory dataset does not demonstrate it.
 
+## Cross-session scenario suite
+
+`repomind eval --scenarios` replays six end-to-end scenarios, each in its own throwaway repository, and reports the deterministic targets from the final product spec (section 20.4) that do not require an LLM:
+
+| Scenario | Verifies | Spec target |
+| --- | --- | --- |
+| cross-session-recall | A new core instance recalls the previous session's memory with evidence | recall works across sessions |
+| evidence-binding | Every stored memory references at least one evidence row | binding rate 100% |
+| repository-isolation | Searches never return another repository's memories | contamination 0% |
+| stale-warning | A changed related file yields an `uncertain` result with a warning | unwarned stale use < 5% |
+| conflict-surfacing | Contradicting decisions both surface with explicit conflict warnings | no silent merging |
+| idempotent-commit | Repeating a commit with the same key creates nothing new | no duplicates |
+
+Current result (all scenarios pass):
+
+```json
+{
+  "scenarios": 6,
+  "passed": 6,
+  "failed": 0,
+  "crossSessionRecall": 1,
+  "evidenceBindingRate": 1,
+  "isolationViolations": 0,
+  "staleWarnedRate": 1,
+  "conflictSurfacedRate": 1,
+  "idempotencyViolations": 0
+}
+```
+
 ## Known limitations
 
 - The dataset is small and hand-written; it validates the retrieval pipeline, not end-to-end agent benefit.
+- The scenario suite verifies mechanism guarantees deterministically; it does not measure agent task success or token savings.
 - The task-level benchmark from the spec (task success rate, token cost, repeated exploration, stale-memory misuse across agent modes) is not built yet.
 - There is no vector retrieval mode to compare against until embeddings land.
