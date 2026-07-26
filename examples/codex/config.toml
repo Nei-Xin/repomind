@@ -1,0 +1,16 @@
+# Copy this table to ~/.codex/config.toml, or to .codex/config.toml in a trusted repository.
+# Replace the path with the absolute path to your RepoMind build.
+
+[mcp_servers.repomind]
+enabled = true
+required = false
+command = "node"
+args = ["D:\\data\\code\\project\\repomind\\dist\\cli\\index.js", "mcp"]
+startup_timeout_sec = 10.0
+tool_timeout_sec = 60.0
+enabled_tools = [
+  "repo_session_start",
+  "repo_memory_search",
+  "repo_session_commit",
+  "repo_memory_inspect",
+]
