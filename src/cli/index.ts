@@ -7,19 +7,26 @@ import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
 import { runMcpServer } from "../mcp/server.js";
+import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
-const HELP = `RepoMind 0.1.0
+const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
+
+const HELP = `RepoMind 0.3.0
 
 Usage:
   repomind init [--repo <path>] [--new-id]
   repomind status [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
   repomind start --task <text> [--repo <path>] [--json]
+  repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
   repomind search <query> [--repo <path>] [--limit <n>] [--json]
   repomind inspect <memory-id> [--repo <path>] [--json]
   repomind record --type <type> --title <text> --content <text> [--repo <path>] [--json]
+  repomind memory-validate <memory-id> --reason <text> [--repo <path>] [--json]
+  repomind memory-correct <memory-id> --reason <text> --title <text> --content <text> [--type <type>] [--repo <path>] [--json]
+  repomind memory-invalidate <memory-id> --reason <text> [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind mcp
@@ -42,6 +49,8 @@ const { values, positionals } = parseArgs({
     type: { type: "string" },
     title: { type: "string" },
     content: { type: "string" },
+    reason: { type: "string" },
+    input: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -49,6 +58,12 @@ const { values, positionals } = parseArgs({
 function required(value: string | undefined, flag: string): string {
   if (!value) throw new RepoMindError("INVALID_INPUT", `${flag} is required`);
   return value;
+}
+
+function memoryType(value: string | undefined, flag: string): MemoryType {
+  const candidate = required(value, flag);
+  if (!MEMORY_TYPES.includes(candidate as MemoryType)) throw new RepoMindError("INVALID_INPUT", `Invalid ${flag} ${candidate}`);
+  return candidate as MemoryType;
 }
 
 function output(value: unknown): void {
@@ -105,6 +120,13 @@ async function main(): Promise<void> {
       case "status": output(core.status()); break;
       case "start": output(core.startSession({ task: required(values.task, "--task"), clientName: "cli" })); break;
       case "commit": {
+        if (values.input) {
+          if (values.session || values.key || values.summary || values.status) {
+            throw new RepoMindError("INVALID_INPUT", "--input cannot be combined with --session, --key, --summary, or --status");
+          }
+          output(core.commitSession(readCommitInput(values.input)));
+          break;
+        }
         const status = values.status ?? "success";
         if (!(["success", "partial", "failed"] as const).includes(status as "success")) throw new RepoMindError("INVALID_INPUT", `Invalid --status ${status}`);
         output(core.commitSession({
@@ -118,9 +140,24 @@ async function main(): Promise<void> {
       case "search": output(core.search(required(positionals[1], "query"), { limit: values.limit ? Number(values.limit) : 5 })); break;
       case "inspect": output(core.inspect(required(positionals[1], "memory-id"))); break;
       case "record": output(core.record({
-        type: required(values.type, "--type") as MemoryType,
+        type: memoryType(values.type, "--type"),
         title: required(values.title, "--title"),
         content: required(values.content, "--content"),
+      })); break;
+      case "memory-validate": output(core.validateMemory({
+        memoryId: required(positionals[1], "memory-id"),
+        reason: required(values.reason, "--reason"),
+      })); break;
+      case "memory-correct": output(core.correctMemory({
+        memoryId: required(positionals[1], "memory-id"),
+        reason: required(values.reason, "--reason"),
+        title: required(values.title, "--title"),
+        content: required(values.content, "--content"),
+        ...(values.type ? { type: memoryType(values.type, "--type") } : {}),
+      })); break;
+      case "memory-invalidate": output(core.invalidateMemory({
+        memoryId: required(positionals[1], "memory-id"),
+        reason: required(values.reason, "--reason"),
       })); break;
       case "sessions": output(core.listSessions()); break;
       case "session-abandon": core.abandonSession(required(positionals[1], "session-id")); output("Session abandoned."); break;
