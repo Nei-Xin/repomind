@@ -22,6 +22,7 @@ import type {
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
+import { redactSecrets } from "./security/redaction.js";
 
 type SqlValue = string | number | null;
 
@@ -143,7 +144,14 @@ export class RepositoryMemoryCore {
       const evidenceIds: string[] = [];
       evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, { remainingWork: input.remainingWork ?? [] }, null));
       evidenceIds.push(this.insertEvidence(input.sessionId, "git_snapshot", JSON.stringify(finalSnapshot), { phase: "final" }, finalSnapshot.head));
-      if (diff.content) evidenceIds.push(this.insertEvidence(input.sessionId, "git_diff", diff.content, { truncated: diff.truncated, sources: diff.sources, files }, finalSnapshot.head));
+      if (diff.content || diff.excludedFiles.length) {
+        evidenceIds.push(this.insertEvidence(input.sessionId, "git_diff", diff.content, {
+          truncated: diff.truncated,
+          sources: diff.sources,
+          files,
+          ...(diff.excludedFiles.length ? { excludedFiles: diff.excludedFiles } : {}),
+        }, finalSnapshot.head));
+      }
 
       const testEvidence = new Map<string, string>();
       for (const test of input.tests ?? []) {
@@ -472,17 +480,19 @@ export class RepositoryMemoryCore {
 
   private insertEvidence(sessionId: string | null, kind: EvidenceKind, content: string, metadata: Record<string, unknown>, commitHash: string | null): string {
     const id = `evd_${randomUUID()}`;
+    const redacted = redactSecrets(content);
+    const enrichedMetadata = redacted.redactions ? { ...metadata, redactions: redacted.redactions } : metadata;
     this.context.database.raw.prepare(`
       INSERT INTO evidence(id, repository_id, session_id, kind, content, content_hash, commit_hash, metadata_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, this.context.marker.projectId, sessionId, kind, content, hash(content), commitHash, JSON.stringify(metadata), Date.now());
+    `).run(id, this.context.marker.projectId, sessionId, kind, redacted.content, hash(redacted.content), commitHash, JSON.stringify(enrichedMetadata), Date.now());
     return id;
   }
 
   private memoryFingerprint(input: RecordMemoryInput): string {
     return hash(stableJson({
       type: input.type,
-      content: input.content.trim().toLowerCase(),
+      content: redactSecrets(input.content).content.trim().toLowerCase(),
       scopeType: input.scopeType ?? "repository",
       scopeValue: input.scopeValue ?? null,
     }));
@@ -581,11 +591,13 @@ export class RepositoryMemoryCore {
     const now = Date.now();
     const tags = [...new Set(input.tags ?? [])];
     const files = [...new Set(input.relatedFiles ?? [])];
+    const title = redactSecrets(input.title).content.trim();
+    const content = redactSecrets(input.content).content.trim();
     db.prepare(`
       INSERT INTO memories(id, repository_id, type, title, content, confidence, status, scope_type, scope_value,
         source, tags_json, fingerprint, created_at, updated_at, last_validated_at)
       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, this.context.marker.projectId, input.type, input.title.trim(), input.content.trim(), input.confidence ?? 1,
+    `).run(id, this.context.marker.projectId, input.type, title, content, input.confidence ?? 1,
       input.scopeType ?? "repository", input.scopeValue ?? null, source, JSON.stringify(tags), fingerprint, now, now, now);
     for (const evidenceId of evidenceIds) db.prepare("INSERT INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(id, evidenceId);
     for (const file of files) {
@@ -593,7 +605,7 @@ export class RepositoryMemoryCore {
       db.prepare("INSERT INTO memory_files(memory_id, file_path, file_hash) VALUES (?, ?, ?)").run(id, file, fileHash);
     }
     db.prepare("INSERT INTO memory_fts(memory_id, repository_id, title, content, search_tokens) VALUES (?, ?, ?, ?, ?)")
-      .run(id, this.context.marker.projectId, input.title.trim(), input.content.trim(), searchTokens(input.title, input.content, tags, files));
+      .run(id, this.context.marker.projectId, title, content, searchTokens(title, content, tags, files));
     db.prepare("INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at) VALUES (?, ?, 'created', ?, ?, ?)")
       .run(`aud_${randomUUID()}`, id, JSON.stringify({ status: "active", source }), `${source} memory created`, now);
     return true;
