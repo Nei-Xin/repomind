@@ -1,0 +1,146 @@
+{
+  "fixtureVersion": 1,
+  "name": "verified-command-nonobvious",
+  "category": "verified-command",
+  "adversarial": false,
+  "repo": {
+    "files": {
+      "README.md": "# tilecache\n\ntilecache rasterises vector map sources into PNG tiles and serves them from a\nlocal disk cache. It is the tile backend behind the trail-mapping app.\n\n## Layout\n\n- src/tile - the renderer, the glyph atlas, and the on-disk cache.\n- src/server.ts - the HTTP entry point and the tile route.\n- tests - vitest specs, one per subsystem.\n\n## Running locally\n\n    npm install\n    npm run build\n    npm test\n",
+      "package.json": "{\n  \"name\": \"tilecache\",\n  \"version\": \"1.2.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint src --ext .ts\",\n    \"bench\": \"node scripts/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"sharp\": \"^0.33.4\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.5.4\",\n    \"vitest\": \"^2.0.5\"\n  }\n}\n",
+      "src/server.ts": "import { createServer } from \"node:http\";\nimport { renderTile } from \"./tile/renderer.js\";\n\nconst ROUTE = /^\\/tiles\\/(\\d+)\\/(\\d+)\\/(\\d+)\\.png$/u;\n\nexport const server = createServer(async (request, response) => {\n  const match = ROUTE.exec(request.url ?? \"\");\n  if (!match) {\n    response.writeHead(404).end();\n    return;\n  }\n  const [, z, x, y] = match;\n  const png = await renderTile({ z: Number(z), x: Number(x), y: Number(y) }, []);\n  response.writeHead(200, { \"content-type\": \"image/png\" }).end(png);\n});\n",
+      "src/tile/renderer.ts": "import sharp from \"sharp\";\nimport { glyphAtlas } from \"./cache.js\";\n\nexport interface TileRequest {\n  z: number;\n  x: number;\n  y: number;\n}\n\nconst TILE_PX = 256;\n\nexport async function renderTile(tile: TileRequest, features: unknown[]): Promise<Buffer> {\n  const atlas = await glyphAtlas(tile.z);\n  const canvas = sharp({\n    create: { width: TILE_PX, height: TILE_PX, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },\n  });\n  for (const feature of features) {\n    void feature;\n    void atlas;\n  }\n  return canvas.png().toBuffer();\n}\n",
+      "src/tile/cache.ts": "import { mkdir, readFile, writeFile } from \"node:fs/promises\";\nimport { join } from \"node:path\";\n\nconst CACHE_DIR = process.env.TILE_CACHE_DIR ?? \".tilecache\";\n\nexport async function glyphAtlas(zoom: number): Promise<Buffer> {\n  const path = join(CACHE_DIR, \"atlas-\" + zoom + \".bin\");\n  try {\n    return await readFile(path);\n  } catch {\n    const built = await buildAtlas(zoom);\n    await mkdir(CACHE_DIR, { recursive: true });\n    await writeFile(path, built);\n    return built;\n  }\n}\n\nasync function buildAtlas(zoom: number): Promise<Buffer> {\n  return Buffer.alloc(1024 * (zoom + 1));\n}\n",
+      "tests/renderer.spec.ts": "import { describe, expect, it } from \"vitest\";\nimport { renderTile } from \"../src/tile/renderer.js\";\n\ndescribe(\"renderTile\", () => {\n  it(\"returns a 256px png\", async () => {\n    const png = await renderTile({ z: 12, x: 2048, y: 1361 }, []);\n    expect(png.subarray(1, 4).toString()).toBe(\"PNG\");\n  });\n\n  it(\"renders label glyphs at zoom 14\", async () => {\n    const png = await renderTile({ z: 14, x: 8192, y: 5444 }, [{ label: \"Ridge Trail\" }]);\n    expect(png.byteLength).toBeGreaterThan(0);\n  });\n});\n"
+    },
+    "commits": [
+      {
+        "message": "initial tilecache server",
+        "files": [
+          "README.md",
+          "package.json",
+          "src/server.ts",
+          "src/tile/renderer.ts",
+          "src/tile/cache.ts",
+          "tests/renderer.spec.ts"
+        ]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Serve a transparent png for tiles that have no source data",
+      "status": "success",
+      "summary": "Missing tiles used to come back as a JSON error body with a 200, which the mobile client drew as a grey block. A tile with no source data is now a cached transparent png, so the map shows the basemap underneath instead of a hole.",
+      "tests": [
+        {
+          "command": "npm test -- server",
+          "exitCode": 0,
+          "summary": "server route cases pass"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "task": "Cap the on-disk tile cache with an LRU eviction pass",
+      "status": "success",
+      "summary": "The disk cache grew without bound and filled the box twice last month. Eviction is now least-recently-used against a configurable byte cap, checked every thousand writes rather than on every write, which kept the added latency under a millisecond.",
+      "commands": [
+        {
+          "command": "npm run build",
+          "exitCode": 0,
+          "summary": "build succeeded"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "task": "Add a CI job that renders a golden tile and diffs it against the reference",
+      "status": "success",
+      "summary": "CI now renders one golden tile per zoom band and compares it to a checked-in reference image, failing the job when more than a tenth of a percent of the pixels move. That is what started catching the empty output nobody could reproduce by hand.",
+      "commands": [
+        {
+          "command": "npm run build",
+          "exitCode": 0,
+          "summary": "build succeeded"
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "task": "Renderer specs are green on my laptop but the CI job keeps producing blank tiles",
+      "status": "success",
+      "summary": "Chased the blank output down to the on-disk glyph atlas. Under the default pool, two worker threads share one cache directory, and whichever finishes second truncates the atlas the first one is still reading, so the renderer draws nothing. The atlas writer now stages to a per-process temp file and renames it into place. Reproducing the original failure by hand needs the recorded fixture set and a run pinned to forked workers with file parallelism switched off; the default invocation hides it behind thread scheduling.",
+      "tests": [
+        {
+          "command": "TILE_FIXTURES=recorded npx vitest run tests/renderer.spec.ts --pool=forks --no-file-parallelism",
+          "exitCode": 0,
+          "summary": "14 renderer cases pass and the blank-tile regression reproduces on demand instead of once in twenty runs"
+        }
+      ],
+      "edits": {
+        "src/tile/cache.ts": "import { mkdir, readFile, rename, writeFile } from \"node:fs/promises\";\nimport { join } from \"node:path\";\n\nconst CACHE_DIR = process.env.TILE_CACHE_DIR ?? \".tilecache\";\n\nexport async function glyphAtlas(zoom: number): Promise<Buffer> {\n  const path = join(CACHE_DIR, \"atlas-\" + zoom + \".bin\");\n  try {\n    return await readFile(path);\n  } catch {\n    return publishAtlas(zoom, path);\n  }\n}\n\n/**\n * Writes to a per-process temp path and renames into place. A reader either\n * sees the previous atlas or the complete new one, never a half-written file.\n */\nasync function publishAtlas(zoom: number, path: string): Promise<Buffer> {\n  const built = await buildAtlas(zoom);\n  await mkdir(CACHE_DIR, { recursive: true });\n  const staging = path + \".\" + process.pid + \".tmp\";\n  await writeFile(staging, built);\n  await rename(staging, path);\n  return built;\n}\n\nasync function buildAtlas(zoom: number): Promise<Buffer> {\n  return Buffer.alloc(1024 * (zoom + 1));\n}\n"
+      }
+    },
+    {
+      "id": "s5",
+      "task": "Investigate the slow first tile request after a deploy",
+      "status": "partial",
+      "summary": "The first request after a deploy pays for the whole glyph atlas build, which is about 900ms at zoom 14. Prebuilding it in the deploy step would fix it, but the deploy pipeline is owned by another team, so this is parked with a ticket rather than solved here.",
+      "commands": [
+        {
+          "command": "npm run bench",
+          "exitCode": 1,
+          "summary": "bench harness crashed on the cold cache path"
+        }
+      ]
+    },
+    {
+      "id": "s6",
+      "task": "Write the tile coordinate scheme into the readme",
+      "status": "success",
+      "summary": "Wrote the slippy-map coordinate scheme and the zoom clamp into the readme, because every new contributor asks the same question about which way y counts and what happens past zoom 18.",
+      "edits": {
+        "README.md": "# tilecache\n\ntilecache rasterises vector map sources into PNG tiles and serves them from a\nlocal disk cache. It is the tile backend behind the trail-mapping app.\n\n## Layout\n\n- src/tile - the renderer, the glyph atlas, and the on-disk cache.\n- src/server.ts - the HTTP entry point and the tile route.\n- tests - vitest specs, one per subsystem.\n\n## Running locally\n\n    npm install\n    npm run build\n    npm test\n\n## Tile coordinates\n\nRoutes use the slippy-map scheme, z/x/y, with y counted from the north. Zoom is\nclamped to 0..18; anything past 18 is served by upscaling the z18 tile rather\nthan by rendering, because the source data carries no detail beyond that.\n"
+      }
+    }
+  ],
+  "query": "Why does the renderer suite draw empty tile images on CI, and what is the exact way to start that suite locally?",
+  "goldFacts": [
+    {
+      "key": "verified-invocation",
+      "matcher": {
+        "allOf": [
+          "TILE_FIXTURES=recorded npx vitest run tests/renderer.spec.ts --pool=forks --no-file-parallelism"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s4"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "package.json",
+        "tests/renderer.spec.ts"
+      ],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "root-cause",
+      "matcher": {
+        "allOf": [
+          "two worker threads share one cache directory"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s4"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "src/tile/cache.ts"
+      ],
+      "repoDiscoverable": false
+    }
+  ]
+}

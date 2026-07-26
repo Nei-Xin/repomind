@@ -1,0 +1,101 @@
+{
+  "fixtureVersion": 1,
+  "name": "locate-feature-after-rename",
+  "category": "locate-feature",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Fanout queue\n\nA small background job queue for the fanout service. The API enqueues a job,\na worker picks it up, and a failed job is put back with a growing delay.\n\nRun `npm test` before pushing.\n",
+      "package.json": "{\n  \"name\": \"fanout-queue\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint src\"\n  }\n}\n",
+      "src/queue.ts": "import { shouldRetry } from \"./retry-policy.js\";\n\nexport interface Job {\n  id: string;\n  payload: string;\n  attempt: number;\n}\n\nexport class JobQueue {\n  private readonly pending: Job[] = [];\n\n  enqueue(job: Job): void {\n    this.pending.push(job);\n  }\n\n  next(): Job | undefined {\n    return this.pending.shift();\n  }\n\n  requeue(job: Job): boolean {\n    if (!shouldRetry(job.attempt)) return false;\n    this.pending.push({ ...job, attempt: job.attempt + 1 });\n    return true;\n  }\n}\n",
+      "src/worker.ts": "import { JobQueue, type Job } from \"./queue.js\";\n\nexport async function runOnce(queue: JobQueue, handle: (job: Job) => Promise<void>): Promise<boolean> {\n  const job = queue.next();\n  if (!job) return false;\n  try {\n    await handle(job);\n  } catch {\n    queue.requeue(job);\n  }\n  return true;\n}\n",
+      "src/retry-policy.ts": "const MAX_BACKOFF_MS = 20_000;\n\nexport function retryDelay(attempt: number): number {\n  return Math.min(MAX_BACKOFF_MS, 250 * 2 ** attempt);\n}\n\nexport function shouldRetry(attempt: number): boolean {\n  return attempt < 5;\n}\n"
+    },
+    "commits": [{ "message": "initial fanout job queue", "files": ["README.md", "package.json", "src/queue.ts", "src/worker.ts", "src/retry-policy.ts"] }]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Stop dropping jobs that exhaust every attempt",
+      "status": "success",
+      "summary": "A job that runs out of attempts is now parked in a dead letter list instead of vanishing, so a failed job can still be inspected after the fact.",
+      "tests": [{ "command": "npm test -- queue", "exitCode": 0, "summary": "12 queue cases passed" }],
+      "edits": {
+        "src/queue.ts": "import { shouldRetry } from \"./retry-policy.js\";\n\nexport interface Job {\n  id: string;\n  payload: string;\n  attempt: number;\n}\n\nexport class JobQueue {\n  private readonly pending: Job[] = [];\n  readonly deadLetter: Job[] = [];\n\n  enqueue(job: Job): void {\n    this.pending.push(job);\n  }\n\n  next(): Job | undefined {\n    return this.pending.shift();\n  }\n\n  requeue(job: Job): boolean {\n    if (!shouldRetry(job.attempt)) {\n      this.deadLetter.push(job);\n      return false;\n    }\n    this.pending.push({ ...job, attempt: job.attempt + 1 });\n    return true;\n  }\n}\n"
+      }
+    },
+    {
+      "id": "s2",
+      "task": "Split the growing-delay maths out of the policy module so the scheduler can reuse it",
+      "status": "success",
+      "summary": "Lifted the exponential delay maths into src/scheduler/backoff-policy.ts and left src/retry-policy.ts as a thin re-export, so the worker and the scheduler share one implementation. The exported ceiling is BACKOFF_CEILING_MS.",
+      "decisions": ["Delay maths belongs to the scheduler package; the policy module only decides whether another attempt happens at all"],
+      "tests": [{ "command": "npm test -- scheduler", "exitCode": 0, "summary": "delay cases pass against the new module path" }],
+      "edits": {
+        "src/retry-policy.ts": "export { backoffDelay, BACKOFF_CEILING_MS } from \"./scheduler/backoff-policy.js\";\n\nexport function shouldRetry(attempt: number): boolean {\n  return attempt < 5;\n}\n",
+        "src/scheduler/backoff-policy.ts": "export const BACKOFF_CEILING_MS = 20_000;\n\nexport function backoffDelay(attempt: number): number {\n  return Math.min(BACKOFF_CEILING_MS, 250 * 2 ** attempt);\n}\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Write down how the API hands a job to the queue",
+      "status": "success",
+      "summary": "Documented the enqueue path in the readme so a new contributor stops guessing at the shape of a job.",
+      "edits": {
+        "README.md": "# Fanout queue\n\nA small background job queue for the fanout service. The API enqueues a job,\na worker picks it up, and a failed job is put back with a growing delay.\n\n## Enqueueing\n\nCall `enqueue` with an id, a payload, and an attempt count of zero. The worker\nowns everything after that.\n\nRun `npm test` before pushing.\n"
+      }
+    },
+    {
+      "id": "s4",
+      "task": "Find out why the worker burns CPU when nothing is queued",
+      "status": "partial",
+      "summary": "Measured the empty-queue loop and found the worker busy-waits rather than sleeping. Left the fix open because it needs a real timer in the scheduler.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "s5",
+      "task": "Raise worker concurrency for the nightly fanout run",
+      "status": "success",
+      "summary": "Raised nightly worker concurrency from two to six once the queue was ruled out as the bottleneck; throughput on the fanout run roughly tripled.",
+      "edits": {
+        "src/worker.ts": "import { JobQueue, type Job } from \"./queue.js\";\n\nexport const NIGHTLY_CONCURRENCY = 6;\n\nexport async function runOnce(queue: JobQueue, handle: (job: Job) => Promise<void>): Promise<boolean> {\n  const job = queue.next();\n  if (!job) return false;\n  try {\n    await handle(job);\n  } catch {\n    queue.requeue(job);\n  }\n  return true;\n}\n"
+      }
+    }
+  ],
+  "query": "I cannot find the helper that works out how long a failed job waits before its next attempt. Where did it move to, and what was the old constant called?",
+  "goldFacts": [
+    {
+      "key": "old-symbol-names",
+      "matcher": { "allOf": ["retryDelay", "MAX_BACKOFF_MS"] },
+      "status": "current",
+      "supportedBy": ["s2"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/retry-policy.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "new-location",
+      "matcher": { "allOf": ["src/scheduler/backoff-policy.ts"] },
+      "status": "current",
+      "supportedBy": ["s2"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/scheduler/backoff-policy.ts"],
+      "repoDiscoverable": true
+    },
+    {
+      "key": "verified-command",
+      "matcher": { "allOf": ["npm test -- scheduler"] },
+      "status": "current",
+      "supportedBy": ["s2"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "full-history",
+      "metric": "answerCoverage",
+      "rationale": "The old identifiers only ever existed on the removed side of the move commit. RepoMind's deterministic extractor turns decisions, passing commands, and the summary into memories and never the diff, so the deleted names are unreachable for it. full-history carries the diff verbatim and answers the question outright."
+    }
+  ]
+}

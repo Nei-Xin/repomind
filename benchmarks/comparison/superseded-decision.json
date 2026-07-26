@@ -1,0 +1,128 @@
+{
+  "fixtureVersion": 1,
+  "name": "superseded-decision",
+  "category": "superseded-decision",
+  "adversarial": false,
+  "repo": {
+    "files": {
+      "README.md": "# chronos\n\nThe reminder scheduler behind the operations roster.\n\nOperators create a scheduled job from the roster UI, a poller wakes every\nfifteen seconds and enqueues whatever has come due, and a worker pool delivers\nthe reminder. Cadences are one-off, daily, or weekly.\n",
+      "package.json": "{\n  \"name\": \"chronos\",\n  \"private\": true,\n  \"version\": \"3.1.0\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"migrate\": \"node dist/migrate.js\"\n  }\n}\n",
+      "src/schedule.ts": "export type Cadence = \"once\" | \"daily\" | \"weekly\";\n\nexport interface ScheduledJob {\n  id: string;\n  name: string;\n  /** The time an operator typed into the roster, in their own region. */\n  localTime: string;\n  /** IANA zone identifier, for example \"Europe/Berlin\". */\n  zone: string;\n  cadence: Cadence;\n}\n\nexport function describe(job: ScheduledJob): string {\n  return `${job.name} at ${job.localTime} (${job.zone})`;\n}\n",
+      "src/timezone.ts": "/** Zone helpers. The platform Intl database is the only source of truth here. */\nexport function isValidZone(zone: string): boolean {\n  try {\n    new Intl.DateTimeFormat(\"en-US\", { timeZone: zone });\n    return true;\n  } catch {\n    return false;\n  }\n}\n\nexport function formatIn(zone: string, at: Date): string {\n  return new Intl.DateTimeFormat(\"en-GB\", {\n    timeZone: zone,\n    dateStyle: \"short\",\n    timeStyle: \"short\",\n  }).format(at);\n}\n",
+      "src/poller.ts": "import type { ScheduledJob } from \"./schedule.js\";\n\nexport interface PollerDeps {\n  due(now: Date): Promise<ScheduledJob[]>;\n  enqueue(job: ScheduledJob): Promise<void>;\n}\n\nexport const TICK_MS = 15_000;\n\nexport async function tick(now: Date, deps: PollerDeps): Promise<number> {\n  const jobs = await deps.due(now);\n  for (const job of jobs) await deps.enqueue(job);\n  return jobs.length;\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial chronos scheduler",
+        "files": ["README.md", "package.json", "src/schedule.ts", "src/timezone.ts", "src/poller.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "A reminder is delivered twice when a poller process is restarted mid-batch",
+      "status": "success",
+      "summary": "The poller marked a batch as handled only after the whole batch had been enqueued, so a restart halfway through replayed the first half. Claiming each job with a conditional update before enqueueing it made the restart safe.",
+      "decisions": [
+        "Jobs are claimed before they are enqueued\nThe poller claims a job with a conditional update that fails if another process already claimed it, and only then enqueues it, because a batch level marker cannot survive a restart in the middle of the batch."
+      ],
+      "tests": [
+        { "command": "npm test -- poller", "exitCode": 0, "summary": "17 poller cases passed, including a restart in the middle of a batch" }
+      ]
+    },
+    {
+      "id": "s2",
+      "task": "Operators say the roster shows a different time than the one they entered",
+      "status": "partial",
+      "summary": "Stopped the roster reformatting operator input on the way in and out of the database. Scheduled job times are stored as local wall-clock strings with a separate IANA zone column, so the roster can echo back exactly the text an operator typed. Left the poller comparison alone because the query path change was already large enough for one review.",
+      "decisions": [
+        "Timestamp storage format for scheduled jobs\nScheduled job times are stored as local wall-clock strings with a separate IANA zone column, because an operator enters a time in their own region and expects the roster to echo it back unchanged."
+      ],
+      "tests": [
+        { "command": "npm test -- roster", "exitCode": 0, "summary": "12 roster rendering cases passed" }
+      ],
+      "edits": {
+        "src/schedule.ts": "export type Cadence = \"once\" | \"daily\" | \"weekly\";\n\nexport interface ScheduledJob {\n  id: string;\n  name: string;\n  /** The time an operator typed into the roster, in their own region. */\n  localTime: string;\n  /** IANA zone identifier, for example \"Europe/Berlin\". */\n  zone: string;\n  cadence: Cadence;\n}\n\nexport function describe(job: ScheduledJob): string {\n  return `${job.name} at ${job.localTime} (${job.zone})`;\n}\n\n/** Echoes operator input back without reformatting it. */\nexport function rosterLabel(job: ScheduledJob): string {\n  return `${job.localTime} ${job.zone}`;\n}\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Give the scheduler CLI a dry run flag so an operator can preview what a cadence expands to",
+      "status": "success",
+      "summary": "Added a dry run flag that prints the next ten occurrences of a cadence without writing anything. It reuses the same expansion the poller uses, so a preview cannot drift from what actually runs.",
+      "decisions": [
+        "Preview reuses the production expansion\nThe dry run preview calls the same cadence expansion the poller calls rather than a simplified copy, because a preview that can disagree with the scheduler is worse than no preview."
+      ],
+      "tests": [
+        { "command": "npm test -- cli", "exitCode": 0, "summary": "8 dry run cases passed" }
+      ]
+    },
+    {
+      "id": "s4",
+      "task": "The schedule poller is the top query by row reads on the primary database",
+      "status": "success",
+      "summary": "The poller scanned every job on each tick and filtered in the process. Adding a partial index over pending jobs and pushing the due filter into the query cut row reads per tick from about four hundred thousand to under two thousand.",
+      "decisions": [
+        "The due filter runs in the database\nThe poller asks the database for jobs that have come due instead of scanning and filtering in process, because a fifteen second tick over the full table is the single largest read load the service produces."
+      ],
+      "tests": [
+        { "command": "npm test -- poller", "exitCode": 0, "summary": "17 poller cases passed against the indexed query" }
+      ]
+    },
+    {
+      "id": "s5",
+      "task": "Backfill the reminders that were missed during the queue outage on the 14th",
+      "status": "success",
+      "summary": "Wrote a one-off backfill that replays the jobs whose delivery window closed during the outage, capped so a job that has since been cancelled is skipped. Two hundred and eighty reminders went out, none of them duplicates.",
+      "commands": [
+        { "command": "node dist/backfill.js --since 2025-03-14T02:00:00Z --dry-run", "exitCode": 0, "summary": "280 candidate jobs, 6 skipped as cancelled" }
+      ]
+    },
+    {
+      "id": "s6",
+      "task": "Two hundred and fourteen reminders fired twice during the spring clock change",
+      "status": "success",
+      "summary": "Traced the duplicates to the repeated hour of the spring transition, where two distinct moments print as the same text and the poller matched both. Scheduled job times are now stored as UTC instants with the originating IANA zone kept only for display, and the poller compares instants instead of formatted text.",
+      "decisions": [
+        "The poller compares instants, never formatted text\nThe poller compares an absolute instant against the current clock and never a rendered local time, because two distinct moments render identically inside a daylight saving transition."
+      ],
+      "tests": [
+        { "command": "npm test -- dst", "exitCode": 0, "summary": "23 transition cases passed, covering both the repeated and the skipped hour" }
+      ],
+      "edits": {
+        "src/poller.ts": "import type { ScheduledJob } from \"./schedule.js\";\n\nexport interface PollerDeps {\n  due(nowEpochMs: number): Promise<ScheduledJob[]>;\n  enqueue(job: ScheduledJob): Promise<void>;\n}\n\nexport const TICK_MS = 15_000;\n\n/** Compares absolute instants only; a rendered local time is ambiguous. */\nexport async function tick(nowEpochMs: number, deps: PollerDeps): Promise<number> {\n  const jobs = await deps.due(nowEpochMs);\n  for (const job of jobs) await deps.enqueue(job);\n  return jobs.length;\n}\n"
+      }
+    }
+  ],
+  "governanceOps": [
+    {
+      "op": "correct",
+      "targetTitle": "Timestamp storage format for scheduled jobs",
+      "title": "Timestamp storage format for scheduled jobs, after the clock change incident",
+      "content": "Scheduled job times are stored as UTC instants with the originating IANA zone kept only for display. The previous format could not tell apart the two moments that render identically inside a daylight saving transition, and 214 reminders were delivered twice.",
+      "reason": "Superseded by incident review INC-4471: the previous storage format double-fired 214 reminders across the spring transition."
+    }
+  ],
+  "query": "How should the service persist the moment a reminder is due, given that an operator picks a time in their own region?",
+  "goldFacts": [
+    {
+      "key": "utc-instant-storage",
+      "matcher": { "allOf": ["stored as UTC instants with the originating IANA zone kept only for display"] },
+      "status": "current",
+      "supportedBy": ["s6"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/schedule.ts", "src/poller.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "wall-clock-storage-superseded",
+      "matcher": { "allOf": ["stored as local wall-clock strings with a separate IANA zone column"] },
+      "status": "stale",
+      "supportedBy": ["s2"],
+      "requiredFor": "bonus",
+      "discoverableFrom": ["src/schedule.ts"],
+      "repoDiscoverable": false
+    }
+  ]
+}

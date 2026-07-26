@@ -1,0 +1,180 @@
+{
+  "fixtureVersion": 1,
+  "name": "verified-command-documented",
+  "category": "verified-command",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# cartsvc\n\ncartsvc prices shopping carts: line totals, discount stacking, shipping, and\ntax. It is the only service allowed to talk to the payments provider.\n\n## Layout\n\n- src/pricing - line totals, discount stacking, and the tax table.\n- src/provider - the payments provider client.\n- contracts - recorded provider responses used by the contract suite.\n\n## Testing\n\nRun the unit suite with\n\n    npm test\n\nBefore opening a pull request, also run the provider contract suite with\n\n    npm run test:contract\n\nwhich replays the recorded provider responses in contracts/ instead of calling\nthe live payments provider, so the suite is offline, deterministic, and safe to\nrun from a laptop. CI runs both suites on every pull request; a red contract\nsuite blocks the merge queue.\n",
+      "package.json": "{\n  \"name\": \"cartsvc\",\n  \"version\": \"2.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"test:contract\": \"vitest run --config vitest.contract.config.ts\",\n    \"lint\": \"eslint src --ext .ts\"\n  },\n  \"dependencies\": {\n    \"decimal.js\": \"^10.4.3\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.5.4\",\n    \"vitest\": \"^2.0.5\"\n  }\n}\n",
+      "vitest.contract.config.ts": "import { defineConfig } from \"vitest/config\";\n\nexport default defineConfig({\n  test: {\n    include: [\"tests/contract/**/*.spec.ts\"],\n    setupFiles: [\"tests/contract/replay.ts\"],\n    env: { PROVIDER_MODE: \"replay\", CONTRACT_DIR: \"contracts\" },\n  },\n});\n",
+      "src/pricing/total.ts": "import Decimal from \"decimal.js\";\n\nexport interface CartLine {\n  sku: string;\n  quantity: number;\n  unitPrice: string;\n  oversized?: boolean;\n}\n\nexport function lineTotal(line: CartLine): Decimal {\n  return new Decimal(line.unitPrice).times(line.quantity);\n}\n\nexport function subtotal(lines: CartLine[]): Decimal {\n  return lines.reduce((sum, line) => sum.plus(lineTotal(line)), new Decimal(0));\n}\n",
+      "src/pricing/discount.ts": "import Decimal from \"decimal.js\";\n\nexport interface Discount {\n  code: string;\n  kind: \"percent\" | \"amount\";\n  value: string;\n  stackable: boolean;\n}\n\nexport function applyDiscounts(base: Decimal, discounts: Discount[]): Decimal {\n  const ordered = [...discounts].sort((a, b) => Number(b.stackable) - Number(a.stackable));\n  let running = base;\n  for (const discount of ordered) {\n    running = discount.kind === \"percent\"\n      ? running.times(new Decimal(1).minus(new Decimal(discount.value).dividedBy(100)))\n      : running.minus(discount.value);\n    if (!discount.stackable) break;\n  }\n  return Decimal.max(running, 0);\n}\n",
+      "src/provider/client.ts": "export interface ChargeRequest {\n  amountMinor: number;\n  currency: string;\n  lines: Array<{ sku: string; amountMinor: number }>;\n}\n\nexport interface ChargeResponse {\n  id: string;\n  status: \"succeeded\" | \"requires_action\" | \"failed\";\n}\n\nconst BASE_URL = process.env.PROVIDER_BASE_URL ?? \"https://api.payments.example\";\n\nexport async function createCharge(charge: ChargeRequest): Promise<ChargeResponse> {\n  if (process.env.PROVIDER_MODE === \"replay\") {\n    const { replayCharge } = await import(\"./replay.js\");\n    return replayCharge(charge);\n  }\n  const response = await fetch(BASE_URL + \"/v1/charges\", {\n    method: \"POST\",\n    headers: { \"content-type\": \"application/json\" },\n    body: JSON.stringify(charge),\n  });\n  return (await response.json()) as ChargeResponse;\n}\n",
+      "contracts/checkout-create.json": "{\n  \"request\": {\n    \"amountMinor\": 12450,\n    \"currency\": \"eur\",\n    \"lines\": [\n      { \"sku\": \"TENT-4P\", \"amountMinor\": 10999 },\n      { \"sku\": \"HANDLING-OVERSIZE\", \"amountMinor\": 1450 }\n    ]\n  },\n  \"response\": {\n    \"id\": \"ch_recorded_0001\",\n    \"status\": \"succeeded\"\n  }\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial cartsvc pricing service",
+        "files": [
+          "README.md",
+          "package.json",
+          "vitest.contract.config.ts",
+          "src/pricing/total.ts",
+          "src/pricing/discount.ts",
+          "src/provider/client.ts",
+          "contracts/checkout-create.json"
+        ]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Round tax per line instead of once on the cart total",
+      "status": "success",
+      "summary": "Tax was rounded once on the cart total, which drifted a cent away from what the invoicing system computes per line. Tax is now rounded half-up per line and the totals agree with invoicing on the whole regression corpus.",
+      "tests": [
+        {
+          "command": "npm test",
+          "exitCode": 0,
+          "summary": "184 unit cases pass"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "task": "Stop stacking a fixed-amount voucher on top of a percentage promotion",
+      "status": "success",
+      "summary": "Marketing found a pair of codes that stacked into a negative cart. Non-stackable discounts now short-circuit the chain and the cart floor is clamped at zero, so a bad code combination costs nothing instead of paying the customer.",
+      "tests": [
+        {
+          "command": "npm test -- discount",
+          "exitCode": 0,
+          "summary": "discount cases pass"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "task": "Charge a flat handling fee for oversized items in the cart",
+      "status": "success",
+      "summary": "Oversized items now carry a flat handling fee, added before tax. The first attempt sent the fee as a negative adjustment on the main line, and the payments provider rejected the charge; it is now a separate positive line item with its own sku. The contract suite is what caught it before the change reached staging.",
+      "tests": [
+        {
+          "command": "npm run test:contract",
+          "exitCode": 0,
+          "summary": "18 contract cases pass, including the oversized-handling charge shape"
+        }
+      ],
+      "notes": [
+        "The contract suite reads vitest.contract.config.ts, which points the provider client at the replay directory instead of the live host."
+      ],
+      "edits": {
+        "src/pricing/total.ts": "import Decimal from \"decimal.js\";\n\nexport interface CartLine {\n  sku: string;\n  quantity: number;\n  unitPrice: string;\n  oversized?: boolean;\n}\n\nconst OVERSIZED_HANDLING = new Decimal(\"14.50\");\n\nexport function lineTotal(line: CartLine): Decimal {\n  return new Decimal(line.unitPrice).times(line.quantity);\n}\n\nexport function subtotal(lines: CartLine[]): Decimal {\n  return lines.reduce((sum, line) => sum.plus(lineTotal(line)), new Decimal(0));\n}\n\n/** Handling is its own line so the provider sees a positive charge, not an adjustment. */\nexport function handlingLine(lines: CartLine[]): CartLine | null {\n  if (!lines.some((line) => line.oversized)) return null;\n  return { sku: \"HANDLING-OVERSIZE\", quantity: 1, unitPrice: OVERSIZED_HANDLING.toFixed(2) };\n}\n"
+      }
+    },
+    {
+      "id": "s4",
+      "task": "The pricing regression suite got slow after the fixture rewrite",
+      "status": "partial",
+      "summary": "The unit suite went from 12s to 70s once every case started building a full cart. Half of it is decimal.js allocation in the discount chain; the rest is fixture parsing. Parked after a first pass because the change that matters here is a shared cart builder, which needs its own review.",
+      "commands": [
+        {
+          "command": "npm test",
+          "exitCode": 0,
+          "summary": "suite passes, 70s wall clock"
+        }
+      ]
+    },
+    {
+      "id": "s5",
+      "task": "Investigate a provider timeout that leaves a cart in limbo",
+      "status": "failed",
+      "summary": "A charge that times out on the provider side leaves the cart marked pending with no way to reconcile it. Fixing this needs an idempotency key on the charge request and a reconciliation job, neither of which is a change we can land inside this ticket. Wrote up the failure mode and handed it back.",
+      "commands": [
+        {
+          "command": "npm test -- provider",
+          "exitCode": 1,
+          "summary": "timeout reconciliation case still red"
+        }
+      ]
+    },
+    {
+      "id": "s6",
+      "task": "Document how discount codes stack for the support team",
+      "status": "success",
+      "summary": "Wrote the stacking rules down: percentage promotions apply first, a non-stackable code wins outright, and the floor is zero. Support was guessing at this and giving customers answers that did not match what the service does.",
+      "tests": [
+        {
+          "command": "npm test -- discount",
+          "exitCode": 0,
+          "summary": "discount cases pass"
+        }
+      ]
+    }
+  ],
+  "query": "A teammate says the checkout pricing change needs the provider contract checks signed off before review. How are those executed here?",
+  "goldFacts": [
+    {
+      "key": "contract-command",
+      "matcher": {
+        "allOf": [
+          "npm run test:contract"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s3"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "README.md",
+        "package.json"
+      ],
+      "repoDiscoverable": true
+    },
+    {
+      "key": "contract-replays-recordings",
+      "matcher": {
+        "allOf": [
+          "recorded provider responses in contracts/"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s3"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "README.md"
+      ],
+      "repoDiscoverable": true
+    },
+    {
+      "key": "contract-config",
+      "matcher": {
+        "allOf": [
+          "vitest run --config vitest.contract.config.ts"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s3"
+      ],
+      "requiredFor": "bonus",
+      "discoverableFrom": [
+        "package.json"
+      ],
+      "repoDiscoverable": true
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "no-memory",
+      "metric": "answerCoverage",
+      "mode": "tie-or-win",
+      "rationale": "The invocation, what it replays, and the underlying vitest config are all spelled out in README.md and package.json scripts, which every arm receives as repository base context. Memory has nothing to add here, so an agent with no memory at all must reach the same coverage as RepoMind. If RepoMind wins this fixture, the repository base is under-specified and the benchmark is measuring the fixture rather than the product."
+    }
+  ]
+}

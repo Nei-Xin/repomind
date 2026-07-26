@@ -1,0 +1,102 @@
+{
+  "fixtureVersion": 1,
+  "name": "session-continuity",
+  "category": "session-continuity",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Webhook delivery\n\nA small service that delivers webhooks to customer endpoints, signs every\nrequest, and retries failures with exponential backoff.\n",
+      "package.json": "{\n  \"name\": \"webhook-delivery\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\"\n  }\n}\n",
+      "src/dispatcher.ts": "export interface Delivery {\n  id: string;\n  url: string;\n  attempt: number;\n}\n\nexport function nextAttempt(delivery: Delivery): Delivery {\n  return { ...delivery, attempt: delivery.attempt + 1 };\n}\n",
+      "src/signature.ts": "import { createHmac } from \"node:crypto\";\n\nexport function sign(secret: string, body: string): string {\n  return createHmac(\"sha256\", secret).update(body).digest(\"hex\");\n}\n",
+      "src/retry.ts": "export function backoffMs(attempt: number): number {\n  return 2 ** attempt * 1000;\n}\n"
+    },
+    "commits": [{ "message": "initial webhook delivery service", "files": ["README.md", "package.json", "src/dispatcher.ts", "src/signature.ts", "src/retry.ts"] }]
+  },
+  "history": [
+    {
+      "id": "d1",
+      "task": "Work out why deliveries stopped after the previous deploy",
+      "status": "success",
+      "summary": "The dispatcher stopped draining the queue after the previous deploy because the worker pool was left at zero. Restoring the configured pool size cleared the backlog in a few minutes, and the previous release notes now mention the setting.",
+      "decisions": ["The delivery worker pool size is read from config at boot and must never fall back to zero"]
+    },
+    {
+      "id": "d2",
+      "task": "Finish the open items left over from the signature rollout",
+      "status": "success",
+      "summary": "Closed the open items left from the signature rollout: the verifier rejects unknown algorithms, and the runbook now says where to find the shared secret and what to do when a customer rotates it.",
+      "tests": [{ "command": "npm test -- signature", "exitCode": 0, "summary": "signature suite passed" }]
+    },
+    {
+      "id": "d3",
+      "task": "Continue the retry tuning work that was paused last week",
+      "status": "success",
+      "summary": "Picked the retry tuning work back up. The p95 delivery latency stopped drifting once the jitter window was widened, and the piece of that plan still outstanding is a sustained load test.",
+      "decisions": ["Retry jitter is a full-width window, not a fixed fraction of the delay"]
+    },
+    {
+      "id": "d4",
+      "task": "Write down where failed deliveries end up once the queue drains",
+      "status": "partial",
+      "summary": "Documented where failed deliveries end up and how an operator replays them from the console. The design of the automatic drain is still open, so that part of the runbook is a placeholder.",
+      "decisions": ["Failed deliveries are parked in a separate bucket rather than dropped on the floor"]
+    },
+    {
+      "id": "d5",
+      "task": "Add structured logging to the dispatcher",
+      "status": "success",
+      "summary": "Every delivery attempt now logs a correlation id, the target host, and the attempt number, so an operator can follow one webhook from the queue all the way to the response without grepping.",
+      "edits": { "src/dispatcher.ts": "export interface Delivery {\n  id: string;\n  url: string;\n  attempt: number;\n  correlationId: string;\n}\n\nexport function nextAttempt(delivery: Delivery): Delivery {\n  return { ...delivery, attempt: delivery.attempt + 1 };\n}\n" }
+    },
+    {
+      "id": "d6",
+      "task": "Reproduce the duplicate delivery reports from the previous release",
+      "status": "failed",
+      "summary": "Could not reproduce the duplicate deliveries customers reported after the previous release. The request log shows a single attempt for every id they sent, so the work stopped there and the report is unexplained.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "d7",
+      "task": "Trim the payload kept for each delivery attempt",
+      "status": "success",
+      "summary": "Truncated stored response bodies to four kilobytes, which halved the attempt table without losing the part operators actually read during an incident.",
+      "tests": [{ "command": "npm test -- storage", "exitCode": 0, "summary": "storage suite passed" }]
+    },
+    {
+      "id": "d8",
+      "task": "Split the retry loop out of the dispatcher into its own module",
+      "status": "success",
+      "summary": "Moved the retry loop into its own module and wired the dispatcher to call it. The exponential backoff ceiling is still hard-coded at thirty seconds, and the dead-letter hand-off was deliberately untouched, so nothing drains the parked deliveries yet.",
+      "edits": { "src/retry.ts": "const CEILING_MS = 30_000;\n\nexport function backoffMs(attempt: number): number {\n  return Math.min(CEILING_MS, 2 ** attempt * 1000);\n}\n\nexport function shouldRetry(attempt: number): boolean {\n  return attempt < 8;\n}\n" }
+    }
+  ],
+  "query": "Continue from where the previous piece of work stopped and finish the part that was left open.",
+  "goldFacts": [
+    {
+      "key": "open-thread",
+      "matcher": { "allOf": ["nothing drains the parked deliveries yet"] },
+      "status": "current",
+      "supportedBy": ["d8"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/retry.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "backoff-ceiling",
+      "matcher": { "allOf": ["backoff ceiling is still hard-coded at thirty seconds"] },
+      "status": "current",
+      "supportedBy": ["d8"],
+      "requiredFor": "bonus",
+      "discoverableFrom": ["src/retry.ts"],
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "recency-k",
+      "metric": "tokensToCoverage",
+      "rationale": "The question is a direct continuation of the newest session and carries no distinctive vocabulary, so ranked lexical search has nothing to lock onto: the words it does share are common enough to rank half the history above the one session that matters. Taking the newest memories with no query at all puts the answer first and reaches coverage in a fraction of the tokens."
+    }
+  ]
+}

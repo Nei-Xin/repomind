@@ -91,10 +91,11 @@ export function replayFixture(fixture: Fixture, placement?: "relevant-early" | "
       }
       const patch = diffAgainstHead(repositoryPath);
       sessionDiffs.set(session.id, patch ? renderDiff(Object.keys(session.edits ?? {}), patch) : null);
-      if (Object.keys(session.edits ?? {}).length) {
-        git(repositoryPath, "add", ".");
-        git(repositoryPath, "commit", "-q", "-m", `session ${session.id}`);
-      }
+      // The session is committed to RepoMind while the working tree still holds
+      // the edits, exactly as a real agent does it. Committing to Git first
+      // would leave `git status` empty, so no extracted memory would record a
+      // related file and the file-hash staleness path the tier-2 gate measures
+      // would be unreachable from any fixture.
       core.commitSession({
         sessionId: started.sessionId,
         idempotencyKey: `fixture-${fixture.name}-${session.id}`,
@@ -104,6 +105,10 @@ export function replayFixture(fixture: Fixture, placement?: "relevant-early" | "
         ...(session.tests ? { tests: session.tests } : {}),
         ...(session.commands ? { commands: session.commands } : {}),
       });
+      if (Object.keys(session.edits ?? {}).length) {
+        git(repositoryPath, "add", ".");
+        git(repositoryPath, "commit", "-q", "-m", `session ${session.id}`);
+      }
       // Notes are human knowledge the deterministic extractor cannot derive.
       // They always reach the raw corpus; they reach RepoMind only when the
       // fixture says a person recorded them.

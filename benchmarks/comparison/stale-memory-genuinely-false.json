@@ -1,0 +1,112 @@
+{
+  "fixtureVersion": 1,
+  "name": "stale-memory-genuinely-false",
+  "category": "stale-memory",
+  "adversarial": false,
+  "repo": {
+    "files": {
+      "README.md": "# Thumbnailer\n\nAn HTTP service that accepts a picture and returns three resized variants.\nDecoding runs in a worker process so a malformed file cannot take the API down.\n\nRun `npm test` before pushing.\n",
+      "package.json": "{\n  \"name\": \"thumbnailer\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"smoke\": \"vitest run --dir smoke\"\n  }\n}\n",
+      "src/server.ts": "import { withinUploadLimit } from \"./thumbnails/limits.js\";\n\nexport interface Upload {\n  contentType: string;\n  bytes: number;\n}\n\nexport function accept(upload: Upload): { status: number; reason?: string } {\n  if (!withinUploadLimit(upload.bytes)) return { status: 413, reason: \"too large\" };\n  return { status: 202 };\n}\n",
+      "src/thumbnails/limits.ts": "export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;\n\nexport function withinUploadLimit(bytes: number): boolean {\n  return bytes <= MAX_UPLOAD_BYTES;\n}\n",
+      "src/thumbnails/resize.ts": "export const VARIANTS = [64, 256, 1024] as const;\n\nexport function variantsFor(width: number): number[] {\n  return VARIANTS.filter((size) => size <= width);\n}\n"
+    },
+    "commits": [{ "message": "initial thumbnailer service", "files": ["README.md", "package.json", "src/server.ts", "src/thumbnails/limits.ts", "src/thumbnails/resize.ts"] }]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Answer with 415 when the posted body is not a picture at all",
+      "status": "success",
+      "summary": "The endpoint now checks the declared content type first and answers 415 for anything that is not a picture, instead of failing deep inside the decoder.",
+      "tests": [{ "command": "npm test -- server", "exitCode": 0, "summary": "8 endpoint cases passed" }],
+      "edits": {
+        "src/server.ts": "import { withinUploadLimit } from \"./thumbnails/limits.js\";\n\nconst SUPPORTED = new Set([\"image/jpeg\", \"image/png\", \"image/webp\"]);\n\nexport interface Upload {\n  contentType: string;\n  bytes: number;\n}\n\nexport function accept(upload: Upload): { status: number; reason?: string } {\n  if (!SUPPORTED.has(upload.contentType)) return { status: 415, reason: \"unsupported type\" };\n  if (!withinUploadLimit(upload.bytes)) return { status: 413, reason: \"too large\" };\n  return { status: 202 };\n}\n"
+      }
+    },
+    {
+      "id": "s2",
+      "task": "Keep resized variants on disk so a repeat request is free",
+      "status": "success",
+      "summary": "Resized variants are cached on disk under a content hash, so a repeat request for the same picture skips decoding entirely.",
+      "tests": [{ "command": "npm test -- resize", "exitCode": 0, "summary": "cache hit and miss paths both pass" }],
+      "edits": {
+        "src/thumbnails/resize.ts": "import { createHash } from \"node:crypto\";\n\nexport const VARIANTS = [64, 256, 1024] as const;\n\nexport function variantsFor(width: number): number[] {\n  return VARIANTS.filter((size) => size <= width);\n}\n\nexport function cacheKey(body: Buffer, size: number): string {\n  return `${createHash(\"sha256\").update(body).digest(\"hex\")}-${size}`;\n}\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Work out where the resident memory spike comes from on a busy afternoon",
+      "status": "partial",
+      "summary": "Traced the resident memory spike to concurrent decoding of very large pictures. Recorded the measurements but did not change the guard, because the right ceiling was still under discussion.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "s4",
+      "task": "Stop the resize worker from being killed while decoding an oversized picture",
+      "status": "success",
+      "summary": "Tightened the guard in src/thumbnails/limits.ts so the service rejects uploads larger than 8 MB before anything is decoded, which is what stopped the resize worker from being killed under load.",
+      "decisions": ["The size guard runs before decoding, never after: a picture that is refused must never reach the decoder"],
+      "tests": [{ "command": "npm test -- limits", "exitCode": 0, "summary": "guard refuses an oversized body and accepts one exactly at the ceiling" }],
+      "edits": {
+        "src/thumbnails/limits.ts": "export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;\n\nexport function withinUploadLimit(bytes: number): boolean {\n  return bytes <= MAX_UPLOAD_BYTES;\n}\n"
+      }
+    },
+    {
+      "id": "s5",
+      "task": "Write down which variant widths the service hands back",
+      "status": "success",
+      "summary": "Listed the three variant widths in the readme so callers stop asking which sizes exist.",
+      "edits": {
+        "README.md": "# Thumbnailer\n\nAn HTTP service that accepts a picture and returns three resized variants.\nDecoding runs in a worker process so a malformed file cannot take the API down.\n\n## Variants\n\nThe service returns widths of 64, 256, and 1024 pixels, skipping any variant\nwider than the original.\n\nRun `npm test` before pushing.\n"
+      }
+    },
+    {
+      "id": "s6",
+      "task": "Add an end to end check that walks a sample picture through the whole pipeline",
+      "status": "success",
+      "summary": "Added an end to end check that posts a sample picture and asserts three variants come back with the right widths.",
+      "tests": [{ "command": "npm run smoke -- thumbnails", "exitCode": 0, "summary": "three variants returned with the expected widths" }],
+      "edits": {
+        "src/server.ts": "import { withinUploadLimit } from \"./thumbnails/limits.js\";\nimport { variantsFor } from \"./thumbnails/resize.js\";\n\nconst SUPPORTED = new Set([\"image/jpeg\", \"image/png\", \"image/webp\"]);\n\nexport interface Upload {\n  contentType: string;\n  bytes: number;\n  width: number;\n}\n\nexport function accept(upload: Upload): { status: number; reason?: string; variants?: number[] } {\n  if (!SUPPORTED.has(upload.contentType)) return { status: 415, reason: \"unsupported type\" };\n  if (!withinUploadLimit(upload.bytes)) return { status: 413, reason: \"too large\" };\n  return { status: 202, variants: variantsFor(upload.width) };\n}\n"
+      }
+    },
+    {
+      "id": "s7",
+      "task": "Widen the worker pool for the nightly re-render",
+      "status": "success",
+      "summary": "Widened the nightly re-render pool from two workers to five after the cache landed; the run finishes inside its window again.",
+      "edits": {
+        "src/thumbnails/resize.ts": "import { createHash } from \"node:crypto\";\n\nexport const VARIANTS = [64, 256, 1024] as const;\nexport const NIGHTLY_WORKERS = 5;\n\nexport function variantsFor(width: number): number[] {\n  return VARIANTS.filter((size) => size <= width);\n}\n\nexport function cacheKey(body: Buffer, size: number): string {\n  return `${createHash(\"sha256\").update(body).digest(\"hex\")}-${size}`;\n}\n"
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "kind": "write",
+      "path": "src/thumbnails/limits.ts",
+      "content": "export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;\n\nexport function withinUploadLimit(bytes: number): boolean {\n  return bytes <= MAX_UPLOAD_BYTES;\n}\n"
+    }
+  ],
+  "query": "How large a picture may a caller post to the resize endpoint today?",
+  "goldFacts": [
+    {
+      "key": "upload-ceiling",
+      "matcher": { "allOf": ["rejects uploads larger than 8 MB"] },
+      "status": "stale",
+      "staleDetectability": "file-hash",
+      "supportedBy": ["s4"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/thumbnails/limits.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "smoke-command",
+      "matcher": { "allOf": ["npm run smoke -- thumbnails"] },
+      "status": "current",
+      "supportedBy": ["s6"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ]
+}

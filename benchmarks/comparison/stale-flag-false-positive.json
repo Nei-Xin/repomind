@@ -1,0 +1,117 @@
+{
+  "fixtureVersion": 1,
+  "name": "stale-flag-false-positive",
+  "category": "stale-flag-false-positive",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Presence gateway\n\nA WebSocket gateway that tracks which members of a room are online. A socket\nthat goes quiet for too long is dropped by the load balancer sitting in front\nof this service.\n\nRun `npm test` before pushing.\n",
+      "package.json": "{\n  \"name\": \"presence-gateway\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint src\"\n  }\n}\n",
+      "src/gateway.ts": "import { nextHeartbeatAt } from \"./presence/heartbeat.js\";\n\nexport interface Socket {\n  id: string;\n  lastSeenMs: number;\n}\n\nexport function scheduleNext(socket: Socket): number {\n  return nextHeartbeatAt(socket.lastSeenMs);\n}\n",
+      "src/presence/heartbeat.ts": "export const HEARTBEAT_INTERVAL_MS = 45_000;\n\nexport function nextHeartbeatAt(now: number): number {\n  return now + HEARTBEAT_INTERVAL_MS;\n}\n",
+      "src/presence/registry.ts": "export class PresenceRegistry {\n  private readonly online = new Map<string, number>();\n\n  mark(memberId: string, atMs: number): void {\n    this.online.set(memberId, atMs);\n  }\n\n  members(): string[] {\n    return [...this.online.keys()].sort();\n  }\n}\n"
+    },
+    "commits": [{ "message": "initial presence gateway", "files": ["README.md", "package.json", "src/gateway.ts", "src/presence/heartbeat.ts", "src/presence/registry.ts"] }]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Refuse a socket upgrade that arrives without a token",
+      "status": "success",
+      "summary": "An upgrade request without a token is now refused at the handshake instead of opening a socket that can never be attributed to a member.",
+      "tests": [{ "command": "npm test -- gateway", "exitCode": 0, "summary": "7 handshake cases passed" }],
+      "edits": {
+        "src/gateway.ts": "import { nextHeartbeatAt } from \"./presence/heartbeat.js\";\n\nexport interface Socket {\n  id: string;\n  lastSeenMs: number;\n  token?: string;\n}\n\nexport function upgradeAllowed(socket: Socket): boolean {\n  return Boolean(socket.token);\n}\n\nexport function scheduleNext(socket: Socket): number {\n  return nextHeartbeatAt(socket.lastSeenMs);\n}\n"
+      }
+    },
+    {
+      "id": "s2",
+      "task": "Record why a socket closed so a timeout is distinguishable from a member leaving",
+      "status": "success",
+      "summary": "Close events now carry a reason code, so an operator can tell a socket dropped by the balancer apart from a member who simply left the room.",
+      "edits": {
+        "src/gateway.ts": "import { nextHeartbeatAt } from \"./presence/heartbeat.js\";\n\nexport type CloseReason = \"member_left\" | \"balancer_timeout\" | \"auth_failed\";\n\nexport interface Socket {\n  id: string;\n  lastSeenMs: number;\n  token?: string;\n}\n\nexport function upgradeAllowed(socket: Socket): boolean {\n  return Boolean(socket.token);\n}\n\nexport function scheduleNext(socket: Socket): number {\n  return nextHeartbeatAt(socket.lastSeenMs);\n}\n\nexport function closeReasonFor(socket: Socket, nowMs: number, idleBudgetMs: number): CloseReason {\n  return nowMs - socket.lastSeenMs > idleBudgetMs ? \"balancer_timeout\" : \"member_left\";\n}\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Stop long lived sockets from being torn down by the balancer",
+      "status": "success",
+      "summary": "Clients now send a heartbeat every 20 seconds instead of every 45, which sits comfortably inside the balancer's 30 second idle cut-off, so a quiet but healthy socket is no longer torn down mid-session.",
+      "decisions": ["The heartbeat interval is dictated by the balancer's idle cut-off, so it is never tuned for client battery life alone"],
+      "tests": [{ "command": "npm test -- heartbeat", "exitCode": 0, "summary": "interval stays under the idle cut-off for every configured environment" }],
+      "edits": {
+        "src/presence/heartbeat.ts": "export const HEARTBEAT_INTERVAL_MS = 20_000;\n\nexport function nextHeartbeatAt(now: number): number {\n  return now + HEARTBEAT_INTERVAL_MS;\n}\n"
+      }
+    },
+    {
+      "id": "s4",
+      "task": "Find out why online counts drift apart after a rolling deploy",
+      "status": "partial",
+      "summary": "Reproduced the drift in online counts during a rolling deploy and traced it to two instances owning the same room briefly. Left the fix open, it needs a shared store.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "s5",
+      "task": "Evict a member from the registry once their socket never comes back",
+      "status": "success",
+      "summary": "The registry now evicts a member whose socket has not reappeared within three intervals, so a crashed client stops showing as online forever.",
+      "tests": [{ "command": "npm test -- presence-registry", "exitCode": 0, "summary": "eviction fires after three missed intervals, and a socket that comes back in time is left alone" }],
+      "edits": {
+        "src/presence/registry.ts": "export class PresenceRegistry {\n  private readonly online = new Map<string, number>();\n\n  mark(memberId: string, atMs: number): void {\n    this.online.set(memberId, atMs);\n  }\n\n  evictStale(nowMs: number, budgetMs: number): string[] {\n    const dropped: string[] = [];\n    for (const [memberId, seenAt] of this.online) {\n      if (nowMs - seenAt > budgetMs) {\n        this.online.delete(memberId);\n        dropped.push(memberId);\n      }\n    }\n    return dropped.sort();\n  }\n\n  members(): string[] {\n    return [...this.online.keys()].sort();\n  }\n}\n"
+      }
+    },
+    {
+      "id": "s6",
+      "task": "Write the handshake protocol down in the readme",
+      "status": "success",
+      "summary": "Described the handshake and the close reason codes in the readme so a client author does not have to read the gateway source.",
+      "edits": {
+        "README.md": "# Presence gateway\n\nA WebSocket gateway that tracks which members of a room are online. A socket\nthat goes quiet for too long is dropped by the load balancer sitting in front\nof this service.\n\n## Handshake\n\nOpen a socket with a token, then keep it alive. A close event always carries a\nreason code so the client can decide whether to reconnect.\n\nRun `npm test` before pushing.\n"
+      }
+    },
+    {
+      "id": "s7",
+      "task": "Batch presence fan-out so a busy room does not flood the gateway",
+      "status": "success",
+      "summary": "Presence changes for a busy room are now batched into one frame per tick by a new fan-out module, which cut the outbound frame count on the largest rooms by roughly an order of magnitude.",
+      "edits": {
+        "src/presence/fanout.ts": "const pending = new Set<string>();\n\nexport function queueChange(memberId: string): void {\n  pending.add(memberId);\n}\n\n/** One frame per tick, however many changes a busy room produced. */\nexport function drainFrame(): string[] {\n  const batch = [...pending].sort();\n  pending.clear();\n  return batch;\n}\n"
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "kind": "write",
+      "path": "src/presence/heartbeat.ts",
+      "content": "// This number is dictated by infrastructure, not by the client team. Check the\n// balancer's idle configuration before proposing a different value.\nexport const HEARTBEAT_INTERVAL_MS = 20_000;\n\nexport function nextHeartbeatAt(now: number): number {\n  return now + HEARTBEAT_INTERVAL_MS;\n}\n"
+    }
+  ],
+  "query": "How often does a connected client have to ping the gateway to keep its socket from being closed?",
+  "goldFacts": [
+    {
+      "key": "ping-cadence",
+      "matcher": { "allOf": ["send a heartbeat every 20 seconds"] },
+      "status": "current",
+      "supportedBy": ["s3"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/presence/heartbeat.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "eviction-command",
+      "matcher": { "allOf": ["npm test -- presence-registry"] },
+      "status": "current",
+      "supportedBy": ["s5"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ],
+  "designedCost": [
+    {
+      "metric": "overWarnRate",
+      "min": 0.0001,
+      "rationale": "The mutation only prepends a comment to src/presence/heartbeat.ts; the interval the memory records is untouched and the memory is still true. File-hash staleness cannot read intent, so RepoMind flags the memory anyway. This fixture exists to put a number on how often that costs an agent a needless re-verification."
+    }
+  ]
+}

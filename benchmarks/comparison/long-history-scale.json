@@ -1,0 +1,236 @@
+{
+  "fixtureVersion": 1,
+  "name": "long-history-scale",
+  "category": "long-history-scale",
+  "adversarial": false,
+  "placements": ["relevant-early", "relevant-late"],
+  "repo": {
+    "files": {
+      "README.md": "# Catalog import\n\nSuppliers upload catalog files, the reader parses them, the validator checks\nthem against the catalog schema, and accepted rows are written to the store.\n",
+      "package.json": "{\n  \"name\": \"catalog-import\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\"\n  }\n}\n",
+      "src/reader.ts": "export function readHeader(line: string): string[] {\n  return line.split(\",\").map((cell) => cell.trim());\n}\n",
+      "src/validator.ts": "export function validateRow(row: string[], columns: number): boolean {\n  return row.length === columns;\n}\n",
+      "src/schema.ts": "export const CATALOG_COLUMNS = [\"sku\", \"name\", \"price\", \"currency\"];\n"
+    },
+    "commits": [{ "message": "initial catalog import pipeline", "files": ["README.md", "package.json", "src/reader.ts", "src/validator.ts", "src/schema.ts"] }]
+  },
+  "history": [
+    {
+      "id": "i1",
+      "task": "Debug catalog files that fail on their very first line",
+      "status": "success",
+      "summary": "Every failing file came out of a Windows editor: the first header cell carried a byte-order mark, so the column name never matched the schema and the whole file was rejected as unknown.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "i2",
+      "task": "Make the reader tolerate a leading marker on the header line",
+      "status": "success",
+      "summary": "The reader now strips the byte-order mark before the header row is parsed, so files saved by desktop editors load without any manual cleanup step.",
+      "edits": { "src/reader.ts": "const MARK = \"\\uFEFF\";\n\nexport function readHeader(line: string): string[] {\n  const clean = line.startsWith(MARK) ? line.slice(1) : line;\n  return clean.split(\",\").map((cell) => cell.trim());\n}\n" }
+    },
+    {
+      "id": "i3",
+      "task": "Settle where character decoding belongs in the pipeline",
+      "status": "success",
+      "summary": "Agreed that decoding happens in the reader, never in the validator, so the validator only ever sees normalised text and its rules stay about content rather than about bytes.",
+      "decisions": ["Decoding belongs to the reader; the validator receives normalised text only"]
+    },
+    {
+      "id": "i4",
+      "task": "Add regression coverage for the marked header case",
+      "status": "success",
+      "summary": "Added an encoding regression suite that feeds a marked file through the whole pipeline and asserts the header maps cleanly onto the catalog columns.",
+      "tests": [{ "command": "npm test -- encoding", "exitCode": 0, "summary": "encoding regression suite passed" }]
+    },
+    {
+      "id": "d01",
+      "task": "Speed up the duplicate SKU check",
+      "status": "success",
+      "summary": "Replaced the per-row lookup with a single set built up front, which cut the duplicate check from minutes to seconds on a large catalog."
+    },
+    {
+      "id": "d02",
+      "task": "Report every validation error instead of only the first",
+      "status": "success",
+      "summary": "The validator collects every problem in a file and returns them together, so a supplier fixes one upload instead of ten."
+    },
+    {
+      "id": "d03",
+      "task": "Accept semicolon delimited files",
+      "status": "success",
+      "summary": "Delimiter detection samples the opening lines, so semicolon files from European suppliers load without a manual conversion.",
+      "decisions": ["Delimiter detection samples the first five lines and never guesses from the file extension"]
+    },
+    {
+      "id": "d04",
+      "task": "Trim trailing whitespace from every cell",
+      "status": "success",
+      "summary": "Cells are trimmed on read, which removed a long tail of spurious mismatches on supplier product names."
+    },
+    {
+      "id": "d05",
+      "task": "Add a dry run flag to the import command",
+      "status": "success",
+      "summary": "The import command takes a dry run flag that checks a file and prints the report without writing any rows.",
+      "tests": [{ "command": "npm test -- cli", "exitCode": 0, "summary": "cli suite passed" }]
+    },
+    {
+      "id": "d06",
+      "task": "Investigate a stuck import job",
+      "status": "partial",
+      "summary": "The stuck job was waiting on a database lock held by a long reporting query; killing the report let it finish, but the locking pattern is unchanged."
+    },
+    {
+      "id": "d07",
+      "task": "Document the supplier column mapping",
+      "status": "success",
+      "summary": "Wrote down how supplier column names map onto catalog fields so support can answer mapping questions without reading code.",
+      "edits": { "docs/mapping.md": "# Supplier column mapping\n\n| Supplier column | Catalog field |\n| --- | --- |\n| Artikelnummer | sku |\n| Bezeichnung | name |\n" }
+    },
+    {
+      "id": "d08",
+      "task": "Reject files larger than fifty megabytes",
+      "status": "success",
+      "summary": "Uploads above fifty megabytes are turned away up front with a clear message instead of timing out halfway through."
+    },
+    {
+      "id": "d09",
+      "task": "Fix the price rounding on discounted items",
+      "status": "success",
+      "summary": "Discounted prices are rounded once at the end instead of at each step, which removed the one cent drift suppliers kept reporting."
+    },
+    {
+      "id": "d10",
+      "task": "Retry the catalog write on a transient database error",
+      "status": "success",
+      "summary": "The catalog write retries three times on a transient error before giving up, which cleared most of the nightly noise."
+    },
+    {
+      "id": "d11",
+      "task": "Move import logs into their own table",
+      "status": "success",
+      "summary": "Import logs live in their own table now, so a failed run can be inspected without scanning the application log.",
+      "edits": { "src/logs.ts": "export interface ImportLogEntry {\n  runId: string;\n  level: \"info\" | \"error\";\n  message: string;\n}\n" }
+    },
+    {
+      "id": "d12",
+      "task": "Add a progress endpoint for long imports",
+      "status": "success",
+      "summary": "A progress endpoint reports how many rows were processed and how many were turned away while a run is still going.",
+      "tests": [{ "command": "npm test -- progress", "exitCode": 0, "summary": "progress suite passed" }]
+    },
+    {
+      "id": "d13",
+      "task": "Investigate a memory spike on very wide files",
+      "status": "failed",
+      "summary": "Could not pin down the memory spike on files with three hundred columns; the profile was dominated by the parser but nothing obvious stood out."
+    },
+    {
+      "id": "d14",
+      "task": "Normalise supplier names before matching",
+      "status": "success",
+      "summary": "Supplier names are lowercased and stripped of punctuation before matching, which cut the unmatched rate noticeably."
+    },
+    {
+      "id": "d15",
+      "task": "Let support re-run a failed import",
+      "status": "success",
+      "summary": "Support can re-run a failed import from the console with the original upload, which removed most of the back and forth with suppliers."
+    },
+    {
+      "id": "d16",
+      "task": "Cache the schema between imports",
+      "status": "success",
+      "summary": "The schema loads once per process instead of once per file, which removed a visible pause at the start of every run.",
+      "decisions": ["The catalog schema is cached per process and reloaded only on deploy"]
+    },
+    {
+      "id": "d17",
+      "task": "Tighten the currency field rules",
+      "status": "success",
+      "summary": "The currency field is checked against a fixed list of codes, and a bad code is reported together with the offending row number."
+    },
+    {
+      "id": "d18",
+      "task": "Split the importer into reader and writer packages",
+      "status": "success",
+      "summary": "The importer is split so the parser can be exercised without a database, which made those tests much faster.",
+      "edits": { "src/writer.ts": "export function writeRows(rows: string[][]): number {\n  return rows.length;\n}\n" }
+    },
+    {
+      "id": "d19",
+      "task": "Warn when a file has no rows",
+      "status": "success",
+      "summary": "An empty upload produces a warning and a zero row report instead of a silent success."
+    },
+    {
+      "id": "d20",
+      "task": "Back-fill the missing product images",
+      "status": "partial",
+      "summary": "Back-filled images for most products; a few hundred remain because their supplier links are dead, and that list went to the catalog team."
+    },
+    {
+      "id": "d21",
+      "task": "Make the price column accept a comma decimal separator",
+      "status": "success",
+      "summary": "Prices written with a comma decimal separator are accepted now, which is how most continental suppliers export their sheets."
+    },
+    {
+      "id": "d22",
+      "task": "Send a summary mail when a run finishes",
+      "status": "success",
+      "summary": "A short mail goes out at the end of every run with counts and a link to the log, which replaced the manual check people were doing."
+    },
+    {
+      "id": "d23",
+      "task": "Drop the unused legacy import endpoint",
+      "status": "success",
+      "summary": "Removed the legacy endpoint nobody had called in six months, along with its tests and its entry in the routing table."
+    },
+    {
+      "id": "d24",
+      "task": "Investigate slow writes during the evening batch",
+      "status": "partial",
+      "summary": "Evening writes are slow because the batch overlaps the analytics export; measured it, but did not change the schedule."
+    }
+  ],
+  "query": "Supplier uploads keep failing on the header line; what did we find out about the cause, and what did we settle on?",
+  "goldFacts": [
+    {
+      "key": "bom-root-cause",
+      "matcher": { "allOf": ["the first header cell carried a byte-order mark"] },
+      "status": "current",
+      "supportedBy": ["i1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/reader.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "bom-fix",
+      "matcher": { "allOf": ["strips the byte-order mark before the header row is parsed"] },
+      "status": "current",
+      "supportedBy": ["i2"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/reader.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "decoding-boundary",
+      "matcher": { "allOf": ["decoding happens in the reader, never in the validator"] },
+      "status": "current",
+      "supportedBy": ["i3"],
+      "requiredFor": "bonus",
+      "discoverableFrom": ["src/reader.ts", "src/validator.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "encoding-suite-command",
+      "matcher": { "allOf": ["npm test -- encoding"] },
+      "status": "current",
+      "supportedBy": ["i4"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ]
+}

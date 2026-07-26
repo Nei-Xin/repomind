@@ -1,0 +1,96 @@
+{
+  "fixtureVersion": 1,
+  "name": "paraphrase-recall",
+  "category": "paraphrase-recall",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Slate Tiles\n\nSlate Tiles is a raster map tile server. It renders 256 px PNG tiles from a\nvector source and serves them under /tiles/{z}/{x}/{y}.png.\n\n## Running\n\n- `npm run build` compiles the server into dist/.\n- `npm test` runs the tile suite.\n- `npm start` serves tiles on port 8080.\n\nOperators usually put a CDN in front of this service; see docs/caching.md in\nthe deployment repository for the headers we expect.\n",
+      "package.json": "{\n  \"name\": \"slate-tiles\",\n  \"version\": \"0.4.2\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"start\": \"node dist/server.js\"\n  }\n}\n",
+      "src/server.ts": "import { tileBounds } from \"./tiles/bounds.js\";\nimport { renderTile } from \"./tiles/render.js\";\n\nconst EMPTY = Buffer.alloc(0);\n\nexport async function handleTile(z: number, x: number, y: number): Promise<Buffer> {\n  const bounds = tileBounds(z, x, y);\n  if (!bounds) return EMPTY;\n  return renderTile(bounds);\n}\n",
+      "src/tiles/bounds.ts": "export interface Bounds {\n  west: number;\n  south: number;\n  east: number;\n  north: number;\n}\n\n/** Web Mercator cuts off here; anything beyond it is not representable. */\nconst MAX_LATITUDE = 85.0511287798;\n\nexport function tileBounds(z: number, x: number, y: number): Bounds | null {\n  const size = 2 ** z;\n  if (x < 0 || y < 0 || x >= size || y >= size) return null;\n  const north = latitudeAt(y / size);\n  const south = latitudeAt((y + 1) / size);\n  if (north > MAX_LATITUDE || south < -MAX_LATITUDE) return null;\n  return {\n    west: -180 + (360 * x) / size,\n    south,\n    east: -180 + (360 * (x + 1)) / size,\n    north,\n  };\n}\n\nfunction latitudeAt(fraction: number): number {\n  const value = Math.PI * (1 - 2 * fraction);\n  return (180 / Math.PI) * Math.atan(Math.sinh(value));\n}\n",
+      "src/tiles/render.ts": "import type { Bounds } from \"./bounds.js\";\n\nconst TILE_PX = 256;\n\nexport async function renderTile(bounds: Bounds): Promise<Buffer> {\n  const pixels = Buffer.alloc(TILE_PX * TILE_PX * 4);\n  void bounds;\n  return pixels;\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial slate tiles server",
+        "files": ["README.md", "package.json", "src/server.ts", "src/tiles/bounds.ts", "src/tiles/render.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "d1",
+      "task": "Return 503 from a health endpoint when our render pool is saturated",
+      "status": "success",
+      "summary": "Added /healthz so our load balancer can drain a node. It reports queue depth and returns 503 at high pool utilisation instead of serving slow tiles.",
+      "decisions": ["Health checks report saturation, never liveness only: a node that answers but cannot render must be drained"],
+      "tests": [{ "command": "npm test -- health", "exitCode": 0, "summary": "6 health cases passed" }]
+    },
+    {
+      "id": "g1",
+      "task": "Raster tiles come back blank beyond zoom 14 on polar edges",
+      "status": "success",
+      "summary": "Traced blank raster tiles to Mercator bounds clamping: the clamp rejected any request whose upper edge exceeded 85.05 degrees, so every request past that limit produced an empty buffer instead of clipped raster. Widening the clamp to full projection extent and filling leftover space with ocean colour restored those tiles."
+    },
+    {
+      "id": "d2",
+      "task": "Style changes stay invisible until customers hard-refresh",
+      "status": "success",
+      "summary": "Added a style hash to every tile URL so browsers stop reusing old images. Customers who scroll around no longer see new and old styling mixed in one viewport.",
+      "decisions": ["Every tile URL carries the style hash; cache invalidation is a URL change, never a purge"],
+      "tests": [{ "command": "npm test -- cache", "exitCode": 0, "summary": "11 cache-key cases passed" }]
+    },
+    {
+      "id": "d3",
+      "task": "Profile the renderer when many clients pan at once",
+      "status": "success",
+      "summary": "Profiled the render pool while clients pan a busy map viewport. Most time goes to PNG encoding rather than to geometry, so we raised the encoder thread count and throughput rose at high concurrency.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "d4",
+      "task": "Warm the edge cache for customers in Australia",
+      "status": "partial",
+      "summary": "Measured delivery latency from our Sydney edge and found it dominated by cold cache misses near region boundaries, so we now warm the busiest map areas on deploy. Coverage for inland regions is still thin.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    }
+  ],
+  "query": "Customers keep seeing white squares in our slippy map when they scroll far north; nothing appears at high magnification near Greenland.",
+  "goldFacts": [
+    {
+      "key": "clamp-root-cause",
+      "matcher": { "allOf": ["the clamp rejected any request whose upper edge exceeded 85.05 degrees"] },
+      "status": "current",
+      "supportedBy": ["g1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/tiles/bounds.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "clamp-fix",
+      "matcher": { "allOf": ["widening the clamp to full projection extent"] },
+      "status": "current",
+      "supportedBy": ["g1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/tiles/bounds.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "ocean-fill",
+      "matcher": { "allOf": ["filling leftover space with ocean colour"] },
+      "status": "current",
+      "supportedBy": ["g1"],
+      "requiredFor": "bonus",
+      "discoverableFrom": ["src/tiles/render.ts"],
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "full-history",
+      "metric": "answerCoverage",
+      "rationale": "The gold session states the answer in vocabulary that shares no token with the query: an operator reports white squares at high magnification near Greenland, the session recorded blank raster tiles beyond zoom 14 on polar edges. full-history carries the session verbatim and therefore holds every gold fact, while RepoMind's purely lexical retrieval cannot surface a memory with zero query-term overlap. This fixture exists to keep the missing vector-retrieval gap visible in the numbers."
+    }
+  ]
+}

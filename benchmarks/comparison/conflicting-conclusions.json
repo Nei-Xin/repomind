@@ -1,0 +1,132 @@
+{
+  "fixtureVersion": 1,
+  "name": "conflicting-conclusions",
+  "category": "conflicting-conclusions",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Relay\n\nOutbound webhook delivery for the platform.\n\nProducers enqueue a delivery, a pool of dispatch workers picks it up, and a\nfailed send is re-attempted with backoff until it succeeds or exhausts its\nbudget. Deliveries that exhaust the budget are parked for support to inspect.\n",
+      "package.json": "{\n  \"name\": \"relay\",\n  \"private\": true,\n  \"version\": \"2.4.0\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint src\"\n  }\n}\n",
+      "src/dispatcher.ts": "import { exhausted, nextDelayMs } from \"./retry.js\";\nimport { park } from \"./deadletter.js\";\n\nexport interface Delivery {\n  id: string;\n  endpoint: string;\n  payload: string;\n  attempt: number;\n}\n\nexport interface DispatchDeps {\n  post(endpoint: string, body: string): Promise<{ ok: boolean; status: number }>;\n  requeue(delivery: Delivery, delayMs: number): Promise<void>;\n}\n\nexport async function dispatch(delivery: Delivery, deps: DispatchDeps): Promise<boolean> {\n  const response = await deps.post(delivery.endpoint, delivery.payload);\n  if (response.ok) return true;\n  if (exhausted(delivery.attempt)) {\n    park({ deliveryId: delivery.id, failedAt: Date.now(), lastError: `http ${response.status}` });\n    return false;\n  }\n  await deps.requeue(delivery, nextDelayMs(delivery.attempt));\n  return false;\n}\n",
+      "src/retry.ts": "const BASE_DELAY_MS = 250;\nconst MAX_DELAY_MS = 60_000;\nconst DEFAULT_BUDGET = 8;\n\n/** Exponential backoff with full jitter, capped so one dead endpoint cannot park a worker. */\nexport function nextDelayMs(attempt: number, random = Math.random): number {\n  const ceiling = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt);\n  return Math.floor(random() * ceiling);\n}\n\nexport function exhausted(attempt: number, budget = DEFAULT_BUDGET): boolean {\n  return attempt >= budget;\n}\n",
+      "src/deadletter.ts": "export interface DeadLetter {\n  deliveryId: string;\n  failedAt: number;\n  lastError: string;\n}\n\nconst parked: DeadLetter[] = [];\n\nexport function park(entry: DeadLetter): DeadLetter {\n  parked.push(entry);\n  return entry;\n}\n\nexport function list(): readonly DeadLetter[] {\n  return parked;\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial relay delivery service",
+        "files": ["README.md", "package.json", "src/dispatcher.ts", "src/retry.ts", "src/deadletter.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Sign outbound webhook requests so receivers can tell a real delivery from a replay",
+      "status": "success",
+      "summary": "Added an HMAC-SHA256 signature header computed over the raw body and the send timestamp, and documented the verification snippet receivers should copy. A signature is now attached before the request leaves the dispatch worker.",
+      "decisions": [
+        "Webhook signature header format\nThe signature header carries the timestamp and the HMAC of timestamp plus raw body, separated by a comma, so a receiver can reject a replayed request without parsing the payload."
+      ],
+      "tests": [
+        { "command": "npm test -- signature", "exitCode": 0, "summary": "14 signature cases passed" }
+      ]
+    },
+    {
+      "id": "s2",
+      "task": "Median dispatch latency regressed after we added per-attempt bookkeeping",
+      "status": "success",
+      "summary": "Profiled the retry path and settled the bookkeeping question: the attempt counter lives in Redis alongside the queued job, which removed one Postgres round trip per attempt and brought median dispatch latency back from 41ms to 19ms.",
+      "decisions": [
+        "Delivery attempt counter storage\nThe attempt counter lives in Redis alongside the queued job, because the dispatch worker already holds the job payload and a second Postgres round trip per attempt doubled median latency."
+      ],
+      "tests": [
+        { "command": "npm test -- dispatcher", "exitCode": 0, "summary": "31 dispatcher cases passed, p50 19ms" }
+      ],
+      "edits": {
+        "src/dispatcher.ts": "import { exhausted, nextDelayMs } from \"./retry.js\";\nimport { park } from \"./deadletter.js\";\n\nexport interface Delivery {\n  id: string;\n  endpoint: string;\n  payload: string;\n  attempt: number;\n}\n\nexport interface DispatchDeps {\n  post(endpoint: string, body: string): Promise<{ ok: boolean; status: number }>;\n  requeue(delivery: Delivery, delayMs: number): Promise<void>;\n  bumpAttempt(deliveryId: string): Promise<number>;\n}\n\nexport async function dispatch(delivery: Delivery, deps: DispatchDeps): Promise<boolean> {\n  const response = await deps.post(delivery.endpoint, delivery.payload);\n  if (response.ok) return true;\n  const attempt = await deps.bumpAttempt(delivery.id);\n  if (exhausted(attempt)) {\n    park({ deliveryId: delivery.id, failedAt: Date.now(), lastError: `http ${response.status}` });\n    return false;\n  }\n  await deps.requeue({ ...delivery, attempt }, nextDelayMs(attempt));\n  return false;\n}\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Support cannot replay a customer webhook that failed over the weekend",
+      "status": "success",
+      "summary": "Shipped a replay subcommand that reads a parked delivery and pushes it back onto the queue with a fresh budget, and picked a retention window that covers the gap support actually cares about.",
+      "decisions": [
+        "Dead letter retention window\nFailed deliveries stay in the dead letter queue for seven days, which covers a weekend outage plus the Monday triage rotation without growing the table unbounded."
+      ],
+      "tests": [
+        { "command": "npm test -- deadletter", "exitCode": 0, "summary": "9 dead letter cases passed" }
+      ]
+    },
+    {
+      "id": "s4",
+      "task": "A slow receiver endpoint starves every other tenant on the same worker",
+      "status": "success",
+      "summary": "Gave each destination host its own concurrency lease so one endpoint that answers in 30 seconds can no longer hold the whole dispatch worker pool. Throughput for the other tenants went back to normal in staging.",
+      "decisions": [
+        "Per-host concurrency lease\nEvery destination host gets at most four concurrent in-flight requests, and a worker that cannot take a lease immediately moves on to the next delivery rather than blocking."
+      ]
+    },
+    {
+      "id": "s5",
+      "task": "Customers received the same order confirmation twice after a cache incident",
+      "status": "success",
+      "summary": "Traced the duplicate confirmations to retry state that disappeared under memory pressure and reversed the earlier call: the attempt counter lives in Postgres on the deliveries table, so an eviction can no longer resurrect a job that already succeeded.",
+      "decisions": [
+        "Delivery attempt counter storage\nThe attempt counter lives in Postgres on the deliveries table, because Redis evicted counters under memory pressure and already-delivered jobs were sent a second time."
+      ],
+      "tests": [
+        { "command": "npm test -- idempotency", "exitCode": 0, "summary": "22 idempotency cases passed, no duplicate sends under a simulated eviction" }
+      ],
+      "edits": {
+        "src/retry.ts": "const BASE_DELAY_MS = 250;\nconst MAX_DELAY_MS = 60_000;\nconst DEFAULT_BUDGET = 8;\n\n/** Exponential backoff with full jitter, capped so one dead endpoint cannot park a worker. */\nexport function nextDelayMs(attempt: number, random = Math.random): number {\n  const ceiling = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt);\n  return Math.floor(random() * ceiling);\n}\n\nexport function exhausted(attempt: number, budget = DEFAULT_BUDGET): boolean {\n  return attempt >= budget;\n}\n\n/** True once a delivery has been acknowledged, whatever the queue still holds. */\nexport function settled(deliveredAt: number | null): boolean {\n  return deliveredAt !== null;\n}\n"
+      }
+    },
+    {
+      "id": "s6",
+      "task": "Enterprise auditors could not find last quarter's failed deliveries",
+      "status": "success",
+      "summary": "Extended the parked delivery retention after two audit escalations, and added a nightly export so the compliance team can pull a quarter of failures without asking an engineer.",
+      "decisions": [
+        "Dead letter retention window\nFailed deliveries stay in the dead letter queue for thirty days, because the previous window expired before enterprise customers finished a quarterly audit and support had to reconstruct sends from logs."
+      ]
+    },
+    {
+      "id": "s7",
+      "task": "Write the on-call runbook for a stuck dispatch worker",
+      "status": "success",
+      "summary": "Documented how to drain a worker, how to read the queue depth dashboard, and which metric tells you that a send is failing rather than merely slow. The runbook now lives next to the readme.",
+      "commands": [
+        { "command": "npm run lint", "exitCode": 0, "summary": "no lint errors" }
+      ]
+    }
+  ],
+  "query": "We are rewriting the dispatch worker. How many times does a failed send get re-attempted, and where does that bookkeeping actually live?",
+  "goldFacts": [
+    {
+      "key": "counter-in-redis",
+      "matcher": { "allOf": ["attempt counter lives in Redis alongside the queued job"] },
+      "status": "conflicted",
+      "supportedBy": ["s2"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/dispatcher.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "counter-in-postgres",
+      "matcher": { "allOf": ["attempt counter lives in Postgres on the deliveries table"] },
+      "status": "conflicted",
+      "supportedBy": ["s5"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/dispatcher.ts", "src/retry.ts"],
+      "repoDiscoverable": false
+    }
+  ],
+  "designedCost": [
+    {
+      "metric": "conflictNoiseShare",
+      "min": 0.0001,
+      "rationale": "The dead letter retention window is a second, unrelated pair of contradictory decisions. RepoMind flags it as a conflict too, so part of the bundle is spent on warned records that answer nothing the task asked. Conflict detection is title-shaped, not relevance-shaped, and that cost belongs in the report."
+    }
+  ]
+}

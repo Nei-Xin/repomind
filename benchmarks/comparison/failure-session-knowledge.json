@@ -1,0 +1,124 @@
+{
+  "fixtureVersion": 1,
+  "name": "failure-session-knowledge",
+  "category": "failure-session-knowledge",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Postal Relay\n\nPostal Relay takes queued application mail, signs it, and hands it to the\nupstream MTA. Rejections come back through the bounce parser and land in the\ndelivery log.\n\n## Running\n\n- `npm run build` compiles the worker into dist/.\n- `npm test` runs the relay suite.\n- `npm run dkim:verify -- --host <domain>` re-signs a captured message and\n  checks it against one recipient domain.\n",
+      "package.json": "{\n  \"name\": \"postal-relay\",\n  \"version\": \"2.1.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"dkim:verify\": \"node dist/tools/verify.js\"\n  }\n}\n",
+      "src/dkim.ts": "export const SIGNED_HEADERS = [\n  \"from\",\n  \"to\",\n  \"cc\",\n  \"bcc\",\n  \"subject\",\n  \"date\",\n  \"message-id\",\n];\n\nexport interface Signature {\n  selector: string;\n  domain: string;\n  headers: string[];\n  bodyHash: string;\n}\n\nexport function sign(raw: string, selector: string, domain: string): Signature {\n  return { selector, domain, headers: [...SIGNED_HEADERS], bodyHash: bodyHash(raw) };\n}\n\nfunction bodyHash(raw: string): string {\n  let value = 0;\n  for (const char of raw) value = (value * 31 + char.codePointAt(0)!) % 2147483647;\n  return value.toString(16);\n}\n",
+      "src/relay.ts": "import { sign } from \"./dkim.js\";\n\nexport interface Message {\n  id: string;\n  recipients: string[];\n  raw: string;\n}\n\nexport type Outcome = \"sent\" | \"deferred\" | \"dead\";\n\nexport async function deliver(\n  message: Message,\n  handoff: (raw: string) => Promise<boolean>,\n  attempt = 0,\n): Promise<Outcome> {\n  const signature = sign(message.raw, \"relay2024\", \"example.com\");\n  const accepted = await handoff(`${signature.selector}:${message.raw}`);\n  if (accepted) return \"sent\";\n  return attempt >= 4 ? \"dead\" : \"deferred\";\n}\n",
+      "src/bounce-parser.ts": "export interface Bounce {\n  code: number;\n  enhanced: string | null;\n  recipient: string;\n  text: string;\n}\n\nconst LINE = /^(\\d{3})[ -](?:(\\d\\.\\d\\.\\d)\\s+)?(.*)$/u;\n\nexport function parseBounce(line: string, recipient: string): Bounce | null {\n  const match = LINE.exec(line.trim());\n  if (!match) return null;\n  return {\n    code: Number(match[1]),\n    enhanced: match[2] ?? null,\n    recipient,\n    text: match[3] ?? \"\",\n  };\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial postal relay worker",
+        "files": ["README.md", "package.json", "src/dkim.ts", "src/relay.ts", "src/bounce-parser.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "r1",
+      "task": "Stop hammering the MTA when a recipient defers our mail",
+      "status": "success",
+      "summary": "The retry loop now waits 2s, 8s, 32s, 128s between attempts. A message that is still refused after five attempts is parked in the dead-letter table with its last error text.",
+      "decisions": ["Deferrals back off exponentially and cap at five attempts; a sixth attempt is always a dead letter"],
+      "tests": [{ "command": "npm test -- relay", "exitCode": 0, "summary": "18 relay cases passed" }],
+      "edits": {
+        "src/relay.ts": "import { sign } from \"./dkim.js\";\n\nexport interface Message {\n  id: string;\n  recipients: string[];\n  raw: string;\n}\n\nexport type Outcome = \"sent\" | \"deferred\" | \"dead\";\n\nconst BACKOFF_MS = [2000, 8000, 32000, 128000];\n\nexport async function deliver(\n  message: Message,\n  handoff: (raw: string) => Promise<boolean>,\n  attempt = 0,\n): Promise<Outcome> {\n  const signature = sign(message.raw, \"relay2024\", \"example.com\");\n  const accepted = await handoff(`${signature.selector}:${message.raw}`);\n  if (accepted) return \"sent\";\n  if (attempt >= BACKOFF_MS.length) return \"dead\";\n  return \"deferred\";\n}\n\nexport function backoffFor(attempt: number): number {\n  return BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]!;\n}\n"
+      }
+    },
+    {
+      "id": "r2",
+      "task": "Record enhanced status codes next to each refused recipient",
+      "status": "success",
+      "summary": "Bounce parsing now extracts the enhanced status code, so a 5.7.1 rejection is recorded separately from a generic 550. Our delivery log shows the code beside every recipient that a remote host refused.",
+      "decisions": ["The delivery log stores the enhanced status code verbatim; never collapse it into the three-digit reply code"],
+      "tests": [{ "command": "npm test -- bounce", "exitCode": 0, "summary": "23 bounce-parsing cases passed" }]
+    },
+    {
+      "id": "f1",
+      "task": "Mail to outlook.com bounces with 550 5.7.1 since we turned signing on",
+      "status": "failed",
+      "summary": "No fix shipped. The bounces trace to our DKIM signature covering the Bcc header: the list expander rewrites Bcc before delivery, so the signature no longer verifies and the remote host refuses the message with 550 5.7.1. The repair is to drop Bcc from the signed header list, but that needs a new selector and a DNS key rotation, which CI cannot perform, so the relay is unchanged and the bounces continue.",
+      "tests": [{ "command": "npm test -- dkim", "exitCode": 1, "summary": "3 of 41 cases failed, all of them list-expanded recipients" }],
+      "commands": [{ "command": "npm run dkim:verify -- --host outlook.com", "exitCode": 1, "summary": "body hash matched but header hash failed on b= for the rewritten Bcc" }]
+    },
+    {
+      "id": "r3",
+      "task": "Document the verification script so on-call is not guessing",
+      "status": "success",
+      "summary": "The readme now explains how to run our verification script against a single recipient domain, with the selector and key path it expects.",
+      "edits": {
+        "README.md": "# Postal Relay\n\nPostal Relay takes queued application mail, signs it, and hands it to the\nupstream MTA. Rejections come back through the bounce parser and land in the\ndelivery log.\n\n## Running\n\n- `npm run build` compiles the worker into dist/.\n- `npm test` runs the relay suite.\n- `npm run dkim:verify -- --host <domain>` re-signs a captured message and\n  checks it against one recipient domain.\n\n## Verifying a signature\n\nExport RELAY_SELECTOR and RELAY_KEY_PATH first. The script prints the body\nhash and the header hash separately, so a mismatch tells you which half of the\nsignature is wrong.\n"
+      }
+    },
+    {
+      "id": "r4",
+      "task": "Work out why gmail.com throttles us during the evening send window",
+      "status": "partial",
+      "summary": "Gmail throttles our relay once concurrency passes 20 connections. Nothing is wrong with our signing there; the remedy is a per-domain connection cap, which is not implemented yet.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    }
+  ],
+  "query": "Why does outlook.com keep refusing our messages with a 5.7.1 error now that signing is enabled?",
+  "goldFacts": [
+    {
+      "key": "signed-header-root-cause",
+      "matcher": { "allOf": ["our DKIM signature covering the Bcc header"] },
+      "status": "current",
+      "supportedBy": ["f1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/dkim.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "expander-rewrite",
+      "matcher": { "allOf": ["the list expander rewrites Bcc before delivery"] },
+      "status": "current",
+      "supportedBy": ["f1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/relay.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "known-repair",
+      "matcher": { "allOf": ["drop Bcc from the signed header list"] },
+      "status": "current",
+      "supportedBy": ["f1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/dkim.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "why-it-was-not-fixed",
+      "matcher": { "allOf": ["needs a new selector and a DNS key rotation"] },
+      "status": "current",
+      "supportedBy": ["f1"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    },
+    {
+      "key": "failing-check-signal",
+      "matcher": { "allOf": ["header hash failed on b= for the rewritten Bcc"] },
+      "status": "current",
+      "supportedBy": ["f1"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "flat-lexical-rag",
+      "metric": "answerCoverage",
+      "rationale": "Everything worth knowing about this bounce lives in a session that ended in failure: the root cause and the known repair are in its summary, and the decisive signal is in a command that exited non-zero. RepoMind's deterministic extractor stores a summary only when the session succeeded, and turns only exit-0 test entries into command memories, so it stores nothing at all from this session and its coverage is zero by construction. flat-lexical-rag retrieves the same raw session text with the same tokenizer and ranker RepoMind uses, so the entire gap is the write path discarding failed work rather than any retrieval difference."
+    },
+    {
+      "arm": "full-history",
+      "metric": "answerCoverage",
+      "rationale": "The same construction: full-history carries the failed session verbatim, including the exit-1 command, and therefore holds every gold fact RepoMind dropped at extraction time."
+    }
+  ]
+}

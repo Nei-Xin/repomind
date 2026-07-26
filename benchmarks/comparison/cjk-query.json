@@ -1,0 +1,101 @@
+{
+  "fixtureVersion": 1,
+  "name": "cjk-query",
+  "category": "cjk-query",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Thumbnailer\n\nAn image thumbnail service. Uploads land on a queue, a worker resizes each\nimage, and the derivatives are written to object storage.\n",
+      "package.json": "{\n  \"name\": \"thumbnailer\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\"\n  }\n}\n",
+      "src/resize.ts": "export interface ResizeRequest {\n  key: string;\n  width: number;\n}\n\nexport function resize(request: ResizeRequest): string {\n  return `${request.key}@${request.width}`;\n}\n",
+      "src/queue.ts": "export function enqueue(jobs: string[], job: string): string[] {\n  return [...jobs, job];\n}\n",
+      "src/storage.ts": "export function derivativeKey(key: string, width: number): string {\n  return `derivatives/${width}/${key}`;\n}\n"
+    },
+    "commits": [{ "message": "initial thumbnail service", "files": ["README.md", "package.json", "src/resize.ts", "src/queue.ts", "src/storage.ts"] }]
+  },
+  "history": [
+    {
+      "id": "cn-queue",
+      "task": "上传高峰期缩略图队列积压，排查消费速度",
+      "status": "success",
+      "summary": "把缩略图任务的并发度提高到八，并给每个任务加了超时，解决了高峰期的积压；这一轮没有观察到内存异常。",
+      "decisions": ["缩略图任务的并发度由环境变量控制，默认值为八"],
+      "tests": [{ "command": "npm test -- queue", "exitCode": 0, "summary": "队列用例全部通过" }],
+      "edits": { "src/queue.ts": "export const DEFAULT_CONCURRENCY = 8;\n\nexport function enqueue(jobs: string[], job: string): string[] {\n  return [...jobs, job];\n}\n" }
+    },
+    {
+      "id": "cn-timeout",
+      "task": "上传接口偶尔返回超时，需要定位原因",
+      "status": "partial",
+      "summary": "复现了上传接口的超时，怀疑和对象存储的连接池有关；以前没有人记录过类似现象，这一轮没有定位到根本原因。",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "构建通过" }]
+    },
+    {
+      "id": "en-oom",
+      "task": "Investigate the out-of-memory crashes seen when a large batch of photographs is uploaded",
+      "status": "success",
+      "summary": "Traced the crashes to the resize worker: it held the source buffer for the entire upload, so a burst of forty-megapixel images exhausted the heap before any derivative was written. Switching the worker to a streaming decode instead of buffering the whole file kept resident set size flat under the same load.",
+      "decisions": ["Resize workers stream the decode and never retain a full source buffer"],
+      "tests": [{ "command": "npm test -- resize", "exitCode": 0, "summary": "resize suite passed with a flat memory profile" }],
+      "edits": { "src/resize.ts": "export interface ResizeRequest {\n  key: string;\n  width: number;\n}\n\nexport async function resize(request: ResizeRequest, source: AsyncIterable<Uint8Array>): Promise<string> {\n  for await (const _chunk of source) {\n    void _chunk;\n  }\n  return `${request.key}@${request.width}`;\n}\n" }
+    },
+    {
+      "id": "cn-orient",
+      "task": "竖拍照片生成的缩略图方向不对",
+      "status": "success",
+      "summary": "读取照片的方向标记并在缩放前旋转，解决了竖拍照片被转成横向的问题；批量回填了以前上传的历史照片。",
+      "decisions": ["缩放之前必须先按方向标记旋转原图"],
+      "edits": { "src/orient.ts": "export function orientation(tag: number): number {\n  return tag === 6 ? 90 : 0;\n}\n" }
+    },
+    {
+      "id": "cn-crash",
+      "task": "压测中服务崩溃，进程被系统杀掉",
+      "status": "failed",
+      "summary": "压测跑到第三轮时进程崩溃，日志只留下内存不足的提示；这一轮没有找到崩溃的原因，先把现象记录下来。",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "构建通过" }]
+    },
+    {
+      "id": "cn-layout",
+      "task": "整理对象存储里缩略图的目录结构",
+      "status": "success",
+      "summary": "把缩略图按日期分目录存放，解决了单目录文件过多导致的列举缓慢；顺便清理了以前批量上传遗留的临时文件。",
+      "tests": [{ "command": "npm test -- storage", "exitCode": 0, "summary": "存储用例全部通过" }]
+    }
+  ],
+  "query": "批量上传高分辨率照片时进程内存暴涨然后崩溃，以前有没有人查过这个原因和解决办法？",
+  "goldFacts": [
+    {
+      "key": "oom-root-cause",
+      "matcher": { "allOf": ["held the source buffer for the entire upload"] },
+      "status": "current",
+      "supportedBy": ["en-oom"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/resize.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "oom-fix",
+      "matcher": { "allOf": ["streaming decode instead of buffering the whole file"] },
+      "status": "current",
+      "supportedBy": ["en-oom"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/resize.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "oom-verified-command",
+      "matcher": { "allOf": ["npm test -- resize"] },
+      "status": "current",
+      "supportedBy": ["en-oom"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "full-history",
+      "metric": "answerCoverage",
+      "rationale": "The only session that diagnosed the crash was written in English; every other session, and the query, are in Chinese. RepoMind's bigram expansion makes Chinese-to-Chinese retrieval work, but it is lexical, so a Chinese query cannot reach an English memory without translation. Dumping the whole history ignores the query entirely and therefore carries the answer."
+    }
+  ]
+}

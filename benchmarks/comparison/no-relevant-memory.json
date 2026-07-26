@@ -1,0 +1,96 @@
+{
+  "fixtureVersion": 1,
+  "name": "no-relevant-memory",
+  "category": "no-relevant-memory",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# pixmill\n\nA command line image pipeline. Point it at a folder of photographs and it\nresizes, re-encodes, and strips metadata in one pass.\n\n    pixmill ./shoot --width 1600 --format webp --out ./web\n\nEverything runs locally; no network calls and no upload step.\n",
+      "package.json": "{\n  \"name\": \"pixmill\",\n  \"version\": \"1.9.2\",\n  \"bin\": { \"pixmill\": \"./dist/cli.js\" },\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\",\n    \"bench\": \"node scripts/bench.mjs\"\n  }\n}\n",
+      "src/cli.ts": "import { resize } from \"./resize.js\";\nimport { readOrientation } from \"./exif.js\";\nimport { expand } from \"./glob.js\";\n\nexport interface Options {\n  width: number;\n  format: \"jpeg\" | \"png\" | \"webp\";\n  out: string;\n  quality: number;\n}\n\nexport async function run(input: string, options: Options): Promise<number> {\n  const files = await expand(input);\n  let written = 0;\n  for (const file of files) {\n    const orientation = await readOrientation(file);\n    await resize(file, { ...options, orientation });\n    written++;\n  }\n  return written;\n}\n",
+      "src/resize.ts": "export interface ResizeOptions {\n  width: number;\n  format: \"jpeg\" | \"png\" | \"webp\";\n  out: string;\n  quality: number;\n  orientation: number;\n}\n\nconst DEFAULT_QUALITY: Record<ResizeOptions[\"format\"], number> = {\n  jpeg: 82,\n  png: 100,\n  webp: 78,\n};\n\nexport function qualityFor(format: ResizeOptions[\"format\"], requested?: number): number {\n  return requested ?? DEFAULT_QUALITY[format];\n}\n\nexport async function resize(file: string, options: ResizeOptions): Promise<string> {\n  const target = `${options.out}/${file}`;\n  return target;\n}\n",
+      "src/exif.ts": "/** EXIF orientation tag values that require a rotation before resampling. */\nconst ROTATIONS: Record<number, number> = { 1: 0, 3: 180, 6: 90, 8: 270 };\n\nexport async function readOrientation(file: string): Promise<number> {\n  void file;\n  return 1;\n}\n\nexport function rotationDegrees(orientation: number): number {\n  return ROTATIONS[orientation] ?? 0;\n}\n",
+      "src/glob.ts": "import { sep } from \"node:path\";\n\n/** Expands a folder or pattern into a stable, sorted list of input files. */\nexport async function expand(input: string): Promise<string[]> {\n  const normalized = input.split(sep).join(\"/\");\n  return [normalized];\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial pixmill pipeline",
+        "files": ["README.md", "package.json", "src/cli.ts", "src/resize.ts", "src/exif.ts", "src/glob.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Portrait photographs come out sideways in the generated thumbnails",
+      "status": "success",
+      "summary": "The pipeline resampled before reading the EXIF orientation tag, so anything shot in portrait was written rotated. Reading the tag first and applying the rotation before the resample fixed every sample in the regression folder.",
+      "decisions": [
+        "Orientation is applied before resampling\nRotation derived from the EXIF orientation tag is applied to the decoded buffer before any resampling, because resampling first bakes the wrong aspect ratio into the output."
+      ],
+      "tests": [
+        { "command": "npm test -- exif", "exitCode": 0, "summary": "18 orientation cases passed across all eight tag values" }
+      ],
+      "edits": {
+        "src/exif.ts": "/** EXIF orientation tag values that require a rotation before resampling. */\nconst ROTATIONS: Record<number, number> = { 1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 90, 7: 270, 8: 270 };\nconst MIRRORED = new Set([2, 4, 5, 7]);\n\nexport async function readOrientation(file: string): Promise<number> {\n  void file;\n  return 1;\n}\n\nexport function rotationDegrees(orientation: number): number {\n  return ROTATIONS[orientation] ?? 0;\n}\n\nexport function isMirrored(orientation: number): boolean {\n  return MIRRORED.has(orientation);\n}\n"
+      }
+    },
+    {
+      "id": "s2",
+      "task": "Add WebP as an output format alongside JPEG and PNG",
+      "status": "success",
+      "summary": "Added WebP encoding behind the existing format flag and picked a default quality by eye on the sample set: 78 keeps the gradients on the studio shots clean while cutting file size roughly in half against JPEG at 82.",
+      "decisions": [
+        "Default WebP quality is 78\nWebP output defaults to quality 78 rather than matching the JPEG default of 82, because the encoders are not on the same scale and 78 was the lowest value with no visible banding on the studio gradient sample."
+      ],
+      "tests": [
+        { "command": "npm test -- resize", "exitCode": 0, "summary": "26 resize cases passed, including the three WebP fixtures" }
+      ]
+    },
+    {
+      "id": "s3",
+      "task": "A batch of two thousand photographs takes eleven minutes on an eight core laptop",
+      "status": "success",
+      "summary": "The pipeline was decoding, resampling, and encoding on the main thread one file at a time. Moving the resample onto a worker pool sized to the core count took the same batch from eleven minutes to just under two.",
+      "decisions": [
+        "Worker pool sizing for the resample stage\nThe resample worker pool is sized to the reported core count minus one, leaving the main thread free to keep the queue fed and the progress bar responsive on laptops."
+      ],
+      "tests": [
+        { "command": "npm run bench", "exitCode": 0, "summary": "2000 files in 118 seconds, previously 664 seconds" }
+      ]
+    },
+    {
+      "id": "s4",
+      "task": "Input folders containing spaces are silently skipped on Windows",
+      "status": "success",
+      "summary": "The glob expander joined path segments with a forward slash but compared them against backslash separated results from the directory walker, so any folder whose name contained a space fell out of the intersection. Normalising both sides before comparing fixed it.",
+      "decisions": [
+        "Path comparison is normalised to forward slashes\nEvery path is converted to forward slashes at the boundary and compared in that form, because mixing native separators with normalised ones is what made the Windows failure look like a quoting bug."
+      ],
+      "tests": [
+        { "command": "npm test -- glob", "exitCode": 0, "summary": "11 path cases passed on Windows and Linux" }
+      ],
+      "edits": {
+        "src/glob.ts": "import { sep } from \"node:path\";\n\n/** Normalises a native path into the forward slash form the pipeline compares on. */\nexport function normalize(input: string): string {\n  return input.split(sep).join(\"/\").replace(/\\/+/g, \"/\");\n}\n\n/** Expands a folder or pattern into a stable, sorted list of input files. */\nexport async function expand(input: string): Promise<string[]> {\n  return [normalize(input)].sort();\n}\n"
+      }
+    },
+    {
+      "id": "s5",
+      "task": "Explain the quality defaults in the readme so people stop filing bugs about them",
+      "status": "success",
+      "summary": "Wrote up the per-format quality defaults and why they differ, and added a short table to the readme. The flag itself did not change; only the documentation did.",
+      "commands": [
+        { "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }
+      ]
+    }
+  ],
+  "query": "Draft a vulnerability disclosure policy and wire up a GitHub security advisory workflow so an outside researcher knows where to report a finding.",
+  "goldFacts": [],
+  "designedLoss": [
+    {
+      "arm": "no-memory",
+      "metric": "emptyTaskNoiseTokens",
+      "rationale": "Nothing in this project's history touches disclosure policy or security process. An agent with no memory spends zero tokens on recalled work and is exactly right to; RepoMind still returns its best lexical matches and pays for them. This is the honest cost of a memory layer that has no way to say 'I know nothing relevant here'."
+    }
+  ]
+}

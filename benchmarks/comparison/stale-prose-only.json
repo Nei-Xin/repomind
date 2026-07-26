@@ -1,0 +1,104 @@
+{
+  "fixtureVersion": 1,
+  "name": "stale-prose-only",
+  "category": "stale-prose-only",
+  "adversarial": true,
+  "repo": {
+    "files": {
+      "README.md": "# Pulse Queue\n\nPulse Queue is a Redis-backed job queue for background work. Producers push\njobs onto a stream, consumers claim them with a visibility timeout, and any\njob that is not acknowledged in time is redelivered to another consumer.\n\n## Running\n\n- `npm run build` compiles the workers into dist/.\n- `npm test` runs the queue suite.\n- `npm run loadtest` replays a recorded production burst against a cluster.\n",
+      "package.json": "{\n  \"name\": \"pulse-queue\",\n  \"version\": \"1.6.3\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"loadtest\": \"node dist/tools/loadtest.js\"\n  }\n}\n",
+      "src/queue/visibility.ts": "/** How long a claimed job stays invisible to other consumers. */\nexport const DEFAULT_VISIBILITY_MS = 60_000;\n\nexport interface Claim {\n  jobId: string;\n  consumerId: string;\n  claimedAt: number;\n  visibilityMs: number;\n}\n\nexport function isExpired(claim: Claim, now: number): boolean {\n  return now - claim.claimedAt >= claim.visibilityMs;\n}\n\nexport function extend(claim: Claim, extraMs: number): Claim {\n  return { ...claim, visibilityMs: claim.visibilityMs + extraMs };\n}\n",
+      "src/queue/consumer.ts": "import { DEFAULT_VISIBILITY_MS, isExpired, type Claim } from \"./visibility.js\";\n\nexport interface Job {\n  id: string;\n  payload: string;\n  attempts: number;\n}\n\nexport class Consumer {\n  private readonly claims = new Map<string, Claim>();\n\n  constructor(readonly id: string, readonly visibilityMs = DEFAULT_VISIBILITY_MS) {}\n\n  claim(job: Job, now: number): Claim {\n    const claim = { jobId: job.id, consumerId: this.id, claimedAt: now, visibilityMs: this.visibilityMs };\n    this.claims.set(job.id, claim);\n    return claim;\n  }\n\n  acknowledge(jobId: string): boolean {\n    return this.claims.delete(jobId);\n  }\n\n  reclaimable(now: number): string[] {\n    return [...this.claims.values()].filter((claim) => isExpired(claim, now)).map((claim) => claim.jobId);\n  }\n}\n",
+      "src/metrics.ts": "export interface Counters {\n  claimed: number;\n  acknowledged: number;\n  redelivered: number;\n}\n\nconst counters: Counters = { claimed: 0, acknowledged: 0, redelivered: 0 };\n\nexport function record(event: keyof Counters): void {\n  counters[event] += 1;\n}\n\n/** Snapshot for the dashboard scrape. */\nexport function snapshot(): Counters {\n  return { ...counters };\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial pulse queue",
+        "files": ["README.md", "package.json", "src/queue/visibility.ts", "src/queue/consumer.ts", "src/metrics.ts"]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "q1",
+      "task": "Jobs vanish from the retry queue under sustained load",
+      "status": "success",
+      "summary": "Concluded that the retry queue loses jobs because the visibility timeout expires while a worker is still processing, so a second consumer claims the same job and the first acknowledgement deletes the redelivered copy. Recommended raising the visibility window to 300 seconds before the next peak.",
+      "decisions": ["Consumers must acknowledge inside the visibility window; anything slower has to extend its claim first"],
+      "commands": [{ "command": "npm run loadtest", "exitCode": 0, "summary": "replayed the 18:00 burst, dashboard reported 412 missing jobs" }]
+    },
+    {
+      "id": "q2",
+      "task": "Load-test the consumer pool at four times the production burst",
+      "status": "success",
+      "summary": "Ran the recorded burst against a staging queue with eight workers. Throughput held at 9k jobs per minute and claim latency stayed under 40ms, so the pool itself is not the bottleneck at that rate.",
+      "commands": [{ "command": "npm run loadtest -- --scale 4", "exitCode": 0, "summary": "9.1k jobs/min sustained for 12 minutes" }]
+    },
+    {
+      "id": "q3",
+      "task": "Find out where acknowledgement latency comes from when the pool is busy",
+      "status": "success",
+      "summary": "Traced acknowledgement latency to the metrics exporter, which holds the connection while it serialises a histogram. Consumers are blocked for 30 to 60ms on every scrape, which is enough to matter when the pool is saturated.",
+      "decisions": ["The metrics exporter serialises off the consumer connection; a scrape must never block a claim"],
+      "tests": [{ "command": "npm test -- metrics", "exitCode": 0, "summary": "14 exporter cases passed" }]
+    },
+    {
+      "id": "q4",
+      "task": "Re-run the queue loss analysis against the per-job tracing we added",
+      "status": "partial",
+      "summary": "Retracting the earlier visibility-window conclusion. With per-job tracing switched on for a full peak, no job was ever lost: the dashboard counted each redelivery as a distinct job, so the missing-job figure was an artifact of the counter rather than queue behaviour. Nothing in the queue changed and nothing should change; the earlier recommendation should not be acted on. Left open because the dashboard query still needs fixing.",
+      "commands": [{ "command": "npm run loadtest -- --trace-jobs", "exitCode": 0, "summary": "18.4k jobs in, 18.4k jobs acknowledged, 412 redeliveries" }]
+    },
+    {
+      "id": "q5",
+      "task": "Compare our redelivery behaviour against the Redis streams documentation",
+      "status": "success",
+      "summary": "Read the streams documentation end to end and confirmed our claim and acknowledgement calls match the documented contract; the only difference is a shorter idle threshold than the examples use, so jobs are picked up sooner when a consumer stalls.",
+      "decisions": ["Our idle threshold stays below the documented default on purpose; revisit only with a measurement, not a preference"]
+    }
+  ],
+  "query": "Should I bump the visibility timeout to stop the retry queue from dropping jobs when workers are saturated?",
+  "goldFacts": [
+    {
+      "key": "retracted-visibility-conclusion",
+      "matcher": { "allOf": ["the visibility timeout expires while a worker is still processing"] },
+      "status": "stale",
+      "staleDetectability": "prose-only",
+      "supportedBy": ["q1"],
+      "requiredFor": "bonus",
+      "discoverableFrom": ["src/queue/visibility.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "nothing-was-lost",
+      "matcher": { "allOf": ["no job was ever lost"] },
+      "status": "current",
+      "supportedBy": ["q4"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/metrics.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "counter-artifact",
+      "matcher": { "allOf": ["counted each redelivery as a distinct job"] },
+      "status": "current",
+      "supportedBy": ["q4"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/metrics.ts"],
+      "repoDiscoverable": false
+    }
+  ],
+  "designedLoss": [
+    {
+      "arm": "full-history",
+      "metric": "unwarnedStaleRate",
+      "mode": "tie-or-win",
+      "rationale": "The retraction is prose and nothing else: not one file changes anywhere in this fixture, so RepoMind's staleness detector, which compares file hashes against the ones recorded with a memory, has nothing to fire on. RepoMind therefore serves the retracted conclusion with no warning at all, at exactly the same rate as the ungoverned baseline that carries no governance by design. A tie is the honest ceiling here: full-history cannot warn either, so it can never score lower, and the gate is declared tie-or-win precisely so that RepoMind beating it would be the surprising outcome worth investigating. The number to read is unwarnedStaleRateProseOnly = 1.0 for repomind: governance bought nothing on this failure mode."
+    },
+    {
+      "arm": "full-history",
+      "metric": "answerCoverage",
+      "rationale": "The session that retracts the earlier finding ended partial rather than success, which is what an inconclusive re-analysis honestly is, and the deterministic extractor stores a summary as a solution memory only for successful sessions. RepoMind therefore keeps the superseded conclusion and never keeps the correction, so it covers the stale fact and neither current one. full-history carries both sessions verbatim and covers all three."
+    }
+  ]
+}

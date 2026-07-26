@@ -1,0 +1,172 @@
+{
+  "fixtureVersion": 1,
+  "name": "obey-architecture-decision",
+  "category": "obey-architecture-decision",
+  "adversarial": false,
+  "repo": {
+    "files": {
+      "README.md": "# feedhub\n\nfeedhub polls podcast RSS feeds, normalises them, and serves one merged episode\ncatalogue to the mobile clients.\n\n## Layout\n\n- src/http - the shared client and the per-integration base URL registry.\n- src/feeds - feed parsing, deduplication, and the refresh scheduler.\n\n## Running locally\n\n    npm install\n    npm run build\n    npm test\n",
+      "package.json": "{\n  \"name\": \"feedhub\",\n  \"version\": \"0.3.1\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint src --ext .ts\"\n  },\n  \"dependencies\": {\n    \"fast-xml-parser\": \"^4.4.0\",\n    \"undici\": \"^6.19.2\"\n  }\n}\n",
+      "src/http/adapter.ts": "import { request } from \"undici\";\n\nexport interface AdapterOptions {\n  timeoutMs?: number;\n  retries?: number;\n}\n\n/** Wraps undici so callers do not hand-roll timeouts. */\nexport class HttpAdapter {\n  constructor(\n    private readonly baseUrl: string,\n    private readonly options: AdapterOptions = {},\n  ) {}\n\n  async get(path: string): Promise<string> {\n    const response = await request(this.baseUrl + path, {\n      headersTimeout: this.options.timeoutMs ?? 5000,\n    });\n    return response.body.text();\n  }\n}\n",
+      "src/http/registry.ts": "import { HttpAdapter } from \"./adapter.js\";\n\nconst adapters = new Map<string, HttpAdapter>();\n\nexport function registerIntegration(name: string, baseUrl: string): void {\n  adapters.set(name, new HttpAdapter(baseUrl));\n}\n\nexport function adapterFor(name: string): HttpAdapter {\n  const adapter = adapters.get(name);\n  if (!adapter) throw new Error(\"No integration registered for \" + name);\n  return adapter;\n}\n",
+      "src/feeds/parser.ts": "import { XMLParser } from \"fast-xml-parser\";\n\nexport interface Episode {\n  guid: string;\n  title: string;\n  enclosureUrl: string;\n  publishedAt: string;\n}\n\nconst parser = new XMLParser({ ignoreAttributes: false });\n\nexport function parseFeed(xml: string): Episode[] {\n  const document = parser.parse(xml) as { rss?: { channel?: { item?: unknown[] } } };\n  const items = document.rss?.channel?.item ?? [];\n  return items.map((item) => item as Episode);\n}\n",
+      "src/feeds/scheduler.ts": "export interface RefreshPlan {\n  feedId: string;\n  nextRunAt: number;\n}\n\nconst HOUR_MS = 60 * 60 * 1000;\n\nexport function planRefresh(feedId: string, subscribed: boolean, now: number): RefreshPlan {\n  return { feedId, nextRunAt: now + (subscribed ? HOUR_MS : 24 * HOUR_MS) };\n}\n"
+    },
+    "commits": [
+      {
+        "message": "initial feedhub service",
+        "files": [
+          "README.md",
+          "package.json",
+          "src/http/adapter.ts",
+          "src/http/registry.ts",
+          "src/feeds/parser.ts",
+          "src/feeds/scheduler.ts"
+        ]
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "Deduplicate episodes when a feed rewrites its guids on every publish",
+      "status": "success",
+      "summary": "One network rewrites every episode guid each time it republishes a feed, so the catalogue grew a duplicate row per refresh. Episode identity is now the enclosure url plus the published date rather than the guid, and the duplicate rows already in the catalogue were collapsed by a one-off backfill.",
+      "tests": [
+        {
+          "command": "npm test -- parser",
+          "exitCode": 0,
+          "summary": "22 parser cases pass, including the guid-rewrite regression"
+        }
+      ],
+      "edits": {
+        "src/feeds/parser.ts": "import { XMLParser } from \"fast-xml-parser\";\n\nexport interface Episode {\n  guid: string;\n  title: string;\n  enclosureUrl: string;\n  publishedAt: string;\n}\n\nconst parser = new XMLParser({ ignoreAttributes: false });\n\nexport function parseFeed(xml: string): Episode[] {\n  const document = parser.parse(xml) as { rss?: { channel?: { item?: unknown[] } } };\n  const items = document.rss?.channel?.item ?? [];\n  return dedupe(items.map((item) => item as Episode));\n}\n\n/** Identity is the enclosure plus the publish date; hosts rewrite guids freely. */\nexport function dedupe(episodes: Episode[]): Episode[] {\n  const seen = new Set<string>();\n  const kept: Episode[] = [];\n  for (const episode of episodes) {\n    const identity = episode.enclosureUrl + \"|\" + episode.publishedAt;\n    if (seen.has(identity)) continue;\n    seen.add(identity);\n    kept.push(episode);\n  }\n  return kept;\n}\n"
+      }
+    },
+    {
+      "id": "s2",
+      "task": "Consolidate the three hand-rolled fetch call sites that talk to podcast hosts",
+      "status": "success",
+      "summary": "The iTunes lookup, the Megaphone feed pull, and the artwork download each carried their own fetch call, their own timeout, and their own idea of what a retry means. All three now go through src/http/adapter.ts. Every outbound HTTP call goes through HttpAdapter from here on, so that retry, timeout, and rate-limit handling stays in one place instead of being reinvented once per integration. src/http/registry.ts maps an integration name to its base URL and its rate budget, so wiring up a new provider is one registration line and no new networking code.",
+      "decisions": [
+        "Every outbound HTTP call goes through HttpAdapter. A direct fetch or undici call outside src/http is a review blocker, because retry, timeout, and rate-limit handling stays in one place there and nowhere else.",
+        "An integration that needs more than three retries is moved to the background queue rather than retrying inline, so a slow provider cannot pin a request thread."
+      ],
+      "tests": [
+        {
+          "command": "npm test -- http",
+          "exitCode": 0,
+          "summary": "adapter and registry cases pass, including the 429 backoff case"
+        }
+      ],
+      "edits": {
+        "src/http/adapter.ts": "import { request } from \"undici\";\n\nexport interface AdapterOptions {\n  timeoutMs?: number;\n  retries?: number;\n  requestsPerSecond?: number;\n}\n\n/**\n * Shared client for third-party calls. Backoff, deadlines and the per-host\n * token bucket are implemented once, here.\n */\nexport class HttpAdapter {\n  private nextSlotAt = 0;\n\n  constructor(\n    private readonly baseUrl: string,\n    private readonly options: AdapterOptions = {},\n  ) {}\n\n  async get(path: string): Promise<string> {\n    const attempts = this.options.retries ?? 3;\n    let lastError: unknown;\n    for (let attempt = 0; attempt < attempts; attempt++) {\n      await this.awaitSlot();\n      try {\n        const response = await request(this.baseUrl + path, {\n          headersTimeout: this.options.timeoutMs ?? 5000,\n          bodyTimeout: this.options.timeoutMs ?? 5000,\n        });\n        if (response.statusCode === 429) throw new Error(\"rate limited\");\n        return await response.body.text();\n      } catch (error) {\n        lastError = error;\n      }\n    }\n    throw lastError instanceof Error ? lastError : new Error(\"request failed\");\n  }\n\n  private async awaitSlot(): Promise<void> {\n    const spacing = 1000 / (this.options.requestsPerSecond ?? 5);\n    const wait = Math.max(0, this.nextSlotAt - Date.now());\n    this.nextSlotAt = Date.now() + wait + spacing;\n    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));\n  }\n}\n",
+        "src/http/registry.ts": "import { HttpAdapter, type AdapterOptions } from \"./adapter.js\";\n\nconst adapters = new Map<string, HttpAdapter>();\n\n/** One registration line is all a new provider should need. */\nexport function registerIntegration(name: string, baseUrl: string, options: AdapterOptions = {}): void {\n  adapters.set(name, new HttpAdapter(baseUrl, options));\n}\n\nexport function adapterFor(name: string): HttpAdapter {\n  const adapter = adapters.get(name);\n  if (!adapter) throw new Error(\"No integration registered for \" + name);\n  return adapter;\n}\n\nregisterIntegration(\"itunes\", \"https://itunes.apple.com\", { requestsPerSecond: 3 });\nregisterIntegration(\"megaphone\", \"https://feeds.megaphone.fm\", { requestsPerSecond: 8 });\nregisterIntegration(\"artwork\", \"https://cdn.example-podcasts.net\", { requestsPerSecond: 20 });\n"
+      }
+    },
+    {
+      "id": "s3",
+      "task": "Warm the artwork cache overnight so the 9am spike stops timing out",
+      "status": "success",
+      "summary": "A nightly job now walks the top 500 shows and pulls their artwork ahead of the morning traffic spike, which removed the 9am latency shoulder on the catalogue endpoint. The warm-up is spaced at five requests a second so it does not starve live traffic.",
+      "commands": [
+        {
+          "command": "npm run build",
+          "exitCode": 0,
+          "summary": "build succeeded"
+        }
+      ],
+      "edits": {
+        "src/feeds/scheduler.ts": "export interface RefreshPlan {\n  feedId: string;\n  nextRunAt: number;\n}\n\nconst HOUR_MS = 60 * 60 * 1000;\n\nexport function planRefresh(feedId: string, subscribed: boolean, now: number): RefreshPlan {\n  return { feedId, nextRunAt: now + (subscribed ? HOUR_MS : 24 * HOUR_MS) };\n}\n\n/** Nightly warm-up so the morning traffic spike does not pay for cold artwork. */\nexport function planArtworkWarmup(showIds: string[], now: number): RefreshPlan[] {\n  return showIds.slice(0, 500).map((feedId, index) => ({\n    feedId,\n    nextRunAt: now + index * 200,\n  }));\n}\n"
+      }
+    },
+    {
+      "id": "s4",
+      "task": "Investigate why one network's episode descriptions arrive empty",
+      "status": "failed",
+      "summary": "That network serves descriptions only to clients that send a signed partner header, and we do not have credentials for it yet. There is nothing to change on our side until the partner agreement lands, so the regression stays red and quarantined.",
+      "commands": [
+        {
+          "command": "npm test -- parser",
+          "exitCode": 1,
+          "summary": "description regression still red"
+        }
+      ]
+    },
+    {
+      "id": "s5",
+      "task": "Write the feed refresh cadence into the readme",
+      "status": "success",
+      "summary": "Wrote the refresh cadence into the readme - hourly for subscribed shows, daily for the long tail - so a support engineer can answer the where-is-my-episode question without reading the scheduler code.",
+      "edits": {
+        "README.md": "# feedhub\n\nfeedhub polls podcast RSS feeds, normalises them, and serves one merged episode\ncatalogue to the mobile clients.\n\n## Layout\n\n- src/http - the shared client and the per-integration base URL registry.\n- src/feeds - feed parsing, deduplication, and the refresh scheduler.\n\n## Running locally\n\n    npm install\n    npm run build\n    npm test\n\n## Refresh cadence\n\nSubscribed shows are refreshed hourly. Everything else is refreshed once a day,\nshortly after midnight UTC. A show promoted into the subscribed set is refreshed\non the next hourly tick rather than immediately.\n"
+      }
+    },
+    {
+      "id": "s6",
+      "task": "Speed up the merged catalogue endpoint for very large libraries",
+      "status": "success",
+      "summary": "The catalogue endpoint built its response by repeatedly concatenating arrays; it now streams episodes in published order. The p95 for a 20k-episode library dropped from 1.8s to 240ms and the allocation count fell by an order of magnitude.",
+      "tests": [
+        {
+          "command": "npm test -- catalogue",
+          "exitCode": 0,
+          "summary": "catalogue cases pass"
+        }
+      ]
+    }
+  ],
+  "query": "We are adding a Spotify catalog integration that needs to download episode artwork over the network. Where should the outgoing request code live?",
+  "goldFacts": [
+    {
+      "key": "adapter-rule",
+      "matcher": {
+        "allOf": [
+          "every outbound HTTP call goes through HttpAdapter"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s2"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "src/http/adapter.ts",
+        "src/http/registry.ts"
+      ],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "adapter-reason",
+      "matcher": {
+        "allOf": [
+          "retry, timeout, and rate-limit handling stays in one place"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s2"
+      ],
+      "requiredFor": "success",
+      "discoverableFrom": [
+        "src/http/adapter.ts"
+      ],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "retry-budget",
+      "matcher": {
+        "allOf": [
+          "more than three retries is moved to the background queue"
+        ]
+      },
+      "status": "current",
+      "supportedBy": [
+        "s2"
+      ],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false,
+      "decisionOnly": true
+    }
+  ]
+}
