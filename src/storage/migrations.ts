@@ -123,4 +123,20 @@ CREATE TABLE memory_relations (
 CREATE INDEX memory_relations_target ON memory_relations(target_memory_id, relation_type);
 `,
   },
+  {
+    version: 4,
+    sql: `
+CREATE TABLE forget_log (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  memory_id TEXT NOT NULL,
+  memory_type TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK(scope IN ('memory','memory-and-evidence')),
+  evidence_deleted INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX forget_log_repository ON forget_log(repository_id, created_at);
+`,
+  },
 ] as const;

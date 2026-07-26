@@ -100,6 +100,20 @@ export interface InvalidateMemoryResult {
   status: "invalid";
 }
 
+export type ForgetScope = "memory" | "memory-and-evidence";
+
+export interface ForgetMemoryInput {
+  memoryId: string;
+  reason: string;
+  scope?: ForgetScope;
+}
+
+export interface ForgetMemoryResult {
+  memoryId: string;
+  scope: ForgetScope;
+  evidenceDeleted: number;
+}
+
 export interface StartSessionInput {
   task: string;
   clientName?: string;

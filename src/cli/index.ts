@@ -27,6 +27,7 @@ Usage:
   repomind memory-validate <memory-id> --reason <text> [--repo <path>] [--json]
   repomind memory-correct <memory-id> --reason <text> --title <text> --content <text> [--type <type>] [--repo <path>] [--json]
   repomind memory-invalidate <memory-id> --reason <text> [--repo <path>] [--json]
+  repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind mcp
@@ -51,6 +52,8 @@ const { values, positionals } = parseArgs({
     content: { type: "string" },
     reason: { type: "string" },
     input: { type: "string" },
+    scope: { type: "string" },
+    yes: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -159,6 +162,33 @@ async function main(): Promise<void> {
         memoryId: required(positionals[1], "memory-id"),
         reason: required(values.reason, "--reason"),
       })); break;
+      case "forget": {
+        const memoryId = required(positionals[1], "memory-id");
+        const scope = values.scope ?? "memory-and-evidence";
+        if (!(["memory", "memory-and-evidence"] as const).includes(scope as "memory")) {
+          throw new RepoMindError("INVALID_INPUT", `Invalid --scope ${scope}`);
+        }
+        const reason = required(values.reason, "--reason");
+        if (!values.yes) {
+          const details = core.inspect(memoryId);
+          output({
+            wouldDelete: {
+              memoryId,
+              type: details.type,
+              title: details.title,
+              scope,
+              linkedEvidence: (details.evidence as unknown[]).length,
+            },
+            hint: "This permanently deletes the memory" +
+              (scope === "memory-and-evidence" ? " and any evidence used only by it" : "") +
+              ". Re-run with --yes to confirm.",
+          });
+          process.exitCode = 1;
+          break;
+        }
+        output(core.forgetMemory({ memoryId, reason, scope: scope as "memory" | "memory-and-evidence" }));
+        break;
+      }
       case "sessions": output(core.listSessions()); break;
       case "session-abandon": core.abandonSession(required(positionals[1], "session-id")); output("Session abandoned."); break;
       default: throw new RepoMindError("INVALID_INPUT", `Unknown command: ${command}`);

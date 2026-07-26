@@ -36,6 +36,7 @@ describe("MCP server", () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
         "repo_memory_correct",
+        "repo_memory_forget",
         "repo_memory_inspect",
         "repo_memory_invalidate",
         "repo_memory_search",
@@ -148,6 +149,46 @@ describe("MCP server", () => {
         arguments: { memory_id: correction.replacementMemoryId },
       });
       expect(inspectResponse.isError).not.toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("forgets a memory through the protocol only after explicit confirmation", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    const recorded = core.record({
+      type: "convention",
+      title: "Disposable convention",
+      content: "This convention should be permanently forgettable.",
+    });
+    core.close();
+
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const unconfirmed = await client.callTool({
+        name: "repo_memory_forget",
+        arguments: { memory_id: recorded.id, repo_path: repository, reason: "Cleanup", confirm: false },
+      });
+      expect(unconfirmed.isError).toBe(true);
+
+      const confirmed = await client.callTool({
+        name: "repo_memory_forget",
+        arguments: { memory_id: recorded.id, repo_path: repository, reason: "User asked to remove it", confirm: true },
+      });
+      expect(confirmed.isError).not.toBe(true);
+      const text = confirmed.content[0]?.type === "text" ? confirmed.content[0].text : "{}";
+      expect(JSON.parse(text)).toEqual({ memoryId: recorded.id, scope: "memory-and-evidence", evidenceDeleted: 1 });
+
+      const inspectResponse = await client.callTool({
+        name: "repo_memory_inspect",
+        arguments: { memory_id: recorded.id, repo_path: repository },
+      });
+      expect(inspectResponse.isError).toBe(true);
     } finally {
       await client.close();
       await server.close();

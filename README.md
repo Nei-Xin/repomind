@@ -68,7 +68,7 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes seven tools:
+The MCP server exposes eight tools:
 
 - `repo_session_start`
 - `repo_memory_search`
@@ -77,6 +77,7 @@ The MCP server exposes seven tools:
 - `repo_memory_validate`
 - `repo_memory_correct`
 - `repo_memory_invalidate`
+- `repo_memory_forget`
 
 See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integration.md`](docs/opencode-integration.md), and the client examples under [`examples/`](examples/) for setup and end-to-end verification flows.
 

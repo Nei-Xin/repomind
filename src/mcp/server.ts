@@ -212,6 +212,36 @@ export function createMcpServer(): McpServer {
     },
   );
 
+  server.tool(
+    "repo_memory_forget",
+    "Permanently delete a memory and, by default, any evidence used only by that memory. Requires confirm=true.",
+    {
+      memory_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      reason: z.string().min(1),
+      scope: z.enum(["memory", "memory-and-evidence"]).optional(),
+      confirm: z.boolean(),
+    },
+    async (input) => {
+      try {
+        if (input.confirm !== true) {
+          throw new RepoMindError("INVALID_INPUT", "Forgetting is permanent; pass confirm=true after the user approved the deletion");
+        }
+        const repoPath = input.repo_path ?? memoryRepositories.get(input.memory_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the memory was not returned by this server process");
+        const value = coreFor(repoPath).forgetMemory({
+          memoryId: input.memory_id,
+          reason: input.reason,
+          ...(input.scope ? { scope: input.scope } : {}),
+        });
+        memoryRepositories.delete(input.memory_id);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
   const originalClose = server.close.bind(server);
   server.close = async () => {
     for (const core of cores.values()) core.close();

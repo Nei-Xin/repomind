@@ -6,6 +6,7 @@ RepoMind `v0.3.0` provides explicit, audited transitions for memories that need 
 active -> uncertain -> active       validate
 active/uncertain -> superseded      correct
 active/uncertain -> invalid         invalidate
+any status -> physically deleted    forget
 ```
 
 Search returns `active` and `uncertain` memories by default. It excludes `superseded` and `invalid` memories, while inspect keeps their complete Evidence, relation, status reason, and Audit history available.
@@ -52,6 +53,22 @@ node D:\data\code\project\repomind\dist\cli\index.js memory-invalidate <memory-i
 ```
 
 MCP tool: `repo_memory_invalidate`
+
+## Forget
+
+Forgetting is the only governance action that physically deletes data. It removes the Memory row, its FTS entries, file links, relations, and Audit entries. With the default `memory-and-evidence` scope it also deletes Evidence that no other Memory references; `--scope memory` keeps all Evidence rows. A content-free tombstone (Memory ID, type, scope, reason, timestamp) is written to `forget_log` so the deletion itself stays verifiable.
+
+The CLI prints what would be deleted and exits without deleting unless `--yes` is passed:
+
+```powershell
+node D:\data\code\project\repomind\dist\cli\index.js forget <memory-id> `
+  --repo D:\data\code\project\repomind-demo `
+  --reason "The memory captured a secret that must be removed." `
+  --yes `
+  --json
+```
+
+MCP tool: `repo_memory_forget` (requires `confirm: true`; agents must obtain user approval before confirming)
 
 ## OpenCode verification
 

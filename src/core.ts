@@ -7,6 +7,8 @@ import type {
   CorrectMemoryInput,
   CorrectMemoryResult,
   EvidenceKind,
+  ForgetMemoryInput,
+  ForgetMemoryResult,
   InvalidateMemoryInput,
   InvalidateMemoryResult,
   MemoryResult,
@@ -348,6 +350,36 @@ export class RepositoryMemoryCore {
     return { memoryId: input.memoryId, status: "invalid" };
   }
 
+  forgetMemory(input: ForgetMemoryInput): ForgetMemoryResult {
+    if (!input.memoryId.trim() || !input.reason.trim()) throw new RepoMindError("INVALID_INPUT", "memoryId and reason must not be empty");
+    const scope = input.scope ?? "memory-and-evidence";
+    const db = this.context.database.raw;
+    const memory = db.prepare("SELECT id, type FROM memories WHERE id=? AND repository_id=?")
+      .get(input.memoryId, this.context.marker.projectId) as { id: string; type: string } | undefined;
+    if (!memory) throw new RepoMindError("MEMORY_NOT_FOUND", `Memory ${input.memoryId} was not found`);
+    let evidenceDeleted = 0;
+    this.context.database.transaction(() => {
+      const evidenceIds = (db.prepare("SELECT evidence_id FROM memory_evidence WHERE memory_id=?").all(input.memoryId) as Array<{ evidence_id: string }>)
+        .map((row) => row.evidence_id);
+      db.prepare("DELETE FROM memories WHERE id=?").run(input.memoryId);
+      db.prepare("DELETE FROM memory_fts WHERE memory_id=?").run(input.memoryId);
+      if (scope === "memory-and-evidence") {
+        for (const evidenceId of evidenceIds) {
+          const linked = db.prepare("SELECT count(*) AS count FROM memory_evidence WHERE evidence_id=?").get(evidenceId) as { count: number };
+          if (Number(linked.count) === 0) {
+            db.prepare("DELETE FROM evidence WHERE id=?").run(evidenceId);
+            evidenceDeleted++;
+          }
+        }
+      }
+      db.prepare(`
+        INSERT INTO forget_log(id, repository_id, memory_id, memory_type, scope, evidence_deleted, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(`fgt_${randomUUID()}`, this.context.marker.projectId, input.memoryId, memory.type, scope, evidenceDeleted, input.reason.trim(), Date.now());
+    });
+    return { memoryId: input.memoryId, scope, evidenceDeleted };
+  }
+
   search(query: string, options: { limit?: number; types?: MemoryType[]; statuses?: Array<"active" | "uncertain"> } = {}): MemoryResult[] {
     const cleanQuery = query.trim();
     if (!cleanQuery) return [];
@@ -459,7 +491,7 @@ export class RepositoryMemoryCore {
         vector: false,
         automaticExtraction: "deterministic",
         staleDetection: "file-hash",
-        governance: ["validate", "correct", "invalidate"],
+        governance: ["validate", "correct", "invalidate", "forget"],
       },
     };
   }
