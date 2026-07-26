@@ -1597,7 +1597,7 @@ Total Completion Time
 - [x] 配置 Build、Test、Format 和 Typecheck。
 - [x] 配置 CI。
 - [x] 添加 MIT LICENSE 和第三方代码声明。
-- [ ] 创建 README 和 ADR 目录。（README 已完成，ADR 目录未建）
+- [x] 创建 README 和 ADR 目录。（docs/adr/ 含 ADR-001 至 ADR-010）
 
 验收：
 
@@ -1937,7 +1937,7 @@ MVP 必须同时满足：
 - [x] 不同 Repository 的搜索完全隔离。
 - [x] 重复 Commit 不产生重复记忆。
 - [ ] LLM 失败不会产生部分脏数据。（LLM 提炼未实施，暂不适用）
-- [ ] stdout 不包含 MCP 协议以外内容。（未有自动化测试覆盖 stdio 纯净性）
+- [x] stdout 不包含 MCP 协议以外内容。（tests/mcp-stdio.test.ts 逐行验证真实 stdio 进程，含错误路径）
 - [ ] Windows 和 Linux CI 通过。（CI 已配置，待远端验证）
 - [x] 至少有一个跨会话 E2E。
 - [x] 至少有一个过期记忆测试。
