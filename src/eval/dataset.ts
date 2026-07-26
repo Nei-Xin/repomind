@@ -58,6 +58,11 @@ export function loadDataset(path: string): EvalDataset {
     });
   }
   const titles = new Set(parsed.data.memories.map((memory) => memory.title));
+  if (titles.size !== parsed.data.memories.length) {
+    const seen = new Set<string>();
+    const duplicates = [...new Set(parsed.data.memories.map((memory) => memory.title).filter((title) => !seen.add(title)))];
+    throw new RepoMindError("INVALID_INPUT", `Dataset ${path} has duplicate memory titles, which makes recall ambiguous: ${duplicates.join(", ")}`);
+  }
   for (const query of parsed.data.queries) {
     for (const expected of query.expect) {
       if (!titles.has(expected)) {

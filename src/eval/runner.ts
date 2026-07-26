@@ -62,7 +62,8 @@ export function runEvaluation(core: RepositoryMemoryCore, dataset: EvalDataset, 
     const results = core.search(query.query, { limit, ...(query.types ? { types: query.types } : {}) });
     const latencyMs = performance.now() - start;
     const expected = new Set(query.expect);
-    const found = results.filter((result) => expected.has(result.title)).map((result) => result.title);
+    // Deduplicated so two results sharing a title cannot push recall above 1.
+    const found = [...new Set(results.filter((result) => expected.has(result.title)).map((result) => result.title))];
     const firstRelevant = results.findIndex((result) => expected.has(result.title));
     return {
       query: query.query,

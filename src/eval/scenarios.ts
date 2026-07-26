@@ -32,10 +32,15 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 }
 
-function withScratch<T>(repositoryCount: number, work: (repositories: string[]) => T): T {
+/** Opens cores that the scratch owner closes, so a throwing scenario cannot
+ * leave a SQLite handle open and turn cleanup into an unrelated EBUSY error. */
+type OpenCore = (repositoryPath: string) => RepositoryMemoryCore;
+
+function withScratch<T>(repositoryCount: number, work: (repositories: string[], openCore: OpenCore) => T): T {
   const data = mkdtempSync(join(tmpdir(), "repomind-scenario-data-"));
   const repositories = Array.from({ length: repositoryCount }, () => mkdtempSync(join(tmpdir(), "repomind-scenario-repo-")));
   const previousDataDir = process.env.REPOMIND_DATA_DIR;
+  const opened: RepositoryMemoryCore[] = [];
   process.env.REPOMIND_DATA_DIR = data;
   try {
     for (const repository of repositories) {
@@ -44,8 +49,19 @@ function withScratch<T>(repositoryCount: number, work: (repositories: string[]) 
       git(repository, "config", "user.name", "RepoMind Eval");
       initializeRepository(repository).database.close();
     }
-    return work(repositories);
+    return work(repositories, (repositoryPath) => {
+      const core = new RepositoryMemoryCore(repositoryPath);
+      opened.push(core);
+      return core;
+    });
   } finally {
+    for (const core of opened) {
+      try {
+        core.close();
+      } catch {
+        // Already closed by the scenario; cleanup must not mask the real error.
+      }
+    }
     if (previousDataDir === undefined) delete process.env.REPOMIND_DATA_DIR;
     else process.env.REPOMIND_DATA_DIR = previousDataDir;
     for (const repository of repositories) rmSync(repository, { recursive: true, force: true });
@@ -58,8 +74,8 @@ function withScratch<T>(repositoryCount: number, work: (repositories: string[]) 
  * session: nothing carries over except the database.
  */
 function crossSessionRecall(): ScenarioResult {
-  return withScratch(1, ([repository]) => {
-    const first = new RepositoryMemoryCore(repository!);
+  return withScratch(1, ([repository], openCore) => {
+    const first = openCore(repository!);
     const session = first.startSession({ task: "Fix the flaky storage test on Windows" });
     writeFileSync(join(repository!, "storage.txt"), "reset the database between test cases\n", "utf8");
     git(repository!, "add", "storage.txt");
@@ -73,7 +89,7 @@ function crossSessionRecall(): ScenarioResult {
     });
     first.close();
 
-    const second = new RepositoryMemoryCore(repository!);
+    const second = openCore(repository!);
     const start = second.startSession({ task: "The storage test is flaky again on Windows" });
     const relevant = start.memories.find((memory) => `${memory.title} ${memory.content}`.toLowerCase().includes("storage"));
     const evidenceCount = relevant ? (second.inspect(relevant.id).evidence as unknown[]).length : 0;
@@ -88,8 +104,8 @@ function crossSessionRecall(): ScenarioResult {
 }
 
 function evidenceBinding(): ScenarioResult {
-  return withScratch(1, ([repository]) => {
-    const core = new RepositoryMemoryCore(repository!);
+  return withScratch(1, ([repository], openCore) => {
+    const core = openCore(repository!);
     for (let index = 0; index < 2; index++) {
       const session = core.startSession({ task: `Task ${index}: improve module ${index}` });
       core.commitSession({
@@ -118,14 +134,14 @@ function evidenceBinding(): ScenarioResult {
 }
 
 function repositoryIsolation(): ScenarioResult {
-  return withScratch(2, ([repositoryA, repositoryB]) => {
-    const coreA = new RepositoryMemoryCore(repositoryA!);
+  return withScratch(2, ([repositoryA, repositoryB], openCore) => {
+    const coreA = openCore(repositoryA!);
     const alpha = coreA.record({ type: "architecture", title: "Alpha gateway design", content: "The alpha gateway routes through the mesh proxy." });
     coreA.close();
-    const coreB = new RepositoryMemoryCore(repositoryB!);
+    const coreB = openCore(repositoryB!);
     coreB.record({ type: "convention", title: "Beta storage rule", content: "Beta services persist to the beta store." });
     const leakedInB = coreB.search("alpha gateway mesh proxy").filter((memory) => memory.id === alpha.id).length;
-    const coreA2 = new RepositoryMemoryCore(repositoryA!);
+    const coreA2 = openCore(repositoryA!);
     const leakedInA = coreA2.search("beta storage rule").filter((memory) => memory.title === "Beta storage rule").length;
     coreA2.close();
     coreB.close();
@@ -139,9 +155,9 @@ function repositoryIsolation(): ScenarioResult {
 }
 
 function staleWarning(): ScenarioResult {
-  return withScratch(1, ([repository]) => {
+  return withScratch(1, ([repository], openCore) => {
     writeFileSync(join(repository!, "config.txt"), "timeout=30\n", "utf8");
-    const core = new RepositoryMemoryCore(repository!);
+    const core = openCore(repository!);
     const recorded = core.record({
       type: "dependency",
       title: "Config timeout",
@@ -162,8 +178,8 @@ function staleWarning(): ScenarioResult {
 }
 
 function conflictSurfacing(): ScenarioResult {
-  return withScratch(1, ([repository]) => {
-    const core = new RepositoryMemoryCore(repository!);
+  return withScratch(1, ([repository], openCore) => {
+    const core = openCore(repository!);
     core.record({ type: "decision", title: "Cache strategy", content: "Cache aggressively at the edge." });
     core.record({ type: "decision", title: "Cache strategy", content: "Never cache at the edge; always hit origin." });
     const results = core.search("cache strategy edge");
@@ -179,8 +195,8 @@ function conflictSurfacing(): ScenarioResult {
 }
 
 function idempotentCommit(): ScenarioResult {
-  return withScratch(1, ([repository]) => {
-    const core = new RepositoryMemoryCore(repository!);
+  return withScratch(1, ([repository], openCore) => {
+    const core = openCore(repository!);
     const session = core.startSession({ task: "Ship the retry helper" });
     const input = {
       sessionId: session.sessionId,
