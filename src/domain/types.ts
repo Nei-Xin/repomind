@@ -21,7 +21,10 @@ export type EvidenceKind =
   | "test_result"
   | "command_result"
   | "commit"
-  | "manual";
+  | "manual"
+  | "validation"
+  | "correction"
+  | "invalidation";
 
 export interface GitSnapshot {
   branch: string | null;
@@ -42,6 +45,59 @@ export interface MemoryResult {
   tags: string[];
   score: number;
   warning?: string;
+  staleReasons?: StaleReason[];
+}
+
+export interface StaleReason {
+  kind: "file_created" | "file_modified" | "file_deleted";
+  filePath: string;
+  expectedHash: string | null;
+  currentHash: string | null;
+}
+
+export type MemoryStatusReason =
+  | { kind: "stale_files"; files: StaleReason[] }
+  | { kind: "superseded"; replacementMemoryId: string; reason: string }
+  | { kind: "invalid"; reason: string };
+
+export interface ValidateMemoryInput {
+  memoryId: string;
+  reason: string;
+}
+
+export interface ValidateMemoryResult {
+  memoryId: string;
+  status: "active";
+  lastValidatedAt: number;
+  files: Array<{ filePath: string; fileHash: string | null }>;
+}
+
+export interface CorrectMemoryInput {
+  memoryId: string;
+  reason: string;
+  title: string;
+  content: string;
+  type?: MemoryType;
+  confidence?: number;
+  tags?: string[];
+  relatedFiles?: string[];
+}
+
+export interface CorrectMemoryResult {
+  memoryId: string;
+  status: "superseded";
+  replacementMemoryId: string;
+  replacementStored: boolean;
+}
+
+export interface InvalidateMemoryInput {
+  memoryId: string;
+  reason: string;
+}
+
+export interface InvalidateMemoryResult {
+  memoryId: string;
+  status: "invalid";
 }
 
 export interface StartSessionInput {

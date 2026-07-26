@@ -16,7 +16,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "repomind", version: "0.1.0" });
+  const server = new McpServer({ name: "repomind", version: "0.3.0" });
   const cores = new Map<string, RepositoryMemoryCore>();
   const sessionRepositories = new Map<string, string>();
   const memoryRepositories = new Map<string, string>();
@@ -58,7 +58,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     "repo_memory_search",
-    "Search repository-scoped memories using FTS and deterministic filters.",
+    "Search repository-scoped memories using FTS and deterministic filters, with file-staleness warnings.",
     {
       query: z.string().min(1),
       repo_path: z.string().min(1),
@@ -124,7 +124,88 @@ export function createMcpServer(): McpServer {
       try {
         const repoPath = input.repo_path ?? memoryRepositories.get(input.memory_id);
         if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the memory was not returned by this server process");
-        return result(coreFor(repoPath).inspect(input.memory_id));
+        const value = coreFor(repoPath).inspect(input.memory_id);
+        memoryRepositories.set(input.memory_id, repoPath);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_memory_validate",
+    "Accept the current related-file hashes and return an active or uncertain memory to active status.",
+    {
+      memory_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      reason: z.string().min(1),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? memoryRepositories.get(input.memory_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the memory was not returned by this server process");
+        const value = coreFor(repoPath).validateMemory({ memoryId: input.memory_id, reason: input.reason });
+        memoryRepositories.set(input.memory_id, repoPath);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_memory_correct",
+    "Create an evidence-backed replacement and mark the previous memory as superseded.",
+    {
+      memory_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      reason: z.string().min(1),
+      title: z.string().min(1),
+      content: z.string().min(1),
+      type: z.enum(["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"]).optional(),
+      confidence: z.number().min(0).max(1).optional(),
+      tags: z.array(z.string()).optional(),
+      related_files: z.array(z.string()).optional(),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? memoryRepositories.get(input.memory_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the memory was not returned by this server process");
+        const value = coreFor(repoPath).correctMemory({
+          memoryId: input.memory_id,
+          reason: input.reason,
+          title: input.title,
+          content: input.content,
+          ...(input.type ? { type: input.type } : {}),
+          ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+          ...(input.tags ? { tags: input.tags } : {}),
+          ...(input.related_files ? { relatedFiles: input.related_files } : {}),
+        });
+        memoryRepositories.set(input.memory_id, repoPath);
+        memoryRepositories.set(value.replacementMemoryId, repoPath);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_memory_invalidate",
+    "Mark a disproven memory invalid while preserving its evidence and audit history.",
+    {
+      memory_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      reason: z.string().min(1),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? memoryRepositories.get(input.memory_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the memory was not returned by this server process");
+        const value = coreFor(repoPath).invalidateMemory({ memoryId: input.memory_id, reason: input.reason });
+        memoryRepositories.set(input.memory_id, repoPath);
+        return result(value);
       } catch (error) {
         return failure(error);
       }

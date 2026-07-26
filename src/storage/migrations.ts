@@ -103,4 +103,24 @@ CREATE INDEX memories_repository_status_type ON memories(repository_id, status, 
 CREATE INDEX memory_files_path ON memory_files(file_path);
 `,
   },
+  {
+    version: 2,
+    sql: `
+ALTER TABLE memories ADD COLUMN status_reason_json TEXT;
+`,
+  },
+  {
+    version: 3,
+    sql: `
+CREATE TABLE memory_relations (
+  source_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  target_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  relation_type TEXT NOT NULL CHECK(relation_type IN ('supersedes')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(source_memory_id, target_memory_id, relation_type),
+  CHECK(source_memory_id <> target_memory_id)
+);
+CREATE INDEX memory_relations_target ON memory_relations(target_memory_id, relation_type);
+`,
+  },
 ] as const;

@@ -14,7 +14,7 @@ function git(cwd: string, args: string[], allowFailure = false, input?: string):
       windowsHide: true,
       stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       ...(input === undefined ? {} : { input }),
-    }).trim();
+    }).trimEnd();
   } catch (error) {
     if (allowFailure) return "";
     throw new RepoMindError("GIT_INSPECTION_FAILED", `git ${args.join(" ")} failed`, {
