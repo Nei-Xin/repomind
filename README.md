@@ -109,4 +109,4 @@ repomind eval --dataset benchmarks/datasets/basic-retrieval.json --json
 repomind eval --scenarios --json
 ```
 
-Architecture decisions are recorded under [`docs/adr/`](docs/adr/).
+[`docs/architecture.md`](docs/architecture.md) explains how the pieces fit; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.
