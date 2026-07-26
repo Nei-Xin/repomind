@@ -1,0 +1,83 @@
+{
+  "fixtureVersion": 1,
+  "name": "reuse-debug-experience",
+  "category": "reuse-debug-experience",
+  "adversarial": false,
+  "repo": {
+    "files": {
+      "README.md": "# Ledger service\n\nA small ledger service used to exercise RepoMind's benchmark harness.\n",
+      "package.json": "{\n  \"name\": \"ledger\",\n  \"scripts\": {\n    \"build\": \"tsc -p .\",\n    \"test\": \"vitest run\"\n  }\n}\n",
+      "src/storage.ts": "export function openLedger(path: string): string {\n  return path;\n}\n",
+      "src/report.ts": "export function renderReport(rows: string[]): string {\n  return rows.join(\"\\n\");\n}\n"
+    },
+    "commits": [{ "message": "initial ledger service", "files": ["README.md", "package.json", "src/storage.ts", "src/report.ts"] }]
+  },
+  "history": [
+    {
+      "id": "s1",
+      "task": "The ledger suite fails intermittently when run twice in a row",
+      "status": "success",
+      "summary": "Diagnosed the intermittent ledger failures: each case reused the previous case's database file, so leftover rows leaked between cases. Resetting the ledger database between cases removed the intermittency.",
+      "tests": [{ "command": "npm test -- ledger", "exitCode": 0, "summary": "9 cases passed twice in a row" }],
+      "edits": { "src/storage.ts": "export function openLedger(path: string): string {\n  return path;\n}\n\nexport function resetLedger(path: string): void {\n  void path;\n}\n" }
+    },
+    {
+      "id": "s2",
+      "task": "Speed up the report renderer for large ledgers",
+      "status": "success",
+      "summary": "Rewrote the report renderer to join once instead of concatenating per row, which cut rendering time on large ledgers.",
+      "decisions": ["Report rendering builds one array and joins it once, never string concatenation in a loop"],
+      "edits": { "src/report.ts": "export function renderReport(rows: string[]): string {\n  const parts: string[] = [];\n  for (const row of rows) parts.push(row);\n  return parts.join(\"\\n\");\n}\n" }
+    },
+    {
+      "id": "s3",
+      "task": "Document how to run the ledger tests on Windows",
+      "status": "success",
+      "summary": "Documented the Windows invocation for the ledger tests in the readme so contributors stop guessing at the quoting rules.",
+      "edits": { "README.md": "# Ledger service\n\nA small ledger service used to exercise RepoMind's benchmark harness.\n\nRun the tests with npm test.\n" }
+    },
+    {
+      "id": "s4",
+      "task": "Add a storage smoke check to the build",
+      "status": "success",
+      "summary": "Added a storage smoke check that opens a ledger and renders an empty report, so a broken build fails before the full suite runs.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    },
+    {
+      "id": "s5",
+      "task": "Investigate slow ledger startup on Windows machines",
+      "status": "partial",
+      "summary": "Measured ledger startup on Windows and found it dominated by process spawn cost rather than by anything in the service; left the investigation open.",
+      "commands": [{ "command": "npm run build", "exitCode": 0, "summary": "build succeeded" }]
+    }
+  ],
+  "query": "The ledger tests are flaky again on Windows, they pass alone but fail when the suite runs twice",
+  "goldFacts": [
+    {
+      "key": "root-cause",
+      "matcher": { "allOf": ["reused the previous case's database file"] },
+      "status": "current",
+      "supportedBy": ["s1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/storage.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "fix",
+      "matcher": { "anyOf": [["Resetting the ledger database between cases", "resetting the ledger database between cases"]] },
+      "status": "current",
+      "supportedBy": ["s1"],
+      "requiredFor": "success",
+      "discoverableFrom": ["src/storage.ts"],
+      "repoDiscoverable": false
+    },
+    {
+      "key": "verified-command",
+      "matcher": { "allOf": ["npm test -- ledger"] },
+      "status": "current",
+      "supportedBy": ["s1"],
+      "requiredFor": "bonus",
+      "repoDiscoverable": false
+    }
+  ]
+}

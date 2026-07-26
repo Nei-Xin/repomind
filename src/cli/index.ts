@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { globSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { RepositoryMemoryCore } from "../core.js";
@@ -11,6 +12,10 @@ import { VERSION } from "../version.js";
 import { loadDataset } from "../eval/dataset.js";
 import { evaluateDataset } from "../eval/runner.js";
 import { runScenarioSuite } from "../eval/scenarios.js";
+import { loadFixture } from "../eval/comparison/fixture.js";
+import { renderMarkdown } from "../eval/comparison/report.js";
+import { lintFixtures, runComparison } from "../eval/comparison/runner.js";
+import type { ArmKey } from "../eval/comparison/types.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -35,7 +40,8 @@ Usage:
   repomind reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
-  repomind eval (--dataset <path> | --scenarios) [--limit <n>] [--json]
+  repomind eval (--dataset <path> | --scenarios | --compare) [--limit <n>] [--json]
+  repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--lint] [--strict] [--markdown]
   repomind mcp
 `;
 
@@ -62,6 +68,15 @@ const { values, positionals } = parseArgs({
     yes: { type: "boolean", default: false },
     dataset: { type: "string" },
     scenarios: { type: "boolean", default: false },
+    compare: { type: "boolean", default: false },
+    fixtures: { type: "string" },
+    arms: { type: "string" },
+    budgets: { type: "string" },
+    repeat: { type: "string" },
+    "alpha-sweep": { type: "boolean", default: true },
+    lint: { type: "boolean", default: false },
+    strict: { type: "boolean", default: false },
+    markdown: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -106,6 +121,31 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "eval") {
+    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : ""].filter(Boolean);
+    if (modes.length > 1) throw new RepoMindError("INVALID_INPUT", `${modes.join(" and ")} cannot be combined`);
+    if (values.compare) {
+      const paths = globSync(values.fixtures ?? "benchmarks/comparison/*.json").sort();
+      if (!paths.length) throw new RepoMindError("INVALID_INPUT", "No comparison fixtures matched");
+      const fixtures = paths.map((path) => loadFixture(path));
+      if (values.lint) {
+        output({ linted: lintFixtures(fixtures) });
+        return;
+      }
+      const report = runComparison({
+        fixtures,
+        enforceAggregate: !values.fixtures,
+        ...(values.arms ? { arms: values.arms.split(",").map((arm) => arm.trim()) as ArmKey[] } : {}),
+        ...(values.budgets ? { budgets: values.budgets.split(",").map((budget) => (Number(budget) === 0 ? Number.POSITIVE_INFINITY : Number(budget))) } : {}),
+        ...(values.repeat ? { repeat: Number(values.repeat) } : {}),
+        ...(values["alpha-sweep"] === false ? { alphaSweep: false } : {}),
+      });
+      const failed = [...report.gates.tier1, ...report.gates.tier2, ...report.gates.tier3]
+        .filter((gate) => !gate.passed && !gate.waived);
+      if (values.markdown) console.log(renderMarkdown(report));
+      else output(report);
+      if (values.strict && failed.length) process.exitCode = 1;
+      return;
+    }
     if (values.scenarios) {
       output(runScenarioSuite());
       return;

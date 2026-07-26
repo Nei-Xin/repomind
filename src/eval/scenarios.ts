@@ -1,9 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { RepositoryMemoryCore } from "../core.js";
-import { initializeRepository } from "../repository.js";
+import { git, withScratch } from "./scratch.js";
 
 export interface ScenarioResult {
   name: string;
@@ -26,47 +23,6 @@ export interface ScenarioReport {
     conflictSurfacedRate: number;
     idempotencyViolations: number;
   };
-}
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-}
-
-/** Opens cores that the scratch owner closes, so a throwing scenario cannot
- * leave a SQLite handle open and turn cleanup into an unrelated EBUSY error. */
-type OpenCore = (repositoryPath: string) => RepositoryMemoryCore;
-
-function withScratch<T>(repositoryCount: number, work: (repositories: string[], openCore: OpenCore) => T): T {
-  const data = mkdtempSync(join(tmpdir(), "repomind-scenario-data-"));
-  const repositories = Array.from({ length: repositoryCount }, () => mkdtempSync(join(tmpdir(), "repomind-scenario-repo-")));
-  const previousDataDir = process.env.REPOMIND_DATA_DIR;
-  const opened: RepositoryMemoryCore[] = [];
-  process.env.REPOMIND_DATA_DIR = data;
-  try {
-    for (const repository of repositories) {
-      git(repository, "init", "-q", "-b", "main");
-      git(repository, "config", "user.email", "repomind-eval@example.invalid");
-      git(repository, "config", "user.name", "RepoMind Eval");
-      initializeRepository(repository).database.close();
-    }
-    return work(repositories, (repositoryPath) => {
-      const core = new RepositoryMemoryCore(repositoryPath);
-      opened.push(core);
-      return core;
-    });
-  } finally {
-    for (const core of opened) {
-      try {
-        core.close();
-      } catch {
-        // Already closed by the scenario; cleanup must not mask the real error.
-      }
-    }
-    if (previousDataDir === undefined) delete process.env.REPOMIND_DATA_DIR;
-    else process.env.REPOMIND_DATA_DIR = previousDataDir;
-    for (const repository of repositories) rmSync(repository, { recursive: true, force: true });
-    rmSync(data, { recursive: true, force: true });
-  }
 }
 
 /**
