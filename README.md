@@ -88,6 +88,8 @@ See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`,
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 
+Secrets are redacted from everything that reaches long-term storage, and Git diff capture skips sensitive paths outright. See [`SECURITY.md`](SECURITY.md) for the threat model and the limits of pattern-based redaction.
+
 ## Scope
 
 The MVP intentionally does not include vector retrieval, remote LLM extraction, L2/L3 narratives, automatic host-tool observation, or Skill Candidate generation. See `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged roadmap.
