@@ -24,6 +24,7 @@ import type {
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
+import { buildMatchExpression, searchTokens } from "./search/lexical.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
 
 type SqlValue = string | number | null;
@@ -86,12 +87,6 @@ function stableJson(value: unknown): string {
 function titleFrom(text: string, fallback: string): string {
   const line = text.trim().split(/\r?\n/u)[0]?.trim() || fallback;
   return line.length > 96 ? `${line.slice(0, 93)}...` : line;
-}
-
-function searchTokens(title: string, content: string, tags: string[], files: string[]): string {
-  const raw = [title, content, ...tags, ...files].join(" ");
-  const splitIdentifiers = raw.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[\\/_\-.]+/g, " ");
-  return `${raw} ${splitIdentifiers}`.toLowerCase();
 }
 
 function extractFiles(status: string): string[] {
@@ -433,8 +428,7 @@ export class RepositoryMemoryCore {
       conditions.push(`m.type IN (${types.map(() => "?").join(",")})`);
       params.push(...types);
     }
-    const words = cleanQuery.split(/\s+/u).map((word) => word.replace(/["'*:^()]/g, "")).filter(Boolean);
-    const match = words.map((word) => `"${word}"`).join(" OR ");
+    const match = buildMatchExpression(cleanQuery);
     let rows: Array<Record<string, unknown>> = [];
     if (match) {
       rows = db.prepare(`
@@ -541,6 +535,28 @@ export class RepositoryMemoryCore {
         governance: ["validate", "correct", "invalidate", "forget"],
       },
     };
+  }
+
+  /**
+   * Rebuilds the FTS index from the memories table. Needed after a tokenizer
+   * change, and the recovery path when the index is damaged (STO-009).
+   */
+  reindex(): { memories: number } {
+    const db = this.context.database.raw;
+    const rows = db.prepare(
+      "SELECT id, title, content, tags_json FROM memories WHERE repository_id=?",
+    ).all(this.context.marker.projectId) as Array<{ id: string; title: string; content: string; tags_json: string }>;
+    this.context.database.transaction(() => {
+      db.prepare("DELETE FROM memory_fts WHERE repository_id=?").run(this.context.marker.projectId);
+      for (const row of rows) {
+        const files = (db.prepare("SELECT file_path FROM memory_files WHERE memory_id=? ORDER BY file_path")
+          .all(row.id) as Array<{ file_path: string }>).map((file) => file.file_path);
+        const tags = JSON.parse(row.tags_json) as string[];
+        db.prepare("INSERT INTO memory_fts(memory_id, repository_id, title, content, search_tokens) VALUES (?, ?, ?, ?, ?)")
+          .run(row.id, this.context.marker.projectId, row.title, row.content, searchTokens(row.title, row.content, tags, files));
+      }
+    });
+    return { memories: rows.length };
   }
 
   listSessions(): unknown[] {

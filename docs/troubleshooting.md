@@ -73,6 +73,11 @@ handle is still open. Close every core you open, in a `finally`.
 lists them; `repomind session-abandon <id>` closes one out. An open session
 never produces long-term memories, so nothing is silently recorded from it.
 
+**Chinese, Japanese, or Korean queries return nothing.** Memories written
+before v0.4.1 were indexed without ideographic segmentation. Run
+`repomind reindex` once to rebuild the index; new memories are indexed
+correctly on write.
+
 ## Data location
 
 Memories live in `~/.repomind/repositories/<projectId>/repomind.db`

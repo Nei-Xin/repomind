@@ -32,6 +32,7 @@ Usage:
   repomind memory-correct <memory-id> --reason <text> --title <text> --content <text> [--type <type>] [--repo <path>] [--json]
   repomind memory-invalidate <memory-id> --reason <text> [--repo <path>] [--json]
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
+  repomind reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind eval (--dataset <path> | --scenarios) [--limit <n>] [--json]
@@ -207,6 +208,7 @@ async function main(): Promise<void> {
         output(core.forgetMemory({ memoryId, reason, scope: scope as "memory" | "memory-and-evidence" }));
         break;
       }
+      case "reindex": output(core.reindex()); break;
       case "sessions": output(core.listSessions()); break;
       case "session-abandon": core.abandonSession(required(positionals[1], "session-id")); output("Session abandoned."); break;
       default: throw new RepoMindError("INVALID_INPUT", `Unknown command: ${command}`);
