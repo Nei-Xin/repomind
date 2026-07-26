@@ -1,8 +1,8 @@
 # RepoMind 项目设计与执行文档
 
-> 状态：Draft v0.1  
+> 状态：Living v0.3（随实现持续更新）  
 > 目标读者：项目开发者、贡献者、面试官  
-> 项目阶段：设计完成，等待创建独立仓库并实现 MVP  
+> 项目阶段：M0-M3、M5 已完成；M4（LLM 提炼）暂缓，当前使用确定性提炼；M6 中的评测 Runner（repomind eval）已可用  
 > 本文用途：作为产品定义、架构设计、开发计划、验收标准和后续迭代的统一依据
 
 ---
@@ -1592,12 +1592,12 @@ Total Completion Time
 
 任务：
 
-- [ ] 创建独立 Git 仓库。
-- [ ] 初始化 Node.js + TypeScript 严格模式。
-- [ ] 配置 Build、Test、Format 和 Typecheck。
-- [ ] 配置 CI。
-- [ ] 添加 MIT LICENSE 和第三方代码声明。
-- [ ] 创建 README 和 ADR 目录。
+- [x] 创建独立 Git 仓库。
+- [x] 初始化 Node.js + TypeScript 严格模式。
+- [x] 配置 Build、Test、Format 和 Typecheck。
+- [x] 配置 CI。
+- [x] 添加 MIT LICENSE 和第三方代码声明。
+- [ ] 创建 README 和 ADR 目录。（README 已完成，ADR 目录未建）
 
 验收：
 
@@ -1611,11 +1611,11 @@ Total Completion Time
 
 任务：
 
-- [ ] 实现 `.repomind/project.json`。
-- [ ] 实现数据目录解析。
-- [ ] 实现 SQLite Connection 和 Migration。
-- [ ] 实现 Repository、Session、Evidence、Memory Store。
-- [ ] 实现 `repomind init/status/doctor`。
+- [x] 实现 `.repomind/project.json`。
+- [x] 实现数据目录解析。
+- [x] 实现 SQLite Connection 和 Migration。
+- [x] 实现 Repository、Session、Evidence、Memory Store。
+- [x] 实现 `repomind init/status/doctor`。
 
 验收：
 
@@ -1630,12 +1630,12 @@ Total Completion Time
 
 任务：
 
-- [ ] 实现只读 Git Inspector。
-- [ ] 实现 Baseline 和 Final Snapshot。
-- [ ] 实现 Diff 截断和 Hash。
-- [ ] 实现手工 Memory Record。
-- [ ] 实现 FTS5 索引。
-- [ ] 实现 Search 和 Inspect CLI。
+- [x] 实现只读 Git Inspector。
+- [x] 实现 Baseline 和 Final Snapshot。
+- [x] 实现 Diff 截断和 Hash。
+- [x] 实现手工 Memory Record。
+- [x] 实现 FTS5 索引。
+- [x] 实现 Search 和 Inspect CLI。
 
 验收：
 
@@ -1649,12 +1649,12 @@ Total Completion Time
 
 任务：
 
-- [ ] 实现 MCP stdio Server。
-- [ ] 实现 `repo_session_start`。
-- [ ] 实现 `repo_memory_search`。
-- [ ] 实现 `repo_session_commit`。
-- [ ] 实现 `repo_memory_inspect`。
-- [ ] 编写 MCP 配置示例。
+- [x] 实现 MCP stdio Server。
+- [x] 实现 `repo_session_start`。
+- [x] 实现 `repo_memory_search`。
+- [x] 实现 `repo_session_commit`。
+- [x] 实现 `repo_memory_inspect`。
+- [x] 编写 MCP 配置示例。
 
 验收：
 
@@ -1665,6 +1665,8 @@ Total Completion Time
 ### M4：自动记忆提炼
 
 目标：从 Session Evidence 自动生成 L1。
+
+> 状态：暂缓。当前版本使用确定性规则提炼（decision / 通过的测试命令 / 成功摘要），LLM 提炼延后到检索评测基线建立之后再实施。
 
 任务：
 
@@ -1689,12 +1691,12 @@ Total Completion Time
 
 任务：
 
-- [ ] 实现 Memory Relation。
-- [ ] 实现 `uncertain/superseded/invalid` 状态。
-- [ ] 实现文件 Hash 校验。
-- [ ] 实现 Conflict 决策。
-- [ ] 实现 Correct、Forget、Validate。
-- [ ] 增加对应 MCP 和 CLI。
+- [x] 实现 Memory Relation。
+- [x] 实现 `uncertain/superseded/invalid` 状态。
+- [x] 实现文件 Hash 校验。
+- [x] 实现 Conflict 决策。（确定性规则：同类型同作用域同标题、内容不同的声明性记忆标记 contradicts）
+- [x] 实现 Correct、Forget、Validate。
+- [x] 增加对应 MCP 和 CLI。
 
 验收：
 
@@ -1711,8 +1713,8 @@ Total Completion Time
 - [ ] 实现 Embedding 接口。
 - [ ] 集成 sqlite-vec。
 - [ ] 实现混合排序。
-- [ ] 创建 Benchmark Fixtures。
-- [ ] 实现实验 Runner 和指标收集。
+- [x] 创建 Benchmark Fixtures。（benchmarks/datasets/basic-retrieval.json）
+- [x] 实现实验 Runner 和指标收集。（repomind eval：Recall@K、MRR、延迟；对照实验待做）
 - [ ] 输出对照实验报告。
 
 验收：
@@ -1924,22 +1926,22 @@ test: add cross-session memory benchmark
 
 MVP 必须同时满足：
 
-- [ ] 可以在 Git 仓库执行 `repomind init`。
-- [ ] 可以通过 stdio 启动 MCP Server。
-- [ ] MCP Client 能调用四个核心 Tool。
-- [ ] Session Start 保存 Git 基线并返回相关记忆。
-- [ ] Session Commit 保存最终 Git Evidence。
-- [ ] 至少能生成或手工保存 L1 记忆。
-- [ ] 新进程和新会话可以检索旧记忆。
-- [ ] Inspect 能展示 Evidence 来源。
-- [ ] 不同 Repository 的搜索完全隔离。
-- [ ] 重复 Commit 不产生重复记忆。
-- [ ] LLM 失败不会产生部分脏数据。
-- [ ] stdout 不包含 MCP 协议以外内容。
-- [ ] Windows 和 Linux CI 通过。
-- [ ] 至少有一个跨会话 E2E。
-- [ ] 至少有一个过期记忆测试。
-- [ ] README 包含五分钟演示步骤。
+- [x] 可以在 Git 仓库执行 `repomind init`。
+- [x] 可以通过 stdio 启动 MCP Server。
+- [x] MCP Client 能调用四个核心 Tool。（当前共九个 Tool）
+- [x] Session Start 保存 Git 基线并返回相关记忆。
+- [x] Session Commit 保存最终 Git Evidence。
+- [x] 至少能生成或手工保存 L1 记忆。
+- [x] 新进程和新会话可以检索旧记忆。（tests/e2e.test.ts 跨进程验证）
+- [x] Inspect 能展示 Evidence 来源。
+- [x] 不同 Repository 的搜索完全隔离。
+- [x] 重复 Commit 不产生重复记忆。
+- [ ] LLM 失败不会产生部分脏数据。（LLM 提炼未实施，暂不适用）
+- [ ] stdout 不包含 MCP 协议以外内容。（未有自动化测试覆盖 stdio 纯净性）
+- [ ] Windows 和 Linux CI 通过。（CI 已配置，待远端验证）
+- [x] 至少有一个跨会话 E2E。
+- [x] 至少有一个过期记忆测试。
+- [x] README 包含五分钟演示步骤。
 
 只完成“Embedding + 搜索对话”不算 RepoMind MVP。
 
