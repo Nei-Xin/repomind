@@ -18,7 +18,17 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "coding-agent",
+    "memory",
+    "sqlite",
+    "repository"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
