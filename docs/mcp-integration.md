@@ -4,7 +4,7 @@ RepoMind runs as a local stdio MCP server. Build it before configuring a client:
 
 ```powershell
 npm.cmd run build
-node D:\data\code\project\repomind\dist\cli\index.js mcp
+node C:\path\to\repomind\dist\cli\index.js mcp
 ```
 
 The server exposes seven tools:

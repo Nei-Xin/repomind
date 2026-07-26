@@ -21,11 +21,11 @@ RepoMind does not automatically return the memory to `active` when a file is rev
 Build the RepoMind engine first:
 
 ```powershell
-cd D:\data\code\project\repomind
+cd C:\path\to\repomind
 npm.cmd run build
 ```
 
-In `D:\data\code\project\repomind-demo`, search for a memory that has a related file and inspect it. Confirm its initial `status` is `active` and note the related file and `file_hash`.
+In `C:\path\to\repomind-demo`, search for a memory that has a related file and inspect it. Confirm its initial `status` is `active` and note the related file and `file_hash`.
 
 Change that related file without creating a new RepoMind memory. For example:
 
@@ -37,7 +37,7 @@ Ask OpenCode to call:
 
 ```text
 repo_memory_search
-repo_path = D:\data\code\project\repomind-demo
+repo_path = C:\path\to\repomind-demo
 query = Migration 回滚验证
 limit = 5
 ```

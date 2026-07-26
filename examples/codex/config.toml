@@ -5,7 +5,7 @@
 enabled = true
 required = false
 command = "node"
-args = ["D:\\data\\code\\project\\repomind\\dist\\cli\\index.js", "mcp"]
+args = ["C:\\path\\to\\repomind\\dist\\cli\\index.js", "mcp"]
 startup_timeout_sec = 10.0
 tool_timeout_sec = 60.0
 enabled_tools = [
@@ -13,4 +13,9 @@ enabled_tools = [
   "repo_memory_search",
   "repo_session_commit",
   "repo_memory_inspect",
+  "repo_memory_record",
+  "repo_memory_validate",
+  "repo_memory_correct",
+  "repo_memory_invalidate",
+  "repo_memory_forget",
 ]

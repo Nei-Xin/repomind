@@ -1,6 +1,6 @@
 # Memory governance
 
-RepoMind `v0.3.0` provides explicit, audited transitions for memories that need human or agent review.
+RepoMind provides explicit, audited transitions for memories that need human or agent review.
 
 ```text
 active -> uncertain -> active       validate
@@ -30,8 +30,8 @@ Automatic extraction and `correct` never reactivate. Neither expresses intent to
 Validation accepts the repository's current related-file hashes as the new baseline. It clears the stale reason, updates `last_validated_at`, adds `validation` Evidence, and writes a `memory_validated` Audit entry.
 
 ```powershell
-node D:\data\code\project\repomind\dist\cli\index.js memory-validate <memory-id> `
-  --repo D:\data\code\project\repomind-demo `
+node C:\path\to\repomind\dist\cli\index.js memory-validate <memory-id> `
+  --repo C:\path\to\repomind-demo `
   --reason "Reviewed the changed files and confirmed the rule still applies." `
   --json
 ```
@@ -43,8 +43,8 @@ MCP tool: `repo_memory_validate`
 Correction creates a replacement Memory instead of overwriting history. The replacement is `active`, the old Memory becomes `superseded`, and a `supersedes` relation links the replacement to the old Memory. Both memories reference the `correction` Evidence.
 
 ```powershell
-node D:\data\code\project\repomind\dist\cli\index.js memory-correct <memory-id> `
-  --repo D:\data\code\project\repomind-demo `
+node C:\path\to\repomind\dist\cli\index.js memory-correct <memory-id> `
+  --repo C:\path\to\repomind-demo `
   --reason "The rollback policy changed after the migration refactor." `
   --title "Current migration rollback policy" `
   --content "Every migration must run in a transaction and pass rollback verification." `
@@ -60,8 +60,8 @@ Inspect the old Memory to find `status = superseded`, its `replacementMemoryId`,
 Invalidation is for a disproven Memory that has no replacement. It keeps all previous Evidence, adds `invalidation` Evidence, stores the reason, and writes a `memory_invalidated` Audit entry.
 
 ```powershell
-node D:\data\code\project\repomind\dist\cli\index.js memory-invalidate <memory-id> `
-  --repo D:\data\code\project\repomind-demo `
+node C:\path\to\repomind\dist\cli\index.js memory-invalidate <memory-id> `
+  --repo C:\path\to\repomind-demo `
   --reason "The diagnosis was disproven by the migration test." `
   --json
 ```
@@ -75,8 +75,8 @@ Forgetting is the only governance action that physically deletes data. It remove
 The CLI prints what would be deleted and exits without deleting unless `--yes` is passed:
 
 ```powershell
-node D:\data\code\project\repomind\dist\cli\index.js forget <memory-id> `
-  --repo D:\data\code\project\repomind-demo `
+node C:\path\to\repomind\dist\cli\index.js forget <memory-id> `
+  --repo C:\path\to\repomind-demo `
   --reason "The memory captured a secret that must be removed." `
   --yes `
   --json
@@ -86,7 +86,7 @@ MCP tool: `repo_memory_forget` (requires `confirm: true`; agents must obtain use
 
 ## OpenCode verification
 
-After rebuilding RepoMind, restart OpenCode so its MCP process loads `v0.3.0`. Then:
+After rebuilding RepoMind, restart OpenCode so its MCP process reloads the new build. Then:
 
 1. Search for an `uncertain` Memory and call `repo_memory_validate`; confirm a new search returns it as `active`.
 2. Call `repo_memory_correct`; confirm the old ID disappears from search and the replacement ID is returned.
