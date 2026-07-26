@@ -1,6 +1,8 @@
 # File stale detection
 
-RepoMind `v0.2.0` compares each memory's stored related-file hash with the current repository file. Search and inspect refresh this state before returning data.
+RepoMind compares each memory's stored related-file hash with the current repository file. Search and inspect refresh this state before returning data.
+
+Each refresh reads a given file at most once, no matter how many memories reference it, and skips hashing entirely when the file's size and modification time still match the recorded values. That fast path deliberately distrusts files modified within the last two seconds: an edit landing in the same filesystem tick can leave size and mtime unchanged, so recently touched files are always re-hashed.
 
 The following transitions are detected:
 

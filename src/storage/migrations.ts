@@ -156,4 +156,11 @@ ALTER TABLE memory_relations_v5 RENAME TO memory_relations;
 CREATE INDEX memory_relations_target ON memory_relations(target_memory_id, relation_type);
 `,
   },
+  {
+    version: 6,
+    sql: `
+ALTER TABLE memory_files ADD COLUMN file_size INTEGER;
+ALTER TABLE memory_files ADD COLUMN file_mtime_ms INTEGER;
+`,
+  },
 ] as const;

@@ -107,6 +107,47 @@ describe("deterministic conflict detection", () => {
     core.close();
   });
 
+  it("resolves one side of a conflict through correction while reporting the remaining conflict", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const first = core.record({ type: "decision", title: "Cache strategy", content: "Cache aggressively at the edge." });
+    const second = core.record({ type: "decision", title: "Cache strategy", content: "Never cache at the edge; always hit origin." });
+    expect(second.conflicts).toEqual([first.id]);
+
+    const corrected = core.correctMemory({
+      memoryId: first.id,
+      reason: "The edge policy was rewritten after the latency review.",
+      title: "Cache strategy",
+      content: "Cache only static assets at the edge; dynamic responses hit origin.",
+    });
+    expect(corrected).toMatchObject({ memoryId: first.id, status: "superseded", replacementStored: true });
+    expect(corrected.conflicts).toEqual([second.id]);
+    expect(core.inspect(first.id).status).toBe("superseded");
+
+    // The replacement stays uncertain because it still contradicts the other side.
+    const replacement = core.inspect(corrected.replacementMemoryId);
+    expect(replacement.status).toBe("uncertain");
+    expect(replacement.statusReason).toEqual({ kind: "conflict", withMemoryId: second.id });
+    // The surviving side now points at the replacement, not the retired memory.
+    expect(core.inspect(second.id).statusReason).toEqual({ kind: "conflict", withMemoryId: corrected.replacementMemoryId });
+    core.close();
+  });
+
+  it("reports a clear error when a correction collides with a retired memory", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const retired = core.record({ type: "decision", title: "Queue choice", content: "Use the legacy queue." });
+    core.invalidateMemory({ memoryId: retired.id, reason: "The legacy queue was removed." });
+    const live = core.record({ type: "decision", title: "Queue choice v2", content: "Use the managed queue." });
+
+    expect(() => core.correctMemory({
+      memoryId: live.id,
+      reason: "Reverting to the previous wording.",
+      title: "Queue choice",
+      content: "Use the legacy queue.",
+    })).toThrow(/which is invalid; forget it first/);
+    expect(core.inspect(live.id).status).toBe("active");
+    core.close();
+  });
+
   it("does not conflict a correction with the memory it replaces", () => {
     const core = new RepositoryMemoryCore(repository);
     const original = core.record({ type: "decision", title: "Retry policy", content: "Retry three times." });

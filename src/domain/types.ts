@@ -89,6 +89,8 @@ export interface CorrectMemoryResult {
   status: "superseded";
   replacementMemoryId: string;
   replacementStored: boolean;
+  /** Live memories the replacement still contradicts; each is left uncertain. */
+  conflicts: string[];
 }
 
 export interface InvalidateMemoryInput {

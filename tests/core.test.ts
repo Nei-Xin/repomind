@@ -85,6 +85,29 @@ describe("repository memory core", () => {
     core.close();
   });
 
+  it("detects a same-size edit that lands in the same filesystem tick", () => {
+    // The stale-detection fast path trusts unchanged size+mtime. An edit of
+    // identical length written immediately after recording can keep both
+    // values identical, so recently touched files must still be re-hashed.
+    writeFileSync(join(repository, "config.txt"), "timeout=30\n", "utf8");
+    const core = new RepositoryMemoryCore(repository);
+    const recorded = core.record({
+      type: "dependency",
+      title: "Configured timeout",
+      content: "The service timeout lives in config.txt.",
+      relatedFiles: ["config.txt"],
+    });
+    writeFileSync(join(repository, "config.txt"), "timeout=60\n", "utf8");
+
+    const result = core.search("service timeout")[0]!;
+    expect(result).toMatchObject({
+      id: recorded.id,
+      status: "uncertain",
+      staleReasons: [{ kind: "file_modified", filePath: "config.txt" }],
+    });
+    core.close();
+  });
+
   it("detects deleted and newly created related files without affecting unlinked memories", () => {
     const core = new RepositoryMemoryCore(repository);
     const deleted = core.record({

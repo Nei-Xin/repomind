@@ -17,6 +17,14 @@ When a new declarative memory (`architecture`, `convention`, `decision`, `depend
 
 Resolve a conflict with the same governance tools: `validate` the side that holds, `correct` or `invalidate` the side that does not. Episodic types (`command`, `failure`, `solution`) never conflict automatically because repeating them with different outcomes is normal history, not contradiction.
 
+Correcting one side of a conflict is allowed even when the replacement still contradicts the surviving side: the correction succeeds, the replacement stays `uncertain`, and `CorrectMemoryResult.conflicts` names every memory it still contradicts. A correction is refused only when its content collides with a memory that is already `superseded` or `invalid`; forget that memory or choose different wording.
+
+## Recording a retired fact again
+
+A memory's content owns its fingerprint permanently, so recording a fact identical to a `superseded` or `invalid` memory would otherwise be a silent no-op. Instead, `record` (and `repo_memory_record`) reactivates that memory, attaches the new evidence, and writes a `memory_reactivated` audit entry; the result reports `reactivated: true`. If the revived fact contradicts a live memory, normal conflict detection applies and both sides become `uncertain`.
+
+Automatic extraction and `correct` never reactivate. Neither expresses intent to resurrect a memory somebody deliberately retired, so extraction skips the candidate and `correct` returns an explicit error.
+
 ## Validate
 
 Validation accepts the repository's current related-file hashes as the new baseline. It clears the stale reason, updates `last_validated_at`, adds `validation` Evidence, and writes a `memory_validated` Audit entry.
