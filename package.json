@@ -1,6 +1,6 @@
 {
   "name": "repomind",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Evidence-backed repository memory for coding agents",
   "repository": {
     "type": "git",
@@ -37,7 +37,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/cli/index.js",
-    "bench": "node dist/cli/index.js eval --compare --strict --json > comparison-report.json"
+    "bench": "node dist/cli/index.js eval --compare --strict --json > comparison-report.json",
+    "bench:agent-fixtures": "node benchmarks/agent-suite/validate.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

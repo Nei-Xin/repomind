@@ -21,6 +21,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - run: npm run bench:agent-fixtures
 
   bench:
     # The full fixture set replays a Git repository per fixture per arm, which

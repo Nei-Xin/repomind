@@ -7,6 +7,32 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-28
+
+### Added
+
+- Manifest v2 three-arm Agent evaluation comparing no-memory, raw full-history,
+  and RepoMind from independent clones of the same task commit.
+- Latin-square arm ordering, full-history-specific acceptance gates, and report
+  schema v4 with separate paired comparisons against both baselines.
+- `repomind eval --agent-summary` for traceable multi-report aggregation with
+  source SHA-256 hashes and approximate 95% paired-delta intervals.
+- Four additional controlled tasks covering stale endpoints, error contracts,
+  dependency boundaries, and changed configuration defaults.
+- Cross-platform fixture validation for all eight deterministic task bases.
+
+### Changed
+
+- The shipped Agent suite is now manifest version 2 and requires raw history
+  distinct from the evidence-backed memories supplied to RepoMind.
+- CI validates public and hidden fixture baselines on Windows and Ubuntu.
+
+### Compatibility
+
+- Manifest version 1 remains supported and retains the v0.6 two-arm behavior.
+- Report schema v4 replaces the v3 `paired` field with baseline-keyed
+  `comparisons` and renames `noMemoryMean` to `baselineMean`.
+
 ## [0.6.0] - 2026-07-28
 
 ### Added

@@ -32,21 +32,25 @@ const taskSchema = z.object({
   publicChecks: z.array(checkSchema).min(1),
   hiddenChecks: z.array(checkSchema).min(1),
   memories: z.array(memorySchema).min(1),
+  fullHistory: z.array(z.string().min(1)).min(1).optional(),
   allowedChanges: z.array(z.string().min(1)).optional(),
 }).strict();
 
 const acceptanceSchema = z.object({
   minRepoMindHiddenPassRate: z.number().min(0).max(1).optional(),
   minHiddenPassRateDelta: z.number().min(-1).max(1).optional(),
+  minFullHistoryHiddenPassRateDelta: z.number().min(-1).max(1).optional(),
   minRetrievalRate: z.number().min(0).max(1).optional(),
   minSessionCommitRate: z.number().min(0).max(1).optional(),
   maxMeanDurationRegressionPercent: z.number().min(0).optional(),
+  maxFullHistoryDurationRegressionPercent: z.number().min(0).optional(),
   requireEfficiencyImprovement: z.boolean().optional(),
   requiredTaskWins: z.array(z.string().min(1)).optional(),
+  requiredFullHistoryTaskWins: z.array(z.string().min(1)).optional(),
 }).strict();
 
 export const agentManifestSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   name: z.string().min(1),
   tasks: z.array(taskSchema).min(1),
   acceptance: acceptanceSchema.optional(),
@@ -68,7 +72,17 @@ export function parseAgentManifest(value: unknown, source = "manifest"): AgentMa
   if (new Set(ids).size !== ids.length) {
     throw new RepoMindError("INVALID_INPUT", `Agent manifest ${source} contains duplicate task ids`);
   }
-  const unknownWins = parsed.data.acceptance?.requiredTaskWins?.filter((id) => !ids.includes(id)) ?? [];
+  if (parsed.data.version === 2) {
+    const missingHistory = parsed.data.tasks.filter((task) => !task.fullHistory?.length).map((task) => task.id);
+    if (missingHistory.length) {
+      throw new RepoMindError("INVALID_INPUT", `Agent manifest ${source} version 2 tasks require fullHistory: ${missingHistory.join(", ")}`);
+    }
+  }
+  const configuredWins = [
+    ...(parsed.data.acceptance?.requiredTaskWins ?? []),
+    ...(parsed.data.acceptance?.requiredFullHistoryTaskWins ?? []),
+  ];
+  const unknownWins = configuredWins.filter((id) => !ids.includes(id));
   if (unknownWins.length) {
     throw new RepoMindError("INVALID_INPUT", `Agent manifest ${source} acceptance references unknown task ids: ${unknownWins.join(", ")}`);
   }

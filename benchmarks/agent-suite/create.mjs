@@ -17,7 +17,10 @@ mkdirSync(target, { recursive: false });
 cpSync(join(source, "bases"), join(target, "bases"), { recursive: true });
 cpSync(join(source, "hidden"), join(target, "hidden"), { recursive: true });
 
-const baseDirectories = ["renamed-module", "failed-solution", "migration-rollback", "historical-command"];
+const baseDirectories = [
+  "renamed-module", "failed-solution", "migration-rollback", "historical-command",
+  "stale-endpoint", "error-contract", "dependency-boundary", "config-default",
+];
 const commits = new Map();
 const fixedGitEnvironment = {
   ...process.env,

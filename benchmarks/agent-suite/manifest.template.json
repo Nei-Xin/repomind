@@ -1,12 +1,14 @@
 {
-  "version": 1,
-  "name": "RepoMind four-task controlled agent suite",
+  "version": 2,
+  "name": "RepoMind eight-task three-arm controlled agent suite",
   "acceptance": {
     "minRepoMindHiddenPassRate": 1,
     "minHiddenPassRateDelta": 0,
+    "minFullHistoryHiddenPassRateDelta": 0,
     "minRetrievalRate": 1,
     "minSessionCommitRate": 1,
     "maxMeanDurationRegressionPercent": 15,
+    "maxFullHistoryDurationRegressionPercent": 15,
     "requireEfficiencyImprovement": true,
     "requiredTaskWins": ["historical-command"]
   },
@@ -16,6 +18,11 @@
       "baseRepository": "./bases/renamed-module",
       "baseCommit": "HEAD",
       "prompt": "Expose the current audit-record serializer from src/index.js. Preserve the existing public API and run the repository tests.",
+      "fullHistory": [
+        "A 2024 task imported serializeAuditRecord from src/audit.js.",
+        "That module was later deleted during the history layout cleanup. One attempted fix copied the serializer into src/index.js, but review rejected the duplicate implementation.",
+        "The cleanup review says the maintained implementation moved under src/history and should be re-exported rather than copied."
+      ],
       "publicChecks": [{ "command": "node", "args": ["--test"] }],
       "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-renamed-module.mjs", "{repo}"] }],
       "memories": [{
@@ -31,6 +38,11 @@
       "baseRepository": "./bases/failed-solution",
       "baseCommit": "HEAD",
       "prompt": "Fix deliverOnce so concurrent calls for the same delivery id invoke send only once and report whether each call performed the delivery. Keep retry behavior correct after send rejects. Run the tests.",
+      "fullHistory": [
+        "The first implementation added the id to delivered after send resolved. Sequential duplicate tests passed.",
+        "Production still sent duplicates when two calls overlapped. A proposed permanent pre-await mark prevented duplicates but also blocked retries after a rejected send.",
+        "Review concluded that ownership must be claimed before awaiting and released only on rejection."
+      ],
       "publicChecks": [{ "command": "node", "args": ["--test"] }],
       "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-failed-solution.mjs", "{repo}"] }],
       "memories": [{
@@ -46,6 +58,11 @@
       "baseRepository": "./bases/migration-rollback",
       "baseCommit": "HEAD",
       "prompt": "Implement the down direction of the user-handle migration according to this repository's historical rollback convention. Run the tests.",
+      "fullHistory": [
+        "An old migration helper accepted a single SQL string with quoted identifiers.",
+        "The current executor was changed after rollback deadlocks: destructive rollback steps now use separate db.exec calls and unquoted identifiers.",
+        "For user handles, the review order was remove users_handle_uq first, then remove the handle column."
+      ],
       "publicChecks": [{ "command": "node", "args": ["--test"] }],
       "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-migration-rollback.mjs", "{repo}"] }],
       "memories": [{
@@ -61,6 +78,11 @@
       "baseRepository": "./bases/historical-command",
       "baseCommit": "HEAD",
       "prompt": "Restore the package script named verify:release using the last validated release verification workflow. Do not change application code. Run the resulting checks.",
+      "fullHistory": [
+        "A draft release script ran schema checks before tests, but schema artifacts were sometimes stale.",
+        "Another experiment used npm test && npm run schema, which recursed after the package scripts were reorganized.",
+        "The final release note recorded direct Node commands: finish node --test first, then run scripts/check-schema.mjs."
+      ],
       "publicChecks": [{ "command": "node", "args": ["--test"] }],
       "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-historical-command.mjs", "{repo}"] }],
       "memories": [{
@@ -70,6 +92,86 @@
         "relatedFiles": ["package.json", "scripts/check-schema.mjs"]
       }],
       "allowedChanges": ["package.json"]
+    },
+    {
+      "id": "stale-endpoint",
+      "baseRepository": "./bases/stale-endpoint",
+      "baseCommit": "HEAD",
+      "prompt": "Update jobsEndpoint to the currently supported jobs API route. Keep the exported function name and run the tests.",
+      "fullHistory": [
+        "The original client used /v1/jobs.",
+        "During the v2 preview, one branch changed it to /v2/jobs, but that route was never deployed.",
+        "The API consolidation shipped job operations under the task resource; the compatibility review approved /v2/tasks as the current route."
+      ],
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-stale-endpoint.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "decision",
+        "title": "Current jobs API route",
+        "content": "jobsEndpoint must return /v2/tasks. The preview /v2/jobs route was never deployed and /v1/jobs is retired.",
+        "relatedFiles": ["src/client.js"]
+      }],
+      "allowedChanges": ["src/client.js"]
+    },
+    {
+      "id": "error-contract",
+      "baseRepository": "./bases/error-contract",
+      "baseCommit": "HEAD",
+      "prompt": "Restore parseConfig's public error contract for malformed JSON without changing successful parsing. Run the tests.",
+      "fullHistory": [
+        "The first wrapper converted parse failures into a generic Error with message Invalid config.",
+        "Consumers relying on SyntaxError then broke. A second patch preserved SyntaxError but lost the original parser failure and diagnostic position.",
+        "The API review required a SyntaxError carrying code CONFIG_PARSE_FAILED and the original SyntaxError as cause."
+      ],
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-error-contract.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "requirement",
+        "title": "parseConfig malformed JSON contract",
+        "content": "On malformed JSON, parseConfig throws a SyntaxError with code CONFIG_PARSE_FAILED and preserves the original JSON.parse SyntaxError in cause. Valid JSON behavior is unchanged.",
+        "relatedFiles": ["src/parse-config.js"]
+      }],
+      "allowedChanges": ["src/parse-config.js", "test/smoke.node.js"]
+    },
+    {
+      "id": "dependency-boundary",
+      "baseRepository": "./bases/dependency-boundary",
+      "baseCommit": "HEAD",
+      "prompt": "Implement stableDigest according to the repository's dependency and output conventions. Do not add dependencies. Run the tests.",
+      "fullHistory": [
+        "A prototype used the hash.js package and returned base64.",
+        "The dependency review rejected adding a package for functionality available in Node.",
+        "Cache keys elsewhere expect lowercase SHA-256 hexadecimal over the UTF-8 input."
+      ],
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-dependency-boundary.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "dependency",
+        "title": "Stable digest dependency boundary",
+        "content": "stableDigest uses node:crypto createHash with SHA-256 and returns lowercase hex for the UTF-8 input. Do not add a third-party dependency.",
+        "relatedFiles": ["src/digest.js", "package.json"]
+      }],
+      "allowedChanges": ["src/digest.js", "test/smoke.node.js"]
+    },
+    {
+      "id": "config-default",
+      "baseRepository": "./bases/config-default",
+      "baseCommit": "HEAD",
+      "prompt": "Update requestTimeout to the currently approved default while preserving explicit environment overrides. Run the tests.",
+      "fullHistory": [
+        "The service originally used a 30 second request timeout.",
+        "A trial lowered it to 2 seconds, causing failures on cold starts, and was rolled back.",
+        "The operations review approved 5 seconds as the new default; explicit REQUEST_TIMEOUT_MS values still take precedence."
+      ],
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-config-default.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "decision",
+        "title": "Request timeout default",
+        "content": "requestTimeout defaults to 5000 milliseconds. REQUEST_TIMEOUT_MS remains an explicit numeric override.",
+        "relatedFiles": ["src/config.js"]
+      }],
+      "allowedChanges": ["src/config.js", "test/smoke.node.js"]
     }
   ]
 }

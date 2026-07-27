@@ -66,7 +66,7 @@ function controlledConfig(model: string, repoMindCli: string | null, dataDirecto
     default_agent: "benchmark",
     agent: {
       benchmark: {
-        description: "Controlled primary agent for RepoMind A/B evaluation",
+        description: "Controlled primary agent for RepoMind evaluation",
         mode: "primary", model, variant: "medium",
         prompt: "Complete the requested repository task directly. Do not delegate or start background agents. Inspect only relevant files, make the smallest justified change, run required verification, and provide a final result. If RepoMind tools are available, start and commit the repository session and always close it before the final response.",
         tools: { task: false, call_omo_agent: false, teammate: false, background_output: false, background_cancel: false },
@@ -84,6 +84,12 @@ function controlledConfig(model: string, repoMindCli: string | null, dataDirecto
 
 function replaceRepo(value: string, repository: string): string {
   return value.replaceAll("{repo}", repository);
+}
+
+function taskPrompt(task: AgentTask, arm: AgentArm): string {
+  if (arm !== "full-history") return task.prompt;
+  const history = task.fullHistory!.map((entry, index) => `[${index + 1}] ${entry}`).join("\n\n");
+  return `The following raw project history may include obsolete attempts, corrections, and irrelevant details. Evaluate it against the current repository before using it.\n\n${history}\n\nCurrent task:\n${task.prompt}`;
 }
 
 function runChecks(checks: AgentCheck[], repository: string, execute: ProcessExecutor): CheckResult[] {
@@ -165,7 +171,7 @@ function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: 
   const started = performance.now();
   const agent = execute({
     command: runner,
-    args: ["run", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, task.prompt],
+    args: ["run", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, taskPrompt(task, arm)],
     cwd: repository, timeoutMs: options.timeoutMs ?? 600_000,
   });
   const wallDurationMs = Math.round(performance.now() - started);
@@ -209,7 +215,14 @@ export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEva
   const repoMindDirty = statusResult.status === 0 ? statusResult.stdout.trim().length > 0 : null;
   const runs: AgentRunResult[] = [];
   for (const task of options.manifest.tasks) for (let iteration = 1; iteration <= options.repeat; iteration += 1) {
-    const order: AgentArm[] = iteration % 2 === 1 ? ["no-memory", "repomind"] : ["repomind", "no-memory"];
+    const twoArmOrders: AgentArm[][] = [["no-memory", "repomind"], ["repomind", "no-memory"]];
+    const threeArmOrders: AgentArm[][] = [
+      ["no-memory", "full-history", "repomind"],
+      ["full-history", "repomind", "no-memory"],
+      ["repomind", "no-memory", "full-history"],
+    ];
+    const orders = options.manifest.version === 2 ? threeArmOrders : twoArmOrders;
+    const order = orders[(iteration - 1) % orders.length]!;
     for (const arm of order) runs.push(executeRun(task, arm, iteration, normalized, execute, runner));
   }
   const report = buildAgentReport({

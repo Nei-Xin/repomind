@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeAgentEvents } from "../src/eval/agent/events.js";
+import { aggregateAgentReports, renderAgentAggregateMarkdown } from "../src/eval/agent/aggregate.js";
 import { hashAgentManifest, loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
-import { buildAgentReport, type AgentRunResult } from "../src/eval/agent/report.js";
+import { buildAgentReport, type AgentArm, type AgentRunResult } from "../src/eval/agent/report.js";
 import { parseChangedFiles, runAgentEvaluation, type ProcessExecutor } from "../src/eval/agent/runner.js";
 
 const TEST_PROVENANCE = {
@@ -59,6 +60,11 @@ describe("agent manifest", () => {
     })).toThrow(/unknown task ids: missing/);
   });
 
+  it("requires raw full history for every version 2 task", () => {
+    expect(() => parseAgentManifest({ version: 2, name: "suite", tasks: [task] })).toThrow(/require fullHistory/);
+    expect(parseAgentManifest({ version: 2, name: "suite", tasks: [{ ...task, fullHistory: ["Earlier attempt failed."] }] }).version).toBe(2);
+  });
+
   it("hashes the exact manifest bytes", () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-manifest-"));
     const path = join(root, "manifest.json");
@@ -71,12 +77,12 @@ describe("agent manifest", () => {
   });
 });
 
-function reportRun(arm: "no-memory" | "repomind", hiddenPass: boolean): AgentRunResult {
+function reportRun(arm: AgentArm, hiddenPass: boolean): AgentRunResult {
   const repoMind = arm === "repomind";
   return {
     taskId: "history", arm, iteration: 1, repository: `/${arm}`,
     requestedCommit: "abc", baseCommit: "abc", agentExitCode: 0, agentSignal: null,
-    wallDurationMs: repoMind ? 110 : 100,
+    wallDurationMs: repoMind ? 110 : arm === "full-history" ? 120 : 100,
     publicChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
     hiddenChecks: [{ command: "node", args: [], exitCode: hiddenPass ? 0 : 1, signal: null, stdout: "", stderr: "", durationMs: 1, passed: hiddenPass }],
     changedFiles: ["answer.js"], unexpectedChanges: [],
@@ -84,9 +90,9 @@ function reportRun(arm: "no-memory" | "repomind", hiddenPass: boolean): AgentRun
     abandonedSessions: 0, openSessionsAfterCleanup: 0,
     events: {
       turns: 1,
-      tokens: { input: repoMind ? 70 : 100, output: repoMind ? 12 : 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      tokens: { input: repoMind ? 70 : arm === "full-history" ? 130 : 100, output: repoMind ? 12 : 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
       toolCalls: repoMind ? { repomind_repo_session_start: 1 } : {}, failedTools: 0, failedCommands: 0,
-      fileReads: repoMind ? 3 : 5, repeatedFileReads: 0, repoMindCalls: repoMind ? 2 : 0,
+      fileReads: repoMind ? 3 : arm === "full-history" ? 4 : 5, repeatedFileReads: 0, repoMindCalls: repoMind ? 2 : 0,
       retrievedMemories: repoMind ? 1 : 0,
     },
   };
@@ -97,25 +103,29 @@ describe("paired agent report", () => {
     const report = buildAgentReport({
       name: "paired", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
       provenance: TEST_PROVENANCE,
-      runs: [reportRun("no-memory", false), reportRun("repomind", true)],
+      runs: [reportRun("no-memory", false), reportRun("full-history", false), reportRun("repomind", true)],
       acceptanceCriteria: {
         minRepoMindHiddenPassRate: 1,
         minHiddenPassRateDelta: 0.5,
+        minFullHistoryHiddenPassRateDelta: 0.5,
         minRetrievalRate: 1,
         minSessionCommitRate: 1,
         maxMeanDurationRegressionPercent: 15,
+        maxFullHistoryDurationRegressionPercent: 0,
         requireEfficiencyImprovement: true,
         requiredTaskWins: ["history"],
+        requiredFullHistoryTaskWins: ["history"],
       },
     });
     expect(report.integrity.passed).toBe(true);
     expect(report.acceptance.status).toBe("passed");
-    expect(report.paired.pairs).toBe(1);
-    expect(report.paired.overall.find((metric) => metric.key === "hiddenSuccess")).toMatchObject({
+    expect(report.comparisons["no-memory"]?.pairs).toBe(1);
+    expect(report.comparisons["no-memory"]?.overall.find((metric) => metric.key === "hiddenSuccess")).toMatchObject({
       meanDelta: 1, repoMindWins: 1, ties: 0, repoMindLosses: 0,
     });
-    expect(report.paired.overall.find((metric) => metric.key === "inputTokens")?.relativeDeltaPercent).toBe(-30);
-    expect(report.paired.overall.find((metric) => metric.key === "wallDurationMs")?.relativeDeltaPercent).toBe(10);
+    expect(report.comparisons["full-history"]?.overall.find((metric) => metric.key === "hiddenSuccess")?.meanDelta).toBe(1);
+    expect(report.comparisons["no-memory"]?.overall.find((metric) => metric.key === "inputTokens")?.relativeDeltaPercent).toBe(-30);
+    expect(report.comparisons["no-memory"]?.overall.find((metric) => metric.key === "wallDurationMs")?.relativeDeltaPercent).toBe(10);
   });
 
   it("reports an acceptance failure without changing integrity", () => {
@@ -127,7 +137,7 @@ describe("paired agent report", () => {
     });
     expect(report.integrity.passed).toBe(true);
     expect(report.acceptance.status).toBe("failed");
-    expect(report.acceptance.checks.find((check) => check.id === "durationRegression")?.passed).toBe(false);
+    expect(report.acceptance.checks.find((check) => check.id === "durationRegression:no-memory")?.passed).toBe(false);
   });
 
   it("reports a missing required pair as failed acceptance instead of throwing", () => {
@@ -138,14 +148,42 @@ describe("paired agent report", () => {
     });
     expect(report.integrity.passed).toBe(false);
     expect(report.acceptance.status).toBe("failed");
-    expect(report.acceptance.checks.find((check) => check.id === "requiredTaskWin:history")).toMatchObject({
+    expect(report.acceptance.checks.find((check) => check.id === "requiredTaskWin:no-memory:history")).toMatchObject({
       passed: false, measured: false,
     });
   });
 });
 
+describe("aggregate agent report", () => {
+  it("recomputes paired metrics from traceable version 4 source reports", () => {
+    const root = mkdtempSync(join(tmpdir(), "repomind-agent-aggregate-"));
+    try {
+      const paths = ["windows.json", "ubuntu.json"].map((name, index) => {
+        const report = buildAgentReport({
+          name, runner: "opencode", model: index ? "model-b" : "model-a", repeat: 1, outputDirectory: root,
+          provenance: { ...TEST_PROVENANCE, os: { ...TEST_PROVENANCE.os, platform: index ? "linux" : "win32" } },
+          runs: [reportRun("no-memory", false), reportRun("full-history", false), reportRun("repomind", true)],
+        });
+        const path = join(root, name);
+        writeFileSync(path, `${JSON.stringify(report)}\n`, "utf8");
+        return path;
+      });
+      const aggregate = aggregateAgentReports(paths);
+      expect(aggregate).toMatchObject({ reportCount: 2, runCount: 6, integrity: { passed: true } });
+      expect(aggregate.models).toEqual(["model-a", "model-b"]);
+      expect(aggregate.comparisons["no-memory"]?.find((metric) => metric.key === "hiddenSuccess")).toMatchObject({
+        pairs: 2, meanDelta: 1, confidence95: { low: 1, high: 1 }, repoMindWins: 2,
+      });
+      expect(aggregate.reports[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(renderAgentAggregateMarkdown(aggregate)).toContain("RepoMind vs full-history");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("controlled agent evaluation", () => {
-  it("runs isolated alternating arms and writes reports", () => {
+  it("runs isolated rotating arms and writes reports", () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-eval-"));
     const base = join(root, "base");
     const output = join(root, "output");
@@ -159,11 +197,13 @@ describe("controlled agent evaluation", () => {
         cwd: request.cwd, env: { ...process.env, ...request.env }, encoding: "utf8",
         timeout: request.timeoutMs, windowsHide: true, shell: false,
       });
+      const prompts: string[] = [];
       const execute: ProcessExecutor = (request) => {
         if (request.command === "fake-opencode") {
           if (request.args[0] === "--version") {
             return { status: 0, signal: null, stdout: "fake-opencode 1.0\n", stderr: "", error: undefined } as SpawnSyncReturns<string>;
           }
+          prompts.push(request.args.at(-1) ?? "");
           const config = JSON.parse(readFileSync(join(request.cwd, "opencode.json"), "utf8")) as { mcp: Record<string, unknown> };
           const events = [{ type: "step_finish", part: { tokens: { input: 10, output: 2 } } }];
           if (config.mcp.repomind) events.push({
@@ -176,11 +216,12 @@ describe("controlled agent evaluation", () => {
       };
       const report = runAgentEvaluation({
         manifest: parseAgentManifest({
-          version: 1, name: "fake suite", tasks: [{
+          version: 2, name: "fake suite", tasks: [{
             id: "smoke", baseRepository: base, baseCommit: commit, prompt: "Do it",
             publicChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
             hiddenChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
             memories: [{ type: "decision", title: "Hidden rule", content: "The historical answer." }],
+            fullHistory: ["A failed attempt used the legacy answer.", "The latest discussion selected the historical answer."],
             allowedChanges: [],
           }],
         }),
@@ -189,9 +230,11 @@ describe("controlled agent evaluation", () => {
         runnerExecutable: "fake-opencode", execute,
       });
       expect(report.runs.map((run) => `${run.arm}-${run.iteration}`)).toEqual([
-        "no-memory-1", "repomind-1", "repomind-2", "no-memory-2",
+        "no-memory-1", "full-history-1", "repomind-1",
+        "full-history-2", "repomind-2", "no-memory-2",
       ]);
       expect(report.arms["no-memory"].repoMindCalls).toBe(0);
+      expect(report.arms["full-history"]?.repoMindCalls).toBe(0);
       expect(report.arms.repomind.repoMindCalls).toBe(2);
       expect(report.provenance).toMatchObject({
         repoMindCommit: expect.stringMatching(/^[a-f0-9]{40}$/u),
@@ -199,10 +242,32 @@ describe("controlled agent evaluation", () => {
         runnerVersion: "fake-opencode 1.0",
         taskBaseCommits: { smoke: commit },
       });
-      expect(report.version).toBe(3);
+      expect(report.version).toBe(4);
+      expect(prompts.some((prompt) => prompt.includes("A failed attempt used the legacy answer."))).toBe(true);
       expect(report.integrity).toEqual({ passed: true, failures: [] });
-      expect(readFileSync(join(output, "summary.md"), "utf8")).toContain("fake suite");
+      const markdown = readFileSync(join(output, "summary.md"), "utf8");
+      expect(markdown).toContain("fake suite");
+      expect(markdown).toContain("RepoMind vs no-memory");
+      expect(markdown).toContain("RepoMind vs full-history");
       expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).not.toHaveProperty("runs.0.rawLog");
+
+      const legacy = runAgentEvaluation({
+        manifest: parseAgentManifest({
+          version: 1, name: "legacy suite", tasks: [{
+            id: "legacy", baseRepository: base, baseCommit: commit, prompt: "Do it",
+            publicChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
+            hiddenChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
+            memories: [{ type: "decision", title: "Rule", content: "Use the answer." }],
+            allowedChanges: [],
+          }],
+        }),
+        model: "test/model", repeat: 1, outputDirectory: join(root, "legacy-output"),
+        repoMindCli: join(process.cwd(), "dist", "cli", "index.js"),
+        runnerExecutable: "fake-opencode", execute,
+      });
+      expect(legacy.runs.map((run) => run.arm)).toEqual(["no-memory", "repomind"]);
+      expect(legacy.arms["full-history"]).toBeUndefined();
+      expect(legacy.comparisons["full-history"]).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -224,6 +289,7 @@ describe("reproducible agent suite", () => {
       const secondManifest = loadAgentManifest(join(secondTarget, "manifest.json"));
       expect(manifest.tasks.map((task) => task.id)).toEqual([
         "renamed-module", "failed-solution", "migration-rollback", "historical-command",
+        "stale-endpoint", "error-contract", "dependency-boundary", "config-default",
       ]);
       expect(manifest.acceptance).toMatchObject({
         minRepoMindHiddenPassRate: 1, requiredTaskWins: ["historical-command"],

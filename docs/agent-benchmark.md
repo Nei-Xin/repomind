@@ -1,7 +1,7 @@
 # Controlled agent benchmark
 
-`repomind eval --agent` measures end-to-end coding-agent task outcomes with and
-without RepoMind. It currently supports OpenCode and always creates a controlled
+`repomind eval --agent` measures end-to-end coding-agent task outcomes using
+no-memory, raw full-history, and RepoMind arms. It currently supports OpenCode and always creates a controlled
 primary agent that cannot delegate work to background agents.
 
 ```powershell
@@ -17,9 +17,11 @@ repomind eval --agent `
 ```
 
 Every task and arm is cloned independently from `baseRepository` and checked
-out at `baseCommit`. Odd repetitions run no-memory before RepoMind; even
-repetitions reverse the order. The RepoMind arm gets an isolated data directory
-and the manifest memories. The no-memory arm has no RepoMind MCP configuration.
+out at `baseCommit`. Manifest v2 rotates the three execution orders by
+repetition. The RepoMind arm gets an isolated data directory and the manifest
+memories. The full-history arm receives raw history that can contain obsolete
+attempts and noise, but no MCP server. The no-memory arm receives neither.
+Manifest v1 remains supported and retains the original alternating two-arm run.
 
 ## Manifest
 
@@ -29,13 +31,17 @@ replaced with the fresh clone path.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "name": "example suite",
   "tasks": [{
     "id": "example",
     "baseRepository": "./base",
     "baseCommit": "HEAD",
     "prompt": "Implement the requested change.",
+    "fullHistory": [
+      "An old attempt used the legacy API and failed.",
+      "A later review recorded the current convention among unrelated discussion."
+    ],
     "publicChecks": [{ "command": "node", "args": ["--test"] }],
     "hiddenChecks": [{ "command": "node", "args": ["./hidden/verify.mjs", "{repo}"] }],
     "memories": [{
@@ -48,9 +54,11 @@ replaced with the fresh clone path.
   "acceptance": {
     "minRepoMindHiddenPassRate": 1,
     "minHiddenPassRateDelta": 0,
+    "minFullHistoryHiddenPassRateDelta": 0,
     "minRetrievalRate": 1,
     "minSessionCommitRate": 1,
     "maxMeanDurationRegressionPercent": 15,
+    "maxFullHistoryDurationRegressionPercent": 15,
     "requireEfficiencyImprovement": true,
     "requiredTaskWins": ["example"]
   }
@@ -76,20 +84,38 @@ base commits, unexpected file changes, cross-arm MCP use, missing RepoMind use,
 or sessions left open after cleanup. A hidden-check failure remains a legitimate
 task outcome and does not by itself invalidate the experiment.
 
-The report keeps `integrity` and `acceptance` separate. Acceptance criteria are
+The report keeps `integrity` and `acceptance` separate. Report schema v4 stores
+independent paired comparisons against no-memory and full-history. Acceptance criteria are
 declared in the manifest and produce individual measured gates. A configured
 task win means that task's RepoMind hidden pass rate must be strictly higher
 than its no-memory pass rate. `--require-acceptance` exits unsuccessfully when
 criteria are missing or fail; it does not change the meaning of `--strict`.
 
-Paired statistics compare the two arms for the same task and repetition. The
-JSON and Markdown reports include mean and median deltas, relative change, and
-RepoMind win/tie/loss counts for hidden/public success, wall time, input/output
-tokens, and file reads.
+Paired statistics compare RepoMind with each available baseline for the same
+task and repetition. The JSON and Markdown reports include mean and median
+deltas, relative change, and RepoMind win/tie/loss counts for hidden/public
+success, wall time, input/output tokens, and file reads.
+
+## Aggregate reports
+
+Combine report v4 files from multiple models or operating systems:
+
+```powershell
+repomind eval --agent-summary `
+  --reports "D:\results\**\summary.json" `
+  --output D:\results\aggregate `
+  --strict `
+  --json
+```
+
+The aggregate report hashes every source JSON file and recomputes paired means,
+win/tie/loss counts, and approximate 95% intervals from raw runs. `--strict`
+fails when any source report failed integrity. It does not reinterpret or
+override each experiment's acceptance result.
 
 ## Rebuild the shipped suite
 
-The four-task suite is stored as ordinary templates rather than nested Git
+The eight-task suite is stored as ordinary templates rather than nested Git
 repositories. Generate fresh committed fixture repositories in a new external
 directory:
 
@@ -105,6 +131,13 @@ base, and writes an absolute verifier path and the actual base commit into
 line endings, so generating the same template in different directories yields
 the same base commit IDs. Results remain excluded by the generated `.gitignore`.
 
+`npm run bench:agent-fixtures` rebuilds all eight repositories, verifies their
+commit identities, requires every public baseline check to pass, and requires
+every external hidden check to fail on the unmodified baseline. CI runs this
+validation on Windows and Ubuntu without requiring a model account.
+
 The formal three-repeat v0.6 acceptance run, including its provenance, results,
 acceptance gates, and limitations, is documented in
 [`agent-benchmark-results-v0.6.md`](agent-benchmark-results-v0.6.md).
+The v0.7 three-arm infrastructure acceptance is documented in
+[`agent-benchmark-validation-v0.7.md`](agent-benchmark-validation-v0.7.md).

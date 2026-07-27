@@ -1,7 +1,8 @@
 import type { AgentAcceptanceCriteria } from "./manifest.js";
 import type { AgentEventMetrics } from "./events.js";
 
-export type AgentArm = "no-memory" | "repomind";
+export type AgentArm = "no-memory" | "full-history" | "repomind";
+export type AgentBaselineArm = Exclude<AgentArm, "repomind">;
 export type PairedMetricKey = "hiddenSuccess" | "publicSuccess" | "wallDurationMs" | "inputTokens" | "outputTokens" | "fileReads";
 
 export interface CheckResult {
@@ -39,7 +40,7 @@ export interface PairedMetric {
   key: PairedMetricKey;
   preferred: "higher" | "lower";
   pairs: number;
-  noMemoryMean: number;
+  baselineMean: number;
   repoMindMean: number;
   meanDelta: number;
   medianDelta: number;
@@ -55,43 +56,19 @@ export interface PairedTaskResult {
   metrics: PairedMetric[];
 }
 
+export interface PairedComparison {
+  baselineArm: AgentBaselineArm;
+  pairs: number;
+  overall: PairedMetric[];
+  tasks: PairedTaskResult[];
+}
+
 export interface AcceptanceCheck {
   id: string;
   passed: boolean;
   measured: number | boolean;
   target: string;
   detail: string;
-}
-
-export interface AgentEvalReport {
-  version: 3;
-  name: string;
-  generatedAt: string;
-  runner: "opencode";
-  model: string;
-  repeat: number;
-  outputDirectory: string;
-  provenance: AgentProvenance;
-  runs: AgentRunResult[];
-  arms: Record<AgentArm, {
-    runs: number;
-    agentCleanExits: number;
-    publicPasses: number;
-    hiddenPasses: number;
-    meanWallDurationMs: number;
-    meanInputTokens: number;
-    meanOutputTokens: number;
-    meanFileReads: number;
-    repoMindCalls: number;
-    retrievedMemories: number;
-  }>;
-  paired: { pairs: number; overall: PairedMetric[]; tasks: PairedTaskResult[] };
-  integrity: { passed: boolean; failures: string[] };
-  acceptance: {
-    status: "passed" | "failed" | "not-configured";
-    criteria: AgentAcceptanceCriteria | null;
-    checks: AcceptanceCheck[];
-  };
 }
 
 export interface AgentProvenance {
@@ -105,6 +82,39 @@ export interface AgentProvenance {
   taskBaseCommits: Record<string, string>;
 }
 
+interface ArmSummary {
+  runs: number;
+  agentCleanExits: number;
+  publicPasses: number;
+  hiddenPasses: number;
+  meanWallDurationMs: number;
+  meanInputTokens: number;
+  meanOutputTokens: number;
+  meanFileReads: number;
+  repoMindCalls: number;
+  retrievedMemories: number;
+}
+
+export interface AgentEvalReport {
+  version: 4;
+  name: string;
+  generatedAt: string;
+  runner: "opencode";
+  model: string;
+  repeat: number;
+  outputDirectory: string;
+  provenance: AgentProvenance;
+  runs: AgentRunResult[];
+  arms: Partial<Record<AgentArm, ArmSummary>>;
+  comparisons: Record<AgentBaselineArm, PairedComparison | null>;
+  integrity: { passed: boolean; failures: string[] };
+  acceptance: {
+    status: "passed" | "failed" | "not-configured";
+    criteria: AgentAcceptanceCriteria | null;
+    checks: AcceptanceCheck[];
+  };
+}
+
 export interface BuildAgentReportInput {
   name: string;
   runner: "opencode";
@@ -116,7 +126,12 @@ export interface BuildAgentReportInput {
   acceptanceCriteria?: AgentAcceptanceCriteria;
 }
 
-interface AgentPair { taskId: string; iteration: number; noMemory: AgentRunResult; repoMind: AgentRunResult }
+interface AgentPair {
+  taskId: string;
+  iteration: number;
+  baseline: AgentRunResult;
+  repoMind: AgentRunResult;
+}
 
 const METRICS: Array<{ key: PairedMetricKey; preferred: "higher" | "lower" }> = [
   { key: "hiddenSuccess", preferred: "higher" },
@@ -127,9 +142,7 @@ const METRICS: Array<{ key: PairedMetricKey; preferred: "higher" | "lower" }> = 
   { key: "fileReads", preferred: "lower" },
 ];
 
-function mean(values: number[]): number {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-}
+const mean = (values: number[]): number => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 
 function median(values: number[]): number {
   if (!values.length) return 0;
@@ -138,13 +151,8 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
-
-function passed(checks: CheckResult[]): number {
-  return checks.every((check) => check.passed) ? 1 : 0;
-}
+const round = (value: number): number => Math.round(value * 1000) / 1000;
+const passed = (checks: CheckResult[]): number => checks.every((check) => check.passed) ? 1 : 0;
 
 function metricValue(run: AgentRunResult, key: PairedMetricKey): number {
   switch (key) {
@@ -157,58 +165,51 @@ function metricValue(run: AgentRunResult, key: PairedMetricKey): number {
   }
 }
 
-function collectPairs(runs: AgentRunResult[]): { pairs: AgentPair[]; failures: string[] } {
+function collectPairs(runs: AgentRunResult[], baselineArm: AgentBaselineArm): AgentPair[] {
   const grouped = new Map<string, AgentRunResult[]>();
   for (const run of runs) {
     const key = `${run.taskId}\0${run.iteration}`;
     grouped.set(key, [...(grouped.get(key) ?? []), run]);
   }
   const pairs: AgentPair[] = [];
-  const failures: string[] = [];
   for (const group of grouped.values()) {
-    const noMemory = group.filter((run) => run.arm === "no-memory");
-    const repoMind = group.filter((run) => run.arm === "repomind");
-    const first = group[0]!;
-    if (noMemory.length !== 1 || repoMind.length !== 1) {
-      failures.push(`${first.taskId}/iteration-${first.iteration}: expected exactly one run per arm`);
-      continue;
-    }
-    pairs.push({ taskId: first.taskId, iteration: first.iteration, noMemory: noMemory[0]!, repoMind: repoMind[0]! });
+    const baseline = group.find((run) => run.arm === baselineArm);
+    const repoMind = group.find((run) => run.arm === "repomind");
+    if (baseline && repoMind) pairs.push({ taskId: baseline.taskId, iteration: baseline.iteration, baseline, repoMind });
   }
-  pairs.sort((a, b) => a.taskId.localeCompare(b.taskId) || a.iteration - b.iteration);
-  return { pairs, failures };
+  return pairs.sort((a, b) => a.taskId.localeCompare(b.taskId) || a.iteration - b.iteration);
 }
 
 function summarizeMetric(pairs: AgentPair[], definition: typeof METRICS[number]): PairedMetric {
-  const noMemory = pairs.map((pair) => metricValue(pair.noMemory, definition.key));
+  const baseline = pairs.map((pair) => metricValue(pair.baseline, definition.key));
   const repoMind = pairs.map((pair) => metricValue(pair.repoMind, definition.key));
-  const deltas = repoMind.map((value, index) => value - noMemory[index]!);
-  const noMemoryMean = mean(noMemory);
-  let wins = 0;
+  const deltas = repoMind.map((value, index) => value - baseline[index]!);
+  const baselineMean = mean(baseline);
+  let repoMindWins = 0;
   let ties = 0;
-  let losses = 0;
+  let repoMindLosses = 0;
   for (const delta of deltas) {
     if (delta === 0) ties += 1;
-    else if ((definition.preferred === "higher" && delta > 0) || (definition.preferred === "lower" && delta < 0)) wins += 1;
-    else losses += 1;
+    else if ((definition.preferred === "higher" && delta > 0) || (definition.preferred === "lower" && delta < 0)) repoMindWins += 1;
+    else repoMindLosses += 1;
   }
   return {
     ...definition,
     pairs: pairs.length,
-    noMemoryMean: round(noMemoryMean),
+    baselineMean: round(baselineMean),
     repoMindMean: round(mean(repoMind)),
     meanDelta: round(mean(deltas)),
     medianDelta: round(median(deltas)),
-    relativeDeltaPercent: noMemoryMean === 0 ? null : round((mean(deltas) / Math.abs(noMemoryMean)) * 100),
-    repoMindWins: wins,
-    ties,
-    repoMindLosses: losses,
+    relativeDeltaPercent: baselineMean === 0 ? null : round((mean(deltas) / Math.abs(baselineMean)) * 100),
+    repoMindWins, ties, repoMindLosses,
   };
 }
 
-function pairedResults(pairs: AgentPair[]): AgentEvalReport["paired"] {
+function pairedComparison(runs: AgentRunResult[], baselineArm: AgentBaselineArm): PairedComparison {
+  const pairs = collectPairs(runs, baselineArm);
   const taskIds = [...new Set(pairs.map((pair) => pair.taskId))];
   return {
+    baselineArm,
     pairs: pairs.length,
     overall: METRICS.map((definition) => summarizeMetric(pairs, definition)),
     tasks: taskIds.map((taskId) => {
@@ -218,14 +219,18 @@ function pairedResults(pairs: AgentPair[]): AgentEvalReport["paired"] {
   };
 }
 
-function metric(metrics: PairedMetric[], key: PairedMetricKey): PairedMetric {
-  return metrics.find((entry) => entry.key === key)!;
+function metric(comparison: PairedComparison, key: PairedMetricKey): PairedMetric {
+  return comparison.overall.find((entry) => entry.key === key)!;
+}
+
+function taskMetric(comparison: PairedComparison, taskId: string, key: PairedMetricKey): PairedMetric | null {
+  return comparison.tasks.find((entry) => entry.taskId === taskId)?.metrics.find((entry) => entry.key === key) ?? null;
 }
 
 function evaluateAcceptance(
   criteria: AgentAcceptanceCriteria | undefined,
   integrityPassed: boolean,
-  paired: AgentEvalReport["paired"],
+  comparisons: AgentEvalReport["comparisons"],
   runs: AgentRunResult[],
 ): AgentEvalReport["acceptance"] {
   if (!criteria) return { status: "not-configured", criteria: null, checks: [] };
@@ -233,10 +238,11 @@ function evaluateAcceptance(
     id: "integrity", passed: integrityPassed, measured: integrityPassed, target: "true",
     detail: "Experiment integrity must pass before outcome acceptance is meaningful.",
   }];
-  const hidden = metric(paired.overall, "hiddenSuccess");
-  const duration = metric(paired.overall, "wallDurationMs");
-  const inputTokens = metric(paired.overall, "inputTokens");
-  const fileReads = metric(paired.overall, "fileReads");
+  const noMemory = comparisons["no-memory"]!;
+  const hidden = metric(noMemory, "hiddenSuccess");
+  const duration = metric(noMemory, "wallDurationMs");
+  const inputTokens = metric(noMemory, "inputTokens");
+  const fileReads = metric(noMemory, "fileReads");
   const repoMindRuns = runs.filter((run) => run.arm === "repomind");
   const retrievalRate = repoMindRuns.length ? repoMindRuns.filter((run) => run.events.retrievedMemories > 0).length / repoMindRuns.length : 0;
   const sessionCommitRate = repoMindRuns.length
@@ -247,9 +253,17 @@ function evaluateAcceptance(
     measured: hidden.repoMindMean, target: `>= ${criteria.minRepoMindHiddenPassRate}`, detail: "RepoMind hidden-check pass rate.",
   });
   if (criteria.minHiddenPassRateDelta !== undefined) checks.push({
-    id: "hiddenPassRateDelta", passed: hidden.meanDelta >= criteria.minHiddenPassRateDelta,
+    id: "hiddenPassRateDelta:no-memory", passed: hidden.meanDelta >= criteria.minHiddenPassRateDelta,
     measured: hidden.meanDelta, target: `>= ${criteria.minHiddenPassRateDelta}`, detail: "RepoMind minus no-memory hidden-check pass rate.",
   });
+  const fullHistory = comparisons["full-history"];
+  if (criteria.minFullHistoryHiddenPassRateDelta !== undefined) {
+    const measured = fullHistory ? metric(fullHistory, "hiddenSuccess").meanDelta : false;
+    checks.push({
+      id: "hiddenPassRateDelta:full-history", passed: typeof measured === "number" && measured >= criteria.minFullHistoryHiddenPassRateDelta,
+      measured, target: `>= ${criteria.minFullHistoryHiddenPassRateDelta}`, detail: "RepoMind minus full-history hidden-check pass rate.",
+    });
+  }
   if (criteria.minRetrievalRate !== undefined) checks.push({
     id: "retrievalRate", passed: retrievalRate >= criteria.minRetrievalRate,
     measured: round(retrievalRate), target: `>= ${criteria.minRetrievalRate}`, detail: "Share of RepoMind runs retrieving at least one memory.",
@@ -258,11 +272,15 @@ function evaluateAcceptance(
     id: "sessionCommitRate", passed: sessionCommitRate >= criteria.minSessionCommitRate,
     measured: round(sessionCommitRate), target: `>= ${criteria.minSessionCommitRate}`, detail: "Share of RepoMind runs with a committed session.",
   });
-  if (criteria.maxMeanDurationRegressionPercent !== undefined) {
-    const regression = duration.relativeDeltaPercent ?? 0;
+  if (criteria.maxMeanDurationRegressionPercent !== undefined) checks.push({
+    id: "durationRegression:no-memory", passed: (duration.relativeDeltaPercent ?? 0) <= criteria.maxMeanDurationRegressionPercent,
+    measured: duration.relativeDeltaPercent ?? 0, target: `<= ${criteria.maxMeanDurationRegressionPercent}%`, detail: "Mean wall-time regression against no-memory.",
+  });
+  if (criteria.maxFullHistoryDurationRegressionPercent !== undefined) {
+    const measured = fullHistory ? metric(fullHistory, "wallDurationMs").relativeDeltaPercent ?? 0 : false;
     checks.push({
-      id: "durationRegression", passed: regression <= criteria.maxMeanDurationRegressionPercent,
-      measured: regression, target: `<= ${criteria.maxMeanDurationRegressionPercent}%`, detail: "Mean wall-time regression; negative values are improvements.",
+      id: "durationRegression:full-history", passed: typeof measured === "number" && measured <= criteria.maxFullHistoryDurationRegressionPercent,
+      measured, target: `<= ${criteria.maxFullHistoryDurationRegressionPercent}%`, detail: "Mean wall-time regression against full-history.",
     });
   }
   if (criteria.requireEfficiencyImprovement !== undefined) {
@@ -270,41 +288,56 @@ function evaluateAcceptance(
     checks.push({
       id: "efficiencyImprovement", passed: criteria.requireEfficiencyImprovement ? improved : true,
       measured: improved, target: criteria.requireEfficiencyImprovement ? "true" : "not required",
-      detail: "At least one of mean input tokens or file reads improved.",
+      detail: "At least one of mean input tokens or file reads improved against no-memory.",
     });
   }
-  for (const taskId of criteria.requiredTaskWins ?? []) {
-    const task = paired.tasks.find((entry) => entry.taskId === taskId);
-    const taskHidden = task ? metric(task.metrics, "hiddenSuccess") : null;
-    checks.push({
-      id: `requiredTaskWin:${taskId}`, passed: taskHidden !== null && taskHidden.meanDelta > 0,
-      measured: taskHidden?.meanDelta ?? false, target: "> 0", detail: taskHidden
-        ? "Required positive hidden-check pass-rate delta."
-        : "No complete A/B pair was available for the required task.",
-    });
-  }
+  const addTaskWins = (ids: string[], comparison: PairedComparison | null, baseline: AgentBaselineArm): void => {
+    for (const taskId of ids) {
+      const taskHidden = comparison ? taskMetric(comparison, taskId, "hiddenSuccess") : null;
+      checks.push({
+        id: `requiredTaskWin:${baseline}:${taskId}`, passed: taskHidden !== null && taskHidden.meanDelta > 0,
+        measured: taskHidden?.meanDelta ?? false, target: "> 0",
+        detail: taskHidden ? `Required positive hidden-check delta against ${baseline}.` : `No complete ${baseline} pair was available.`,
+      });
+    }
+  };
+  addTaskWins(criteria.requiredTaskWins ?? [], noMemory, "no-memory");
+  addTaskWins(criteria.requiredFullHistoryTaskWins ?? [], fullHistory, "full-history");
   return { status: checks.every((check) => check.passed) ? "passed" : "failed", criteria, checks };
 }
 
-export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport {
-  const arms = Object.fromEntries((["no-memory", "repomind"] as const).map((arm) => {
-    const runs = input.runs.filter((run) => run.arm === arm);
-    return [arm, {
-      runs: runs.length,
-      agentCleanExits: runs.filter((run) => run.agentExitCode === 0).length,
-      publicPasses: runs.filter((run) => passed(run.publicChecks)).length,
-      hiddenPasses: runs.filter((run) => passed(run.hiddenChecks)).length,
-      meanWallDurationMs: round(mean(runs.map((run) => run.wallDurationMs))),
-      meanInputTokens: round(mean(runs.map((run) => run.events.tokens.input))),
-      meanOutputTokens: round(mean(runs.map((run) => run.events.tokens.output))),
-      meanFileReads: round(mean(runs.map((run) => run.events.fileReads))),
-      repoMindCalls: runs.reduce((sum, run) => sum + run.events.repoMindCalls, 0),
-      retrievedMemories: runs.reduce((sum, run) => sum + run.events.retrievedMemories, 0),
-    }];
-  })) as AgentEvalReport["arms"];
+function summarizeArm(runs: AgentRunResult[]): ArmSummary {
+  return {
+    runs: runs.length,
+    agentCleanExits: runs.filter((run) => run.agentExitCode === 0).length,
+    publicPasses: runs.filter((run) => passed(run.publicChecks)).length,
+    hiddenPasses: runs.filter((run) => passed(run.hiddenChecks)).length,
+    meanWallDurationMs: round(mean(runs.map((run) => run.wallDurationMs))),
+    meanInputTokens: round(mean(runs.map((run) => run.events.tokens.input))),
+    meanOutputTokens: round(mean(runs.map((run) => run.events.tokens.output))),
+    meanFileReads: round(mean(runs.map((run) => run.events.fileReads))),
+    repoMindCalls: runs.reduce((sum, run) => sum + run.events.repoMindCalls, 0),
+    retrievedMemories: runs.reduce((sum, run) => sum + run.events.retrievedMemories, 0),
+  };
+}
 
-  const pairCollection = collectPairs(input.runs);
-  const failures = [...pairCollection.failures];
+export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport {
+  const enabledArms: AgentArm[] = input.runs.some((run) => run.arm === "full-history")
+    ? ["no-memory", "full-history", "repomind"]
+    : ["no-memory", "repomind"];
+  const arms = Object.fromEntries(enabledArms.map((arm) => [arm, summarizeArm(input.runs.filter((run) => run.arm === arm))]));
+  const failures: string[] = [];
+  const groups = new Map<string, AgentRunResult[]>();
+  for (const run of input.runs) {
+    const key = `${run.taskId}\0${run.iteration}`;
+    groups.set(key, [...(groups.get(key) ?? []), run]);
+  }
+  for (const group of groups.values()) {
+    const first = group[0]!;
+    for (const arm of enabledArms) {
+      if (group.filter((run) => run.arm === arm).length !== 1) failures.push(`${first.taskId}/iteration-${first.iteration}: expected exactly one ${arm} run`);
+    }
+  }
   for (const run of input.runs) {
     const label = `${run.taskId}/${run.arm}-${run.iteration}`;
     if (run.agentExitCode !== 0) failures.push(`${label}: agent exited with ${run.agentExitCode ?? run.agentSignal ?? "unknown"}`);
@@ -313,15 +346,18 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
     if ([...run.publicChecks, ...run.hiddenChecks].some((check) => check.exitCode === null)) failures.push(`${label}: a check could not be executed`);
     if (run.openSessionsAfterCleanup) failures.push(`${label}: open RepoMind sessions remain after cleanup`);
     if (run.arm === "repomind" && run.events.repoMindCalls === 0) failures.push(`${label}: RepoMind MCP was not called`);
-    if (run.arm === "no-memory" && run.events.repoMindCalls !== 0) failures.push(`${label}: no-memory arm called RepoMind MCP`);
+    if (run.arm !== "repomind" && run.events.repoMindCalls !== 0) failures.push(`${label}: ${run.arm} arm called RepoMind MCP`);
   }
-  const paired = pairedResults(pairCollection.pairs);
+  const comparisons: AgentEvalReport["comparisons"] = {
+    "no-memory": pairedComparison(input.runs, "no-memory"),
+    "full-history": enabledArms.includes("full-history") ? pairedComparison(input.runs, "full-history") : null,
+  };
   const integrity = { passed: failures.length === 0, failures };
   return {
-    version: 3, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
-    model: input.model, repeat: input.repeat, outputDirectory: input.outputDirectory, provenance: input.provenance, runs: input.runs,
-    arms, paired, integrity,
-    acceptance: evaluateAcceptance(input.acceptanceCriteria, integrity.passed, paired, input.runs),
+    version: 4, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
+    model: input.model, repeat: input.repeat, outputDirectory: input.outputDirectory,
+    provenance: input.provenance, runs: input.runs, arms, comparisons, integrity,
+    acceptance: evaluateAcceptance(input.acceptanceCriteria, integrity.passed, comparisons, input.runs),
   };
 }
 
@@ -329,25 +365,31 @@ function formatMetric(value: number | null): string {
   return value === null ? "n/a" : Number.isInteger(value) ? String(value) : value.toFixed(3);
 }
 
-function formatPercent(value: number | null): string {
-  return value === null ? "n/a" : `${formatMetric(value)}%`;
+const formatPercent = (value: number | null): string => value === null ? "n/a" : `${formatMetric(value)}%`;
+
+function comparisonMarkdown(comparison: PairedComparison): string {
+  const pairedRows = comparison.overall.map((entry) =>
+    `| ${entry.key} | ${entry.preferred} | ${formatMetric(entry.baselineMean)} | ${formatMetric(entry.repoMindMean)} | ${formatMetric(entry.meanDelta)} | ${formatPercent(entry.relativeDeltaPercent)} | ${entry.repoMindWins}/${entry.ties}/${entry.repoMindLosses} |`,
+  ).join("\n");
+  const taskRows = comparison.tasks.map((task) => {
+    const hidden = task.metrics.find((entry) => entry.key === "hiddenSuccess")!;
+    const duration = task.metrics.find((entry) => entry.key === "wallDurationMs")!;
+    const tokens = task.metrics.find((entry) => entry.key === "inputTokens")!;
+    const reads = task.metrics.find((entry) => entry.key === "fileReads")!;
+    return `| ${task.taskId} | ${task.pairs} | ${formatMetric(hidden.baselineMean)} | ${formatMetric(hidden.repoMindMean)} | ${formatPercent(duration.relativeDeltaPercent)} | ${formatPercent(tokens.relativeDeltaPercent)} | ${formatPercent(reads.relativeDeltaPercent)} |`;
+  }).join("\n");
+  return `## RepoMind vs ${comparison.baselineArm}\n\nDeltas are RepoMind minus ${comparison.baselineArm}. Win/tie/loss uses the preferred direction.\n\n| Metric | Preferred | Baseline mean | RepoMind mean | Mean delta | Delta % | Win/tie/loss |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n${pairedRows}\n\n### Per-task results\n\n| Task | Pairs | Hidden baseline | Hidden RepoMind | Duration delta | Input-token delta | File-read delta |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${taskRows}`;
 }
 
 export function renderAgentMarkdown(report: AgentEvalReport): string {
-  const armRows = (["no-memory", "repomind"] as const).map((arm) => {
+  const armRows = (["no-memory", "full-history", "repomind"] as const).flatMap((arm) => {
     const value = report.arms[arm];
-    return `| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanWallDurationMs / 1000).toFixed(1)} s | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`;
+    return value ? [`| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanWallDurationMs / 1000).toFixed(1)} s | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`] : [];
   }).join("\n");
-  const pairedRows = report.paired.overall.map((entry) =>
-    `| ${entry.key} | ${entry.preferred} | ${formatMetric(entry.noMemoryMean)} | ${formatMetric(entry.repoMindMean)} | ${formatMetric(entry.meanDelta)} | ${formatPercent(entry.relativeDeltaPercent)} | ${entry.repoMindWins}/${entry.ties}/${entry.repoMindLosses} |`,
-  ).join("\n");
-  const taskRows = report.paired.tasks.map((task) => {
-    const hidden = metric(task.metrics, "hiddenSuccess");
-    const duration = metric(task.metrics, "wallDurationMs");
-    const tokens = metric(task.metrics, "inputTokens");
-    const reads = metric(task.metrics, "fileReads");
-    return `| ${task.taskId} | ${task.pairs} | ${formatMetric(hidden.noMemoryMean)} | ${formatMetric(hidden.repoMindMean)} | ${formatPercent(duration.relativeDeltaPercent)} | ${formatPercent(tokens.relativeDeltaPercent)} | ${formatPercent(reads.relativeDeltaPercent)} |`;
-  }).join("\n");
+  const comparisonSections = (["no-memory", "full-history"] as const).flatMap((arm) => {
+    const comparison = report.comparisons[arm];
+    return comparison ? [comparisonMarkdown(comparison)] : [];
+  }).join("\n\n");
   const runs = report.runs.map((run) =>
     `| ${run.taskId} | ${run.arm}-${run.iteration} | ${passed(run.hiddenChecks) ? "pass" : "fail"} | ${passed(run.publicChecks) ? "pass" : "fail"} | ${(run.wallDurationMs / 1000).toFixed(1)} s | ${run.events.tokens.input} | ${run.events.fileReads} | ${run.events.repoMindCalls} |`,
   ).join("\n");
@@ -355,7 +397,6 @@ export function renderAgentMarkdown(report: AgentEvalReport): string {
     `| ${check.id} | ${check.passed ? "yes" : "NO"} | ${String(check.measured)} | ${check.target} | ${check.detail} |`,
   ).join("\n");
   const dirty = report.provenance.repoMindDirty === null ? "unavailable" : String(report.provenance.repoMindDirty);
-  const provenanceRows = `| RepoMind worktree dirty | ${dirty} |\n` + Object.entries(report.provenance.taskBaseCommits)
-    .map(([task, commit]) => `| task:${task} | \`${commit}\` |`).join("\n") + "\n\n## Results";
-  return `# RepoMind agent A/B benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n| Arm | Hidden checks | Public checks | Mean wall time | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n## Paired deltas\n\nDeltas are RepoMind minus no-memory. Win/tie/loss uses the preferred direction.\n\n| Metric | Preferred | No-memory mean | RepoMind mean | Mean delta | Delta % | Win/tie/loss |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n${pairedRows}\n\n## Per-task paired results\n\n| Task | Pairs | Hidden no-memory | Hidden RepoMind | Duration delta | Input-token delta | File-read delta |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${taskRows}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Hidden | Public | Wall time | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
+  const provenanceRows = Object.entries(report.provenance.taskBaseCommits).map(([task, commit]) => `| task:${task} | \`${commit}\` |`).join("\n");
+  return `# RepoMind controlled agent benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| RepoMind worktree dirty | ${dirty} |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n## Results\n\n| Arm | Hidden checks | Public checks | Mean wall time | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Hidden | Public | Wall time | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
 }
