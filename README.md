@@ -142,9 +142,9 @@ The comparison benchmark scores the context bundle each memory strategy delivers
 Run a controlled OpenCode A/B task benchmark:
 
 ```bash
-repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-terra --repeat 3 --output agent-results --strict --json
+repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-terra --repeat 3 --output agent-results --strict --require-acceptance --json
 ```
 
-Each arm starts from a fresh clone at the same commit. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. See [`docs/agent-benchmark.md`](docs/agent-benchmark.md).
+Each arm starts from a fresh clone at the same commit. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. Reports include paired deltas and separately configured acceptance gates. A reproducible four-task suite can be generated with `node benchmarks/agent-suite/create.mjs <new-directory>`. See [`docs/agent-benchmark.md`](docs/agent-benchmark.md).
 
 [`docs/architecture.md`](docs/architecture.md) explains how the pieces fit and [`docs/memory-model.md`](docs/memory-model.md) explains what is stored and why; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`docs/troubleshooting.md`](docs/troubleshooting.md) covers error codes and common situations, and [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.

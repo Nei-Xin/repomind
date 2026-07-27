@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "name": "RepoMind four-task controlled agent suite",
+  "acceptance": {
+    "minRepoMindHiddenPassRate": 1,
+    "minHiddenPassRateDelta": 0,
+    "minRetrievalRate": 1,
+    "minSessionCommitRate": 1,
+    "maxMeanDurationRegressionPercent": 15,
+    "requireEfficiencyImprovement": true,
+    "requiredTaskWins": ["historical-command"]
+  },
+  "tasks": [
+    {
+      "id": "renamed-module",
+      "baseRepository": "./bases/renamed-module",
+      "baseCommit": "HEAD",
+      "prompt": "Expose the current audit-record serializer from src/index.js. Preserve the existing public API and run the repository tests.",
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-renamed-module.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "location",
+        "title": "Audit serializer module rename",
+        "content": "The audit serializer was moved from the deleted src/audit.js module to src/history/audit-record.js. The supported export is serializeAuditRecord; expose that existing function instead of recreating it.",
+        "relatedFiles": ["src/history/audit-record.js", "src/index.js"]
+      }],
+      "allowedChanges": ["src/index.js"]
+    },
+    {
+      "id": "failed-solution",
+      "baseRepository": "./bases/failed-solution",
+      "baseCommit": "HEAD",
+      "prompt": "Fix deliverOnce so concurrent calls for the same delivery id invoke send only once and report whether each call performed the delivery. Keep retry behavior correct after send rejects. Run the tests.",
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-failed-solution.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "failure",
+        "title": "Delivery deduplication race and rejected fix",
+        "content": "The previous fix checked or marked delivery only after awaiting send, so concurrent calls still duplicated delivery. Mark the id before awaiting. Return false when it is already marked, and remove the mark only when send rejects so a later retry remains possible.",
+        "relatedFiles": ["src/delivery.js"]
+      }],
+      "allowedChanges": ["src/delivery.js", "test/smoke.node.js"]
+    },
+    {
+      "id": "migration-rollback",
+      "baseRepository": "./bases/migration-rollback",
+      "baseCommit": "HEAD",
+      "prompt": "Implement the down direction of the user-handle migration according to this repository's historical rollback convention. Run the tests.",
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-migration-rollback.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "convention",
+        "title": "User-handle migration rollback convention",
+        "content": "Rollback must execute exactly two statements in order: DROP INDEX users_handle_uq, then ALTER TABLE users DROP COLUMN handle. Our migration executor expects unquoted identifiers and one db.exec call per statement.",
+        "relatedFiles": ["migrations/20260727-user-handle.js"]
+      }],
+      "allowedChanges": ["migrations/20260727-user-handle.js"]
+    },
+    {
+      "id": "historical-command",
+      "baseRepository": "./bases/historical-command",
+      "baseCommit": "HEAD",
+      "prompt": "Restore the package script named verify:release using the last validated release verification workflow. Do not change application code. Run the resulting checks.",
+      "publicChecks": [{ "command": "node", "args": ["--test"] }],
+      "hiddenChecks": [{ "command": "node", "args": ["{suite}/hidden/verify-historical-command.mjs", "{repo}"] }],
+      "memories": [{
+        "type": "command",
+        "title": "Validated release verification command",
+        "content": "The last validated verify:release package script is exactly: node --test && node scripts/check-schema.mjs. Keep that order because schema validation assumes the test process completed first.",
+        "relatedFiles": ["package.json", "scripts/check-schema.mjs"]
+      }],
+      "allowedChanges": ["package.json"]
+    }
+  ]
+}

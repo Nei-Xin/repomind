@@ -204,6 +204,7 @@ export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEva
   const report = buildAgentReport({
     name: options.manifest.name, runner: "opencode", model: options.model,
     repeat: options.repeat, outputDirectory, runs,
+    ...(options.manifest.acceptance ? { acceptanceCriteria: options.manifest.acceptance } : {}),
   });
   writeFileSync(join(outputDirectory, "summary.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   writeFileSync(join(outputDirectory, "summary.md"), renderAgentMarkdown(report), "utf8");

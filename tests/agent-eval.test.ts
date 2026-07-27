@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeAgentEvents } from "../src/eval/agent/events.js";
-import { parseAgentManifest } from "../src/eval/agent/manifest.js";
+import { loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
+import { buildAgentReport, type AgentRunResult } from "../src/eval/agent/report.js";
 import { parseChangedFiles, runAgentEvaluation, type ProcessExecutor } from "../src/eval/agent/runner.js";
 
 function git(cwd: string, args: string[]): string {
@@ -44,6 +45,82 @@ describe("agent manifest", () => {
   it("applies defaults and rejects duplicate task ids", () => {
     expect(parseAgentManifest({ version: 1, name: "suite", tasks: [task] }).tasks[0]!.publicChecks[0]!.args).toEqual(["--version"]);
     expect(() => parseAgentManifest({ version: 1, name: "suite", tasks: [task, task] })).toThrow(/duplicate task ids/);
+  });
+
+  it("rejects acceptance wins that reference unknown tasks", () => {
+    expect(() => parseAgentManifest({
+      version: 1, name: "suite", tasks: [task], acceptance: { requiredTaskWins: ["missing"] },
+    })).toThrow(/unknown task ids: missing/);
+  });
+});
+
+function reportRun(arm: "no-memory" | "repomind", hiddenPass: boolean): AgentRunResult {
+  const repoMind = arm === "repomind";
+  return {
+    taskId: "history", arm, iteration: 1, repository: `/${arm}`,
+    requestedCommit: "abc", baseCommit: "abc", agentExitCode: 0, agentSignal: null,
+    wallDurationMs: repoMind ? 110 : 100,
+    publicChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
+    hiddenChecks: [{ command: "node", args: [], exitCode: hiddenPass ? 0 : 1, signal: null, stdout: "", stderr: "", durationMs: 1, passed: hiddenPass }],
+    changedFiles: ["answer.js"], unexpectedChanges: [],
+    sessionsBeforeCleanup: repoMind ? [{ id: "s1", status: "committed" }] : [],
+    abandonedSessions: 0, openSessionsAfterCleanup: 0,
+    events: {
+      turns: 1,
+      tokens: { input: repoMind ? 70 : 100, output: repoMind ? 12 : 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      toolCalls: repoMind ? { repomind_repo_session_start: 1 } : {}, failedTools: 0, failedCommands: 0,
+      fileReads: repoMind ? 3 : 5, repeatedFileReads: 0, repoMindCalls: repoMind ? 2 : 0,
+      retrievedMemories: repoMind ? 1 : 0,
+    },
+  };
+}
+
+describe("paired agent report", () => {
+  it("computes paired deltas and evaluates explicit acceptance criteria", () => {
+    const report = buildAgentReport({
+      name: "paired", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      runs: [reportRun("no-memory", false), reportRun("repomind", true)],
+      acceptanceCriteria: {
+        minRepoMindHiddenPassRate: 1,
+        minHiddenPassRateDelta: 0.5,
+        minRetrievalRate: 1,
+        minSessionCommitRate: 1,
+        maxMeanDurationRegressionPercent: 15,
+        requireEfficiencyImprovement: true,
+        requiredTaskWins: ["history"],
+      },
+    });
+    expect(report.integrity.passed).toBe(true);
+    expect(report.acceptance.status).toBe("passed");
+    expect(report.paired.pairs).toBe(1);
+    expect(report.paired.overall.find((metric) => metric.key === "hiddenSuccess")).toMatchObject({
+      meanDelta: 1, repoMindWins: 1, ties: 0, repoMindLosses: 0,
+    });
+    expect(report.paired.overall.find((metric) => metric.key === "inputTokens")?.relativeDeltaPercent).toBe(-30);
+    expect(report.paired.overall.find((metric) => metric.key === "wallDurationMs")?.relativeDeltaPercent).toBe(10);
+  });
+
+  it("reports an acceptance failure without changing integrity", () => {
+    const report = buildAgentReport({
+      name: "paired", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      runs: [reportRun("no-memory", false), reportRun("repomind", true)],
+      acceptanceCriteria: { maxMeanDurationRegressionPercent: 5 },
+    });
+    expect(report.integrity.passed).toBe(true);
+    expect(report.acceptance.status).toBe("failed");
+    expect(report.acceptance.checks.find((check) => check.id === "durationRegression")?.passed).toBe(false);
+  });
+
+  it("reports a missing required pair as failed acceptance instead of throwing", () => {
+    const report = buildAgentReport({
+      name: "incomplete", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      runs: [reportRun("no-memory", false)], acceptanceCriteria: { requiredTaskWins: ["history"] },
+    });
+    expect(report.integrity.passed).toBe(false);
+    expect(report.acceptance.status).toBe("failed");
+    expect(report.acceptance.checks.find((check) => check.id === "requiredTaskWin:history")).toMatchObject({
+      passed: false, measured: false,
+    });
   });
 });
 
@@ -96,6 +173,35 @@ describe("controlled agent evaluation", () => {
       expect(report.integrity).toEqual({ passed: true, failures: [] });
       expect(readFileSync(join(output, "summary.md"), "utf8")).toContain("fake suite");
       expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).not.toHaveProperty("runs.0.rawLog");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+describe("reproducible agent suite", () => {
+  it("creates committed fixture repositories and refuses to overwrite them", () => {
+    const root = mkdtempSync(join(tmpdir(), "repomind-agent-suite-"));
+    const target = join(root, "generated");
+    const script = join(process.cwd(), "benchmarks", "agent-suite", "create.mjs");
+    try {
+      const created = spawnSync(process.execPath, [script, target], { encoding: "utf8", windowsHide: true });
+      expect(created.status, created.stderr).toBe(0);
+      const manifest = loadAgentManifest(join(target, "manifest.json"));
+      expect(manifest.tasks.map((task) => task.id)).toEqual([
+        "renamed-module", "failed-solution", "migration-rollback", "historical-command",
+      ]);
+      expect(manifest.acceptance).toMatchObject({
+        minRepoMindHiddenPassRate: 1, requiredTaskWins: ["historical-command"],
+      });
+      for (const task of manifest.tasks) {
+        expect(git(task.baseRepository, ["rev-parse", "HEAD"])).toMatch(/^[a-f0-9]{40}$/u);
+        expect(git(task.baseRepository, ["status", "--short"])).toBe("");
+        expect(task.hiddenChecks[0]!.args[0]).toContain(target);
+      }
+      const repeated = spawnSync(process.execPath, [script, target], { encoding: "utf8", windowsHide: true });
+      expect(repeated.status).toBe(1);
+      expect(repeated.stderr).toContain("Refusing to overwrite");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

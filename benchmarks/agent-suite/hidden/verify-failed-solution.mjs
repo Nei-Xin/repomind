@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+const repository = process.argv[2];
+const api = await import(`${pathToFileURL(resolve(repository, "src/delivery.js")).href}?verify=${Date.now()}`);
+api.resetDeliveries();
+let sends = 0;
+let release;
+const blocked = new Promise((resolvePromise) => { release = resolvePromise; });
+const send = async () => { sends += 1; await blocked; };
+const first = api.deliverOnce("invoice-7", send);
+const second = api.deliverOnce("invoice-7", send);
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+release();
+assert.deepEqual(await Promise.all([first, second]), [true, false]);
+assert.equal(sends, 1);

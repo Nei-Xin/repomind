@@ -47,7 +47,7 @@ Usage:
   repomind session-abandon <session-id> [--repo <path>]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
-  repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--repeat <1-100>] [--output <dir>] [--strict] [--json]
+  repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
   repomind mcp
 `;
 
@@ -88,6 +88,7 @@ const { values, positionals } = parseArgs({
     "alpha-sweep": { type: "boolean", default: true },
     lint: { type: "boolean", default: false },
     strict: { type: "boolean", default: false },
+    "require-acceptance": { type: "boolean", default: false },
     markdown: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
       });
       output(report);
       if (values.strict && !report.integrity.passed) process.exitCode = 1;
+      if (values["require-acceptance"] && report.acceptance.status !== "passed") process.exitCode = 1;
       return;
     }
     if (values.compare) {

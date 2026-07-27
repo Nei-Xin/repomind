@@ -34,15 +34,27 @@ const taskSchema = z.object({
   allowedChanges: z.array(z.string().min(1)).optional(),
 }).strict();
 
+const acceptanceSchema = z.object({
+  minRepoMindHiddenPassRate: z.number().min(0).max(1).optional(),
+  minHiddenPassRateDelta: z.number().min(-1).max(1).optional(),
+  minRetrievalRate: z.number().min(0).max(1).optional(),
+  minSessionCommitRate: z.number().min(0).max(1).optional(),
+  maxMeanDurationRegressionPercent: z.number().min(0).optional(),
+  requireEfficiencyImprovement: z.boolean().optional(),
+  requiredTaskWins: z.array(z.string().min(1)).optional(),
+}).strict();
+
 export const agentManifestSchema = z.object({
   version: z.literal(1),
   name: z.string().min(1),
   tasks: z.array(taskSchema).min(1),
+  acceptance: acceptanceSchema.optional(),
 }).strict();
 
 export type AgentManifest = z.infer<typeof agentManifestSchema>;
 export type AgentTask = AgentManifest["tasks"][number];
 export type AgentCheck = AgentTask["publicChecks"][number];
+export type AgentAcceptanceCriteria = NonNullable<AgentManifest["acceptance"]>;
 
 export function parseAgentManifest(value: unknown, source = "manifest"): AgentManifest {
   const parsed = agentManifestSchema.safeParse(value);
@@ -54,6 +66,10 @@ export function parseAgentManifest(value: unknown, source = "manifest"): AgentMa
   const ids = parsed.data.tasks.map((task) => task.id);
   if (new Set(ids).size !== ids.length) {
     throw new RepoMindError("INVALID_INPUT", `Agent manifest ${source} contains duplicate task ids`);
+  }
+  const unknownWins = parsed.data.acceptance?.requiredTaskWins?.filter((id) => !ids.includes(id)) ?? [];
+  if (unknownWins.length) {
+    throw new RepoMindError("INVALID_INPUT", `Agent manifest ${source} acceptance references unknown task ids: ${unknownWins.join(", ")}`);
   }
   return parsed.data;
 }

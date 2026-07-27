@@ -12,6 +12,7 @@ repomind eval --agent `
   --repeat 3 `
   --output D:\path\to\results `
   --strict `
+  --require-acceptance `
   --json
 ```
 
@@ -43,7 +44,16 @@ replaced with the fresh clone path.
       "content": "The fact the RepoMind arm should retrieve."
     }],
     "allowedChanges": ["src/target.js"]
-  }]
+  }],
+  "acceptance": {
+    "minRepoMindHiddenPassRate": 1,
+    "minHiddenPassRateDelta": 0,
+    "minRetrievalRate": 1,
+    "minSessionCommitRate": 1,
+    "maxMeanDurationRegressionPercent": 15,
+    "requireEfficiencyImprovement": true,
+    "requiredTaskWins": ["example"]
+  }
 }
 ```
 
@@ -63,3 +73,30 @@ cleanup. `--strict` fails on experiment-integrity defects: agent crashes, wrong
 base commits, unexpected file changes, cross-arm MCP use, missing RepoMind use,
 or sessions left open after cleanup. A hidden-check failure remains a legitimate
 task outcome and does not by itself invalidate the experiment.
+
+The report keeps `integrity` and `acceptance` separate. Acceptance criteria are
+declared in the manifest and produce individual measured gates. A configured
+task win means that task's RepoMind hidden pass rate must be strictly higher
+than its no-memory pass rate. `--require-acceptance` exits unsuccessfully when
+criteria are missing or fail; it does not change the meaning of `--strict`.
+
+Paired statistics compare the two arms for the same task and repetition. The
+JSON and Markdown reports include mean and median deltas, relative change, and
+RepoMind win/tie/loss counts for hidden/public success, wall time, input/output
+tokens, and file reads.
+
+## Rebuild the shipped suite
+
+The four-task suite is stored as ordinary templates rather than nested Git
+repositories. Generate fresh committed fixture repositories in a new external
+directory:
+
+```powershell
+node .\benchmarks\agent-suite\create.mjs `
+  D:\data\code\project\repomind-test\agent-suite-v2
+```
+
+The generator refuses to overwrite an existing directory. It copies the
+hidden verifiers outside every base repository, initializes and commits each
+base, and writes an absolute verifier path into `manifest.json`. Results remain
+excluded by the generated `.gitignore`.
