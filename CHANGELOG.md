@@ -7,6 +7,33 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-28
+
+### Added
+
+- Controlled `repomind eval --agent` OpenCode A/B evaluation with fresh clones,
+  alternating arm order, external hidden checks, and isolated RepoMind data.
+- Paired statistics and RepoMind win/tie/loss counts for task success, duration,
+  token use, and file reads.
+- Manifest-defined acceptance gates and `--require-acceptance` enforcement,
+  kept separate from experiment-integrity validation.
+- A reproducible four-task agent-suite generator with deterministic Git commits
+  and actual base commits written into the generated manifest.
+- Report provenance covering the RepoMind version and commit, Node and operating
+  system, runner version, manifest SHA-256, and per-task base commits.
+- A formal three-repeat v0.6 benchmark result document with methods, acceptance
+  evidence, and explicit limitations.
+
+### Changed
+
+- Agent report schema version 3 adds provenance, including whether the tested
+  RepoMind Git worktree contained uncommitted changes.
+
+### Fixed
+
+- Parse Git porcelain output without discarding the leading status character.
+- Report a missing required task pair as failed acceptance instead of throwing.
+
 ## [0.5.0] - 2026-07-27
 
 ### Added

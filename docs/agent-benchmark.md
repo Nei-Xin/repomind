@@ -69,7 +69,9 @@ RepoMind databases under `data/`, OpenCode JSONL and stderr under `raw/`, plus
 
 The report includes hidden/public pass counts, duration, tokens, file reads,
 tool failures, RepoMind calls, retrieved memories, changed files, and session
-cleanup. `--strict` fails on experiment-integrity defects: agent crashes, wrong
+cleanup. It also records the RepoMind version, commit, and worktree state, Node
+and operating system, runner version, manifest SHA-256, and the resolved base
+commit for each task. `--strict` fails on experiment-integrity defects: agent crashes, wrong
 base commits, unexpected file changes, cross-arm MCP use, missing RepoMind use,
 or sessions left open after cleanup. A hidden-check failure remains a legitimate
 task outcome and does not by itself invalidate the experiment.
@@ -98,5 +100,11 @@ node .\benchmarks\agent-suite\create.mjs `
 
 The generator refuses to overwrite an existing directory. It copies the
 hidden verifiers outside every base repository, initializes and commits each
-base, and writes an absolute verifier path into `manifest.json`. Results remain
-excluded by the generated `.gitignore`.
+base, and writes an absolute verifier path and the actual base commit into
+`manifest.json`. It pins Git author and committer timestamps and enforces LF
+line endings, so generating the same template in different directories yields
+the same base commit IDs. Results remain excluded by the generated `.gitignore`.
+
+The formal three-repeat v0.6 acceptance run, including its provenance, results,
+acceptance gates, and limitations, is documented in
+[`agent-benchmark-results-v0.6.md`](agent-benchmark-results-v0.6.md).

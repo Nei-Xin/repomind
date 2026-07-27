@@ -18,7 +18,7 @@ import { loadFixture } from "../eval/comparison/fixture.js";
 import { renderMarkdown } from "../eval/comparison/report.js";
 import { lintFixtures, runComparison } from "../eval/comparison/runner.js";
 import type { ArmKey } from "../eval/comparison/types.js";
-import { loadAgentManifest } from "../eval/agent/manifest.js";
+import { hashAgentManifest, loadAgentManifest } from "../eval/agent/manifest.js";
 import { runAgentEvaluation } from "../eval/agent/runner.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
@@ -142,8 +142,10 @@ async function main(): Promise<void> {
       const repeat = values.repeat ? Number(values.repeat) : 3;
       const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
+      const manifestPath = required(values.manifest, "--manifest");
       const report = runAgentEvaluation({
-        manifest: loadAgentManifest(required(values.manifest, "--manifest")),
+        manifest: loadAgentManifest(manifestPath),
+        manifestSha256: hashAgentManifest(manifestPath),
         model: values.model ?? "cliproxyapi/gpt-5.6-terra",
         repeat,
         outputDirectory: values.output ?? "agent-results",

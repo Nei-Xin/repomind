@@ -18,17 +18,26 @@ cpSync(join(source, "bases"), join(target, "bases"), { recursive: true });
 cpSync(join(source, "hidden"), join(target, "hidden"), { recursive: true });
 
 const baseDirectories = ["renamed-module", "failed-solution", "migration-rollback", "historical-command"];
+const commits = new Map();
+const fixedGitEnvironment = {
+  ...process.env,
+  GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z",
+  GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z",
+};
 for (const name of baseDirectories) {
   const repository = join(target, "bases", name);
+  writeFileSync(join(repository, ".gitattributes"), "* text eol=lf\n", "utf8");
   execFileSync("git", ["init", "-q"], { cwd: repository, stdio: "pipe" });
   execFileSync("git", ["add", "."], { cwd: repository, stdio: "pipe" });
   execFileSync("git", ["-c", "user.name=RepoMind", "-c", "user.email=benchmark@repomind.local", "commit", "-q", "-m", "base fixture"], {
-    cwd: repository, stdio: "pipe",
+    cwd: repository, stdio: "pipe", env: fixedGitEnvironment,
   });
+  commits.set(name, execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim());
 }
 
 const manifest = JSON.parse(readFileSync(join(source, "manifest.template.json"), "utf8"));
 for (const task of manifest.tasks) {
+  task.baseCommit = commits.get(task.id);
   for (const check of task.hiddenChecks) {
     check.args = check.args.map((argument) => argument.replaceAll("{suite}", target));
   }
@@ -40,5 +49,7 @@ console.log(JSON.stringify({
   name: basename(target),
   root: target,
   manifest: join(target, "manifest.json"),
-  repositories: baseDirectories.map((name) => join(target, "bases", name)),
+  repositories: Object.fromEntries(baseDirectories.map((name) => [name, {
+    path: join(target, "bases", name), commit: commits.get(name),
+  }])),
 }, null, 2));

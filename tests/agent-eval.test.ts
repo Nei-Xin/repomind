@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeAgentEvents } from "../src/eval/agent/events.js";
-import { loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
+import { hashAgentManifest, loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
 import { buildAgentReport, type AgentRunResult } from "../src/eval/agent/report.js";
 import { parseChangedFiles, runAgentEvaluation, type ProcessExecutor } from "../src/eval/agent/runner.js";
+
+const TEST_PROVENANCE = {
+  repoMindVersion: "test", repoMindCommit: "abc", repoMindDirty: false, node: process.version,
+  os: { platform: process.platform, release: "test", arch: process.arch },
+  runnerVersion: "test", manifestSha256: "0".repeat(64), taskBaseCommits: { history: "abc" },
+};
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
@@ -52,6 +58,17 @@ describe("agent manifest", () => {
       version: 1, name: "suite", tasks: [task], acceptance: { requiredTaskWins: ["missing"] },
     })).toThrow(/unknown task ids: missing/);
   });
+
+  it("hashes the exact manifest bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "repomind-agent-manifest-"));
+    const path = join(root, "manifest.json");
+    try {
+      writeFileSync(path, "{\"version\":1}\n", "utf8");
+      expect(hashAgentManifest(path)).toBe("50208d78350a7a160dec59a82df1499b6ca7da33e54c5eb11c97e342118e68bb");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function reportRun(arm: "no-memory" | "repomind", hiddenPass: boolean): AgentRunResult {
@@ -79,6 +96,7 @@ describe("paired agent report", () => {
   it("computes paired deltas and evaluates explicit acceptance criteria", () => {
     const report = buildAgentReport({
       name: "paired", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      provenance: TEST_PROVENANCE,
       runs: [reportRun("no-memory", false), reportRun("repomind", true)],
       acceptanceCriteria: {
         minRepoMindHiddenPassRate: 1,
@@ -103,6 +121,7 @@ describe("paired agent report", () => {
   it("reports an acceptance failure without changing integrity", () => {
     const report = buildAgentReport({
       name: "paired", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      provenance: TEST_PROVENANCE,
       runs: [reportRun("no-memory", false), reportRun("repomind", true)],
       acceptanceCriteria: { maxMeanDurationRegressionPercent: 5 },
     });
@@ -114,6 +133,7 @@ describe("paired agent report", () => {
   it("reports a missing required pair as failed acceptance instead of throwing", () => {
     const report = buildAgentReport({
       name: "incomplete", runner: "opencode", model: "test", repeat: 1, outputDirectory: "/tmp",
+      provenance: TEST_PROVENANCE,
       runs: [reportRun("no-memory", false)], acceptanceCriteria: { requiredTaskWins: ["history"] },
     });
     expect(report.integrity.passed).toBe(false);
@@ -141,6 +161,9 @@ describe("controlled agent evaluation", () => {
       });
       const execute: ProcessExecutor = (request) => {
         if (request.command === "fake-opencode") {
+          if (request.args[0] === "--version") {
+            return { status: 0, signal: null, stdout: "fake-opencode 1.0\n", stderr: "", error: undefined } as SpawnSyncReturns<string>;
+          }
           const config = JSON.parse(readFileSync(join(request.cwd, "opencode.json"), "utf8")) as { mcp: Record<string, unknown> };
           const events = [{ type: "step_finish", part: { tokens: { input: 10, output: 2 } } }];
           if (config.mcp.repomind) events.push({
@@ -170,6 +193,13 @@ describe("controlled agent evaluation", () => {
       ]);
       expect(report.arms["no-memory"].repoMindCalls).toBe(0);
       expect(report.arms.repomind.repoMindCalls).toBe(2);
+      expect(report.provenance).toMatchObject({
+        repoMindCommit: expect.stringMatching(/^[a-f0-9]{40}$/u),
+        repoMindDirty: expect.any(Boolean),
+        runnerVersion: "fake-opencode 1.0",
+        taskBaseCommits: { smoke: commit },
+      });
+      expect(report.version).toBe(3);
       expect(report.integrity).toEqual({ passed: true, failures: [] });
       expect(readFileSync(join(output, "summary.md"), "utf8")).toContain("fake suite");
       expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).not.toHaveProperty("runs.0.rawLog");
@@ -183,19 +213,26 @@ describe("reproducible agent suite", () => {
   it("creates committed fixture repositories and refuses to overwrite them", () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-suite-"));
     const target = join(root, "generated");
+    const secondTarget = join(root, "generated-again");
     const script = join(process.cwd(), "benchmarks", "agent-suite", "create.mjs");
     try {
       const created = spawnSync(process.execPath, [script, target], { encoding: "utf8", windowsHide: true });
       expect(created.status, created.stderr).toBe(0);
       const manifest = loadAgentManifest(join(target, "manifest.json"));
+      const second = spawnSync(process.execPath, [script, secondTarget], { encoding: "utf8", windowsHide: true });
+      expect(second.status, second.stderr).toBe(0);
+      const secondManifest = loadAgentManifest(join(secondTarget, "manifest.json"));
       expect(manifest.tasks.map((task) => task.id)).toEqual([
         "renamed-module", "failed-solution", "migration-rollback", "historical-command",
       ]);
       expect(manifest.acceptance).toMatchObject({
         minRepoMindHiddenPassRate: 1, requiredTaskWins: ["historical-command"],
       });
-      for (const task of manifest.tasks) {
-        expect(git(task.baseRepository, ["rev-parse", "HEAD"])).toMatch(/^[a-f0-9]{40}$/u);
+      for (const [index, task] of manifest.tasks.entries()) {
+        const commit = git(task.baseRepository, ["rev-parse", "HEAD"]);
+        expect(commit).toMatch(/^[a-f0-9]{40}$/u);
+        expect(task.baseCommit).toBe(commit);
+        expect(secondManifest.tasks[index]!.baseCommit).toBe(commit);
         expect(git(task.baseRepository, ["status", "--short"])).toBe("");
         expect(task.hiddenChecks[0]!.args[0]).toContain(target);
       }

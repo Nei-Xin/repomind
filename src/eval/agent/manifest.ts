@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
@@ -92,4 +93,14 @@ export function loadAgentManifest(path: string): AgentManifest {
       baseRepository: resolve(dirname(absolute), task.baseRepository),
     })),
   };
+}
+
+export function hashAgentManifest(path: string): string {
+  try {
+    return createHash("sha256").update(readFileSync(resolve(path))).digest("hex");
+  } catch (error) {
+    throw new RepoMindError("INVALID_INPUT", `Unable to hash agent manifest ${path}`, {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

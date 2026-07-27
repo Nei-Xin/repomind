@@ -64,13 +64,14 @@ export interface AcceptanceCheck {
 }
 
 export interface AgentEvalReport {
-  version: 2;
+  version: 3;
   name: string;
   generatedAt: string;
   runner: "opencode";
   model: string;
   repeat: number;
   outputDirectory: string;
+  provenance: AgentProvenance;
   runs: AgentRunResult[];
   arms: Record<AgentArm, {
     runs: number;
@@ -93,12 +94,24 @@ export interface AgentEvalReport {
   };
 }
 
+export interface AgentProvenance {
+  repoMindVersion: string;
+  repoMindCommit: string | null;
+  repoMindDirty: boolean | null;
+  node: string;
+  os: { platform: NodeJS.Platform; release: string; arch: string };
+  runnerVersion: string | null;
+  manifestSha256: string;
+  taskBaseCommits: Record<string, string>;
+}
+
 export interface BuildAgentReportInput {
   name: string;
   runner: "opencode";
   model: string;
   repeat: number;
   outputDirectory: string;
+  provenance: AgentProvenance;
   runs: AgentRunResult[];
   acceptanceCriteria?: AgentAcceptanceCriteria;
 }
@@ -305,8 +318,8 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
   const paired = pairedResults(pairCollection.pairs);
   const integrity = { passed: failures.length === 0, failures };
   return {
-    version: 2, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
-    model: input.model, repeat: input.repeat, outputDirectory: input.outputDirectory, runs: input.runs,
+    version: 3, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
+    model: input.model, repeat: input.repeat, outputDirectory: input.outputDirectory, provenance: input.provenance, runs: input.runs,
     arms, paired, integrity,
     acceptance: evaluateAcceptance(input.acceptanceCriteria, integrity.passed, paired, input.runs),
   };
@@ -341,5 +354,8 @@ export function renderAgentMarkdown(report: AgentEvalReport): string {
   const acceptanceRows = report.acceptance.checks.map((check) =>
     `| ${check.id} | ${check.passed ? "yes" : "NO"} | ${String(check.measured)} | ${check.target} | ${check.detail} |`,
   ).join("\n");
-  return `# RepoMind agent A/B benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n| Arm | Hidden checks | Public checks | Mean wall time | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n## Paired deltas\n\nDeltas are RepoMind minus no-memory. Win/tie/loss uses the preferred direction.\n\n| Metric | Preferred | No-memory mean | RepoMind mean | Mean delta | Delta % | Win/tie/loss |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n${pairedRows}\n\n## Per-task paired results\n\n| Task | Pairs | Hidden no-memory | Hidden RepoMind | Duration delta | Input-token delta | File-read delta |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${taskRows}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Hidden | Public | Wall time | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
+  const dirty = report.provenance.repoMindDirty === null ? "unavailable" : String(report.provenance.repoMindDirty);
+  const provenanceRows = `| RepoMind worktree dirty | ${dirty} |\n` + Object.entries(report.provenance.taskBaseCommits)
+    .map(([task, commit]) => `| task:${task} | \`${commit}\` |`).join("\n") + "\n\n## Results";
+  return `# RepoMind agent A/B benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n| Arm | Hidden checks | Public checks | Mean wall time | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n## Paired deltas\n\nDeltas are RepoMind minus no-memory. Win/tie/loss uses the preferred direction.\n\n| Metric | Preferred | No-memory mean | RepoMind mean | Mean delta | Delta % | Win/tie/loss |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n${pairedRows}\n\n## Per-task paired results\n\n| Task | Pairs | Hidden no-memory | Hidden RepoMind | Duration delta | Input-token delta | File-read delta |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${taskRows}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Hidden | Public | Wall time | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
 }

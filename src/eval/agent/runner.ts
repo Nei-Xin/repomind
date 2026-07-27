@@ -1,10 +1,13 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { release as osRelease } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { RepositoryMemoryCore } from "../../core.js";
 import { RepoMindError } from "../../errors.js";
 import { initializeRepository } from "../../repository.js";
+import { VERSION } from "../../version.js";
 import { analyzeAgentEvents } from "./events.js";
 import type { AgentCheck, AgentManifest, AgentTask } from "./manifest.js";
 import { buildAgentReport, renderAgentMarkdown, type AgentArm, type AgentEvalReport, type AgentRunResult, type CheckResult } from "./report.js";
@@ -31,6 +34,7 @@ export interface RunAgentEvaluationOptions {
   outputDirectory: string;
   repoMindCli: string;
   runnerExecutable?: string;
+  manifestSha256?: string;
   timeoutMs?: number;
   execute?: ProcessExecutor;
 }
@@ -196,6 +200,13 @@ export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEva
   mkdirSync(outputDirectory, { recursive: true });
   const normalized = { ...options, outputDirectory };
   const runner = resolveOpenCode(options.runnerExecutable);
+  const runnerVersionResult = execute({ command: runner, args: ["--version"], cwd: outputDirectory, timeoutMs: 30_000 });
+  const runnerVersion = runnerVersionResult.status === 0 ? runnerVersionResult.stdout.trim() || null : null;
+  const repoMindRoot = resolve(dirname(options.repoMindCli), "..", "..");
+  const commitResult = execute({ command: "git", args: ["rev-parse", "HEAD"], cwd: repoMindRoot, timeoutMs: 30_000 });
+  const repoMindCommit = commitResult.status === 0 ? commitResult.stdout.trim() || null : null;
+  const statusResult = execute({ command: "git", args: ["status", "--porcelain"], cwd: repoMindRoot, timeoutMs: 30_000 });
+  const repoMindDirty = statusResult.status === 0 ? statusResult.stdout.trim().length > 0 : null;
   const runs: AgentRunResult[] = [];
   for (const task of options.manifest.tasks) for (let iteration = 1; iteration <= options.repeat; iteration += 1) {
     const order: AgentArm[] = iteration % 2 === 1 ? ["no-memory", "repomind"] : ["repomind", "no-memory"];
@@ -204,6 +215,18 @@ export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEva
   const report = buildAgentReport({
     name: options.manifest.name, runner: "opencode", model: options.model,
     repeat: options.repeat, outputDirectory, runs,
+    provenance: {
+      repoMindVersion: VERSION,
+      repoMindCommit,
+      repoMindDirty,
+      node: process.version,
+      os: { platform: process.platform, release: osRelease(), arch: process.arch },
+      runnerVersion,
+      manifestSha256: options.manifestSha256 ?? createHash("sha256").update(JSON.stringify(options.manifest)).digest("hex"),
+      taskBaseCommits: Object.fromEntries(options.manifest.tasks.map((task) => [
+        task.id, runs.find((run) => run.taskId === task.id)?.baseCommit ?? task.baseCommit,
+      ])),
+    },
     ...(options.manifest.acceptance ? { acceptanceCriteria: options.manifest.acceptance } : {}),
   });
   writeFileSync(join(outputDirectory, "summary.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
