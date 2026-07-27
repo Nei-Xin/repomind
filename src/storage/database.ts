@@ -1,13 +1,28 @@
 import { DatabaseSync } from "node:sqlite";
+import * as sqliteVec from "sqlite-vec";
 import { migrations } from "./migrations.js";
 
 export class Database {
   readonly raw: DatabaseSync;
+  readonly vector: { available: boolean; version: string | null; error: string | null };
 
   constructor(readonly path: string) {
-    this.raw = new DatabaseSync(path);
+    this.raw = new DatabaseSync(path, { allowExtension: true });
     this.raw.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+    this.vector = this.loadVectorExtension();
     this.migrate();
+  }
+
+  private loadVectorExtension(): { available: boolean; version: string | null; error: string | null } {
+    try {
+      sqliteVec.load(this.raw);
+      const row = this.raw.prepare("SELECT vec_version() AS version").get() as { version: string };
+      return { available: true, version: row.version, error: null };
+    } catch (error) {
+      return { available: false, version: null, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      this.raw.enableLoadExtension(false);
+    }
   }
 
   private migrate(): void {

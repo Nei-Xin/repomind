@@ -1,10 +1,31 @@
 import { DatabaseSync } from "node:sqlite";
+import * as sqliteVec from "sqlite-vec";
+import { deterministicEmbed } from "../../embedding/deterministic.js";
+import { serializeVector } from "../../embedding/provider.js";
 import { buildMatchExpression, searchTokens } from "../../search/lexical.js";
 import { chunkFile } from "./corpus.js";
 import { packToBudget } from "./pack.js";
 import type { Arm, ArmContext, ArmKey, ContextBundle, ContextRecord } from "./types.js";
 
 const SEARCH_CAP = 20;
+const BENCHMARK_VECTOR_DIMENSIONS = 256;
+
+function vectorRank(records: Array<{ id: string; text: string }>, query: string, limit = SEARCH_CAP): string[] {
+  if (!records.length) return [];
+  const db = new DatabaseSync(":memory:", { allowExtension: true });
+  try {
+    sqliteVec.load(db);
+    db.exec("CREATE TABLE vectors(id TEXT PRIMARY KEY, embedding BLOB NOT NULL)");
+    const insert = db.prepare("INSERT INTO vectors(id, embedding) VALUES (?, ?)");
+    const vectors = deterministicEmbed(records.map((record) => record.text), BENCHMARK_VECTOR_DIMENSIONS);
+    records.forEach((record, index) => insert.run(record.id, serializeVector(vectors[index]!)));
+    const queryVector = serializeVector(deterministicEmbed([query], BENCHMARK_VECTOR_DIMENSIONS)[0]!);
+    return (db.prepare("SELECT id FROM vectors ORDER BY vec_distance_cosine(embedding, ?) LIMIT ?")
+      .all(queryVector, limit) as unknown as Array<{ id: string }>).map((row) => row.id);
+  } finally {
+    db.close();
+  }
+}
 
 function memoryRecord(
   memory: { id: string; title: string; content: string; status: string; warning?: string },
@@ -225,31 +246,45 @@ const repomind: Arm = {
   },
 };
 
-/**
- * Declared but unavailable: the product has no embeddings, so shipping a
- * vector arm now would mean inventing its results. Its contract is fixed here
- * so the comparisons it would decide are reported as unresolved rather than
- * quietly credited to RepoMind.
- */
 const flatVectorRag: Arm = {
   key: "flat-vector-rag",
-  description: "Cosine retrieval over an offline embedding fixture, indexed over the raw corpus.",
-  available: false,
-  status: "unavailable",
-  reason: "No embedding support in the product; committing precomputed vectors would fabricate a comparison.",
-  assemble() {
-    throw new Error("flat-vector-rag is unavailable");
+  description: "sqlite-vec cosine retrieval over raw session chunks using the reproducible offline feature-hash provider.",
+  available: true,
+  status: "run",
+  assemble(context) {
+    const chunks = context.corpus.chunks.map((chunk) => ({ id: chunk.id, text: chunk.text }));
+    const byId = new Map(chunks.map((chunk) => [chunk.id, chunk.text]));
+    const records = vectorRank(chunks, context.fixture.query, 50).map((id, index) => ({
+      kind: "session" as const,
+      text: byId.get(id) ?? "",
+      rank: index + 1,
+    }));
+    return packToBudget("flat-vector-rag", [...context.repoBase, ...records], context.budget);
   },
 };
 
 const layeredHybrid: Arm = {
   key: "repomind-layered-hybrid",
-  description: "Hybrid lexical and vector retrieval over layered memories.",
-  available: false,
-  status: "not-implemented",
-  reason: "capabilities.vector === false; L2/L3 layers are not implemented.",
-  assemble() {
-    throw new Error("repomind-layered-hybrid is not implemented");
+  description: "Weighted reciprocal-rank fusion over RepoMind L1 lexical and sqlite-vec results, with governance.",
+  available: true,
+  status: "run",
+  assemble(context) {
+    const lexical = context.core.search(context.fixture.query, { limit: SEARCH_CAP });
+    const rows = context.core.context.database.raw.prepare(`
+      SELECT id, title, content FROM memories
+      WHERE repository_id=? AND status IN ('active','uncertain') ORDER BY id
+    `).all(context.core.context.marker.projectId) as unknown as Array<{ id: string; title: string; content: string }>;
+    const vectorIds = vectorRank(rows.map((row) => ({ id: row.id, text: `${row.title}\n${row.content}` })), context.fixture.query);
+    const scores = new Map<string, number>();
+    lexical.forEach((memory, index) => scores.set(memory.id, (scores.get(memory.id) ?? 0) + 0.65 / (61 + index)));
+    vectorIds.forEach((id, index) => scores.set(id, (scores.get(id) ?? 0) + 0.35 / (61 + index)));
+    const lexicalById = new Map(lexical.map((memory) => [memory.id, memory]));
+    const rankedIds = [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+    const records = rankedIds.map((id, index) => {
+      const memory = lexicalById.get(id) ?? context.core.inspect(id) as unknown as { id: string; title: string; content: string; status: string; warning?: string };
+      return memoryRecord(memory, index + 1, evidenceCount(context, id) > 0);
+    });
+    return packToBudget("repomind-layered-hybrid", [...context.repoBase, ...records], context.budget, { capBound: records.length >= SEARCH_CAP });
   },
 };
 
@@ -260,7 +295,7 @@ export function buildArms(alpha: number): Arm[] {
 }
 
 export const SCORING_ARMS: ArmKey[] = [
-  "no-memory", "full-history", "flat-lexical-rag", "recency-k", "repomind-nogov", "repomind",
+  "no-memory", "full-history", "flat-lexical-rag", "flat-vector-rag", "recency-k", "repomind-nogov", "repomind", "repomind-layered-hybrid",
 ];
 
 export { flatLexicalRag };

@@ -9,6 +9,7 @@ import type {
   EvidenceKind,
   ForgetMemoryInput,
   ForgetMemoryResult,
+  HybridSearchResult,
   InvalidateMemoryInput,
   InvalidateMemoryResult,
   MemoryResult,
@@ -21,10 +22,13 @@ import type {
   ValidateMemoryInput,
   ValidateMemoryResult,
 } from "./domain/types.js";
+import { embeddingProviderFromEnvironment } from "./embedding/config.js";
+import type { EmbeddingProvider } from "./embedding/provider.js";
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
 import { buildMatchExpression, searchTokens } from "./search/lexical.js";
+import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
 
 type SqlValue = string | number | null;
@@ -107,9 +111,20 @@ function extractFiles(status: string): string[] {
 
 export class RepositoryMemoryCore {
   readonly context: RepositoryContext;
+  readonly embeddingProvider: EmbeddingProvider | null;
+  readonly embeddingConfigError: string | null;
 
-  constructor(repositoryPath: string) {
+  constructor(repositoryPath: string, options: { embeddingProvider?: EmbeddingProvider | null } = {}) {
     this.context = openRepository(repositoryPath);
+    let provider: EmbeddingProvider | null = null;
+    let configError: string | null = null;
+    try {
+      provider = "embeddingProvider" in options ? options.embeddingProvider ?? null : embeddingProviderFromEnvironment();
+    } catch (error) {
+      configError = error instanceof Error ? error.message : String(error);
+    }
+    this.embeddingProvider = provider;
+    this.embeddingConfigError = configError;
   }
 
   close(): void {
@@ -143,6 +158,17 @@ export class RepositoryMemoryCore {
       repositoryId: this.context.marker.projectId,
       baseline: snapshot,
       memories: this.search(task, { limit: input.maxMemories ?? 5 }),
+    };
+  }
+
+  async startSessionHybrid(input: StartSessionInput): Promise<StartSessionResult> {
+    const started = this.startSession(input);
+    const retrieval = await this.searchHybrid(input.task, { limit: input.maxMemories ?? 5 });
+    return {
+      ...started,
+      memories: retrieval.memories,
+      retrievalStrategy: retrieval.strategy,
+      ...(retrieval.fallbackReason ? { retrievalFallbackReason: retrieval.fallbackReason } : {}),
     };
   }
 
@@ -460,32 +486,39 @@ export class RepositoryMemoryCore {
       `).all(...params, `%${cleanQuery}%`, `%${cleanQuery}%`, limit) as Array<Record<string, unknown>>;
       rows.push(...fallback.filter((row) => !existing.has(String(row.id))).slice(0, limit - rows.length));
     }
-    return rows.map((row) => {
-      const statusReason = parseStatusReason(row.status_reason_json);
-      const staleReason = statusReason?.kind === "stale_files" ? statusReason : null;
-      return {
-        id: String(row.id),
-        type: row.type as MemoryType,
-        title: String(row.title),
-        content: String(row.content),
-        confidence: Number(row.confidence),
-        status: row.status as MemoryResult["status"],
-        scopeType: row.scope_type as MemoryResult["scopeType"],
-        scopeValue: row.scope_value === null ? null : String(row.scope_value),
-        tags: JSON.parse(String(row.tags_json)) as string[],
-        score: Number(row.rank) === 100 ? 0.25 : 1 / (1 + Math.abs(Number(row.rank))),
-        ...(row.status === "uncertain"
-          ? {
-              warning: staleReason
-                ? staleWarning(staleReason.files)
-                : statusReason?.kind === "conflict"
-                  ? conflictWarning(statusReason.withMemoryIds)
-                  : "This memory may be stale or conflicting.",
-              ...(staleReason ? { staleReasons: staleReason.files } : {}),
-            }
-          : {}),
-      };
+    return rows.map((row) => this.memoryResult(row));
+  }
+
+  async searchHybrid(
+    query: string,
+    options: { limit?: number; types?: MemoryType[]; statuses?: Array<"active" | "uncertain"> } = {},
+  ): Promise<HybridSearchResult> {
+    if (!query.trim()) return { strategy: "fts5-with-substring-fallback", memories: [], fallbackReason: "Query is empty" };
+    const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
+    const candidateOptions = { ...options, limit: 20 };
+    const lexical = this.search(query, candidateOptions);
+    const fallback = (reason: string): HybridSearchResult => ({
+      strategy: "fts5-with-substring-fallback",
+      memories: lexical.slice(0, limit),
+      fallbackReason: reason,
     });
+    if (!this.embeddingProvider) return fallback(this.embeddingConfigError ?? "No embedding provider is configured");
+    if (!this.context.database.vector.available) return fallback(this.context.database.vector.error ?? "sqlite-vec is unavailable");
+    try {
+      const vectorHits = await new VectorIndex(this.context, this.embeddingProvider).search(query, candidateOptions);
+      const scores = new Map<string, number>();
+      lexical.forEach((memory, index) => scores.set(memory.id, (scores.get(memory.id) ?? 0) + 0.65 / (60 + index + 1)));
+      vectorHits.forEach((hit, index) => scores.set(hit.id, (scores.get(hit.id) ?? 0) + 0.35 / (60 + index + 1)));
+      const ids = [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([id]) => id);
+      return { strategy: "hybrid-fts5-vector", memories: this.memoryResultsByIds(ids, scores) };
+    } catch (error) {
+      return fallback(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async reindexVectors(): Promise<VectorSyncResult> {
+    if (!this.embeddingProvider) throw new RepoMindError("CAPABILITY_UNAVAILABLE", this.embeddingConfigError ?? "No embedding provider is configured");
+    return new VectorIndex(this.context, this.embeddingProvider).sync(true);
   }
 
   inspect(memoryId: string): Record<string, unknown> {
@@ -536,13 +569,18 @@ export class RepositoryMemoryCore {
       sessions: count("sessions"),
       evidence: count("evidence"),
       memories: count("memories"),
+      embeddings: count("memory_embeddings"),
       uncertainMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='uncertain'").get(this.context.marker.projectId) as { count: number }).count),
       supersededMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='superseded'").get(this.context.marker.projectId) as { count: number }).count),
       invalidMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='invalid'").get(this.context.marker.projectId) as { count: number }).count),
       openSessions: Number((db.prepare("SELECT count(*) AS count FROM sessions WHERE repository_id=? AND status='open'").get(this.context.marker.projectId) as { count: number }).count),
       capabilities: {
         fts5: true,
-        vector: false,
+        vector: this.context.database.vector.available && this.embeddingProvider !== null,
+        sqliteVec: this.context.database.vector,
+        embedding: this.embeddingProvider
+          ? { configured: true, provider: this.embeddingProvider.id, model: this.embeddingProvider.model, dimensions: this.embeddingProvider.dimensions, remote: this.embeddingProvider.remote }
+          : { configured: false, error: this.embeddingConfigError },
         automaticExtraction: "deterministic",
         staleDetection: "file-hash",
         governance: ["validate", "correct", "invalidate", "forget"],
@@ -570,6 +608,41 @@ export class RepositoryMemoryCore {
       }
     });
     return { memories: rows.length };
+  }
+
+  private memoryResultsByIds(ids: string[], scores: Map<string, number>): MemoryResult[] {
+    const statement = this.context.database.raw.prepare("SELECT m.*, 100.0 AS rank FROM memories m WHERE id=? AND repository_id=?");
+    return ids.flatMap((id) => {
+      const row = statement.get(id, this.context.marker.projectId) as Record<string, unknown> | undefined;
+      return row ? [this.memoryResult(row, scores.get(id))] : [];
+    });
+  }
+
+  private memoryResult(row: Record<string, unknown>, score?: number): MemoryResult {
+    const statusReason = parseStatusReason(row.status_reason_json);
+    const staleReason = statusReason?.kind === "stale_files" ? statusReason : null;
+    return {
+      id: String(row.id),
+      type: row.type as MemoryType,
+      title: String(row.title),
+      content: String(row.content),
+      confidence: Number(row.confidence),
+      status: row.status as MemoryResult["status"],
+      scopeType: row.scope_type as MemoryResult["scopeType"],
+      scopeValue: row.scope_value === null ? null : String(row.scope_value),
+      tags: JSON.parse(String(row.tags_json)) as string[],
+      score: score ?? (Number(row.rank) === 100 ? 0.25 : 1 / (1 + Math.abs(Number(row.rank)))),
+      ...(row.status === "uncertain"
+        ? {
+            warning: staleReason
+              ? staleWarning(staleReason.files)
+              : statusReason?.kind === "conflict"
+                ? conflictWarning(statusReason.withMemoryIds)
+                : "This memory may be stale or conflicting.",
+            ...(staleReason ? { staleReasons: staleReason.files } : {}),
+          }
+        : {}),
+    };
   }
 
   listSessions(): unknown[] {

@@ -8,7 +8,7 @@ export const CAVEATS: string[] = [
   "2. This benchmark does not measure task success rate. No LLM is in the loop. Nothing here licenses a claim that RepoMind improves task success by any amount. The +15% success-rate target remains unverified and is reported as not-evaluated. taskSuccessRate, turnsToCompletion, wallClockTaskTimeMs, outputTokens, repeatedFileReads, repeatedFailedCommands, llmCostUsd, and embeddingCostUsd appear as explicit nulls with reasons, never as omissions.",
   "3. It measures context quality, not agent behavior. Whether an agent would use the delivered knowledge correctly is untested. A bundle can contain a fact the agent ignores; a bundle can omit a fact the agent trivially rediscovers. The load-bearing assumption that better context produces better outcomes is the product's premise, and this benchmark assumes it rather than testing it.",
   "4. approxTokens = ceil(chars / 4) is a documented heuristic, not a BPE count. Only ratios between arms are meaningful. The estimator's error is correlated with the arm, because full-history carries the diffs and JSON where characters per token diverge sharply from prose. Exact characters and a per-record-kind breakdown are published so anyone can recompute with a real tokenizer.",
-  "5. flat-lexical-rag is a lower bound on flat RAG, not flat RAG. It has no embeddings because RepoMind has none. A real vector retriever would very likely beat it on paraphrase and cross-language retrieval, and might beat RepoMind there too. While the vector arm is unavailable those comparisons are reported as unresolved, never as RepoMind wins. Nothing here is evidence against vector retrieval.",
+  "5. The two vector arms use a deterministic feature-hash embedding so the suite stays offline and reproducible. It is a real sqlite-vec cosine retrieval path, but it is not a learned semantic model and does not estimate the quality, latency, or cost of any remote embedding provider. Results cannot be generalized to OpenAI-compatible embedding models.",
   "6. Metrics only RepoMind can score on are not falsifiability. overWarnRate, conflictNoiseShare, and evidenceCitationRate are one-sided by definition: other arms score zero because they lack the mechanism, not because they perform worse. They are absolute diagnostics, rendered separately, and never enter the win/loss ledger.",
   "7. Fixtures are authored by RepoMind's own authors. That is selection bias and no validator removes it. Mitigations are partial: hard failure conditions in fixture validation including a recomputed repository-discoverability check, fixtures that declare a designed loss which CI enforces, a versioned fixture schema, and an open invitation for externally contributed fixtures. Residual bias remains.",
   "8. The fixture count is small. Content metrics are exactly deterministic, so run-to-run variance is zero, which hides label and fixture-selection variance rather than eliminating them. A paired bootstrap 95% interval over fixtures is reported for every arm-to-arm delta, and the renderer refuses to print better when the interval crosses zero. At this sample size intervals are wide and small deltas are not results.",
@@ -26,7 +26,7 @@ export const NOT_MEASURED = [
   { key: "repeatedFileReads", specRef: "20.3", reason: "Requires observing agent tool calls; residualExplorationFiles is a declared proxy." },
   { key: "repeatedFailedCommands", specRef: "20.3", reason: "Requires observing agent tool calls." },
   { key: "llmCostUsd", specRef: "20.3", reason: "No model is called." },
-  { key: "embeddingCostUsd", specRef: "20.3", reason: "No embedding provider is configured." },
+  { key: "embeddingCostUsd", specRef: "20.3", reason: "The benchmark uses an offline deterministic provider with no billable API calls." },
 ];
 
 export const SPEC_COVERAGE = [
@@ -40,5 +40,5 @@ export const SPEC_COVERAGE = [
   { specMetric: "Irrelevant memory share", section: "20.3" as const, measurability: "deterministic" as const, reportedAs: "noiseShare", note: null },
   { specMetric: "Stale memory misuse rate", section: "20.3" as const, measurability: "deterministic" as const, reportedAs: "unwarnedStaleRate", note: "Split into file-detectable and prose-only; only the former is gated." },
   { specMetric: "Evidence citation correctness", section: "20.3" as const, measurability: "deterministic" as const, reportedAs: "evidenceCitationRate", note: "One-sided: other arms have no evidence layer." },
-  { specMetric: "LLM and embedding cost per task", section: "20.3" as const, measurability: "requires-llm" as const, reportedAs: null, note: "No provider configured." },
+  { specMetric: "LLM and embedding cost per task", section: "20.3" as const, measurability: "requires-llm" as const, reportedAs: null, note: "Offline vector retrieval is measured; remote provider cost is not." },
 ];

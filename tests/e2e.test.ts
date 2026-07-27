@@ -11,7 +11,12 @@ function cli(repository: string, data: string, ...args: string[]): string {
   return execFileSync(process.execPath, [CLI, ...args, "--repo", repository, "--json"], {
     encoding: "utf8",
     windowsHide: true,
-    env: { ...process.env, REPOMIND_DATA_DIR: data },
+    env: {
+      ...process.env,
+      REPOMIND_DATA_DIR: data,
+      REPOMIND_EMBEDDING_PROVIDER: "deterministic",
+      REPOMIND_EMBEDDING_DIMENSIONS: "64",
+    },
   }).trim();
 }
 
@@ -35,8 +40,9 @@ describe("cross-process CLI end-to-end", () => {
     const initialized = JSON.parse(cli(repository, data, "init")) as { projectId: string };
     expect(initialized.projectId).toBeTruthy();
 
-    const started = JSON.parse(cli(repository, data, "start", "--task", "Fix the flaky storage test")) as { sessionId: string };
+    const started = JSON.parse(cli(repository, data, "start", "--task", "Fix the flaky storage test")) as { sessionId: string; retrievalStrategy: string };
     expect(started.sessionId).toMatch(/^ses_/);
+    expect(started.retrievalStrategy).toBe("hybrid-fts5-vector");
 
     const committed = JSON.parse(cli(
       repository, data, "commit",
@@ -52,6 +58,10 @@ describe("cross-process CLI end-to-end", () => {
     expect(found.length).toBeGreaterThan(0);
     const solution = found.find((memory) => memory.type === "solution");
     expect(solution).toBeDefined();
+
+    const status = JSON.parse(cli(repository, data, "status")) as { embeddings: number; capabilities: { vector: boolean } };
+    expect(status).toMatchObject({ embeddings: expect.any(Number), capabilities: { vector: true } });
+    expect(status.embeddings).toBeGreaterThan(0);
 
     const inspected = JSON.parse(cli(repository, data, "inspect", solution!.id)) as { evidence: unknown[]; audit: unknown[] };
     expect(inspected.evidence.length).toBeGreaterThan(0);

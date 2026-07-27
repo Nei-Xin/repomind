@@ -9,6 +9,12 @@ under **Changed** with its migration impact.
 
 ### Added
 
+- Optional sqlite-vec retrieval with a versioned embedding cache, weighted
+  lexical/vector rank fusion, automatic FTS5 fallback, and explicit vector
+  reindexing.
+- Embedding Provider interface, deterministic offline provider, and an
+  OpenAI-compatible remote adapter configured through environment variables.
+- Runnable `flat-vector-rag` and `repomind-layered-hybrid` comparison arms.
 - The comparison benchmark now performs the requested `--repeat` count as
   independent latency samples while retaining one deterministic scoring cell
   per fixture, arm, placement, alpha, and budget.
@@ -18,6 +24,8 @@ under **Changed** with its migration impact.
 
 ### Fixed
 
+- Embedding or sqlite-vec failures no longer block search or leave partial
+  vector-cache writes.
 - Reject comparison repeat counts outside the integer range 1 through 100.
 - Report the number of latency samples so benchmark repetition is auditable.
 

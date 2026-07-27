@@ -109,11 +109,11 @@ always scoped to one repository and filtered by status; `superseded` and
 `invalid` memories never enter an agent's context, and `uncertain` results
 carry their warning.
 
-Vector retrieval is deliberately absent
-([ADR-004](adr/ADR-004-fts5-before-vectors.md)). Most repository queries —
-commands, file paths, identifiers, error strings — match well lexically, and
-`repomind eval` exists to measure whether embeddings would actually beat that
-baseline before taking on the dependency.
+Vector retrieval is an optional enhancement built on sqlite-vec
+([ADR-004](adr/ADR-004-fts5-before-vectors.md)). Search combines lexical and
+vector ranks with weighted reciprocal-rank fusion. The vector cache is derived
+from memory title and content, keyed by provider model, dimensions, and content
+hash. Provider or extension failures fall back to FTS5 without blocking writes.
 
 ## Storage
 

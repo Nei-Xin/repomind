@@ -7,6 +7,7 @@ export type RepoMindErrorCode =
   | "MEMORY_NOT_FOUND"
   | "INVALID_INPUT"
   | "GIT_INSPECTION_FAILED"
+  | "CAPABILITY_UNAVAILABLE"
   | "STORAGE_UNAVAILABLE";
 
 export class RepoMindError extends Error {

@@ -163,4 +163,19 @@ ALTER TABLE memory_files ADD COLUMN file_size INTEGER;
 ALTER TABLE memory_files ADD COLUMN file_mtime_ms INTEGER;
 `,
   },
+  {
+    version: 7,
+    sql: `
+CREATE TABLE memory_embeddings (
+  memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL CHECK(dimensions > 0),
+  content_hash TEXT NOT NULL,
+  embedding BLOB NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX memory_embeddings_repository_model ON memory_embeddings(repository_id, model);
+`,
+  },
 ] as const;

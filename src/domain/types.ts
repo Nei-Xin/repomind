@@ -48,6 +48,12 @@ export interface MemoryResult {
   staleReasons?: StaleReason[];
 }
 
+export interface HybridSearchResult {
+  strategy: "hybrid-fts5-vector" | "fts5-with-substring-fallback";
+  memories: MemoryResult[];
+  fallbackReason?: string;
+}
+
 export interface StaleReason {
   kind: "file_created" | "file_modified" | "file_deleted";
   filePath: string;
@@ -129,6 +135,8 @@ export interface StartSessionResult {
   repositoryId: string;
   baseline: GitSnapshot;
   memories: MemoryResult[];
+  retrievalStrategy?: HybridSearchResult["strategy"];
+  retrievalFallbackReason?: string;
 }
 
 export interface TestEvidenceInput {

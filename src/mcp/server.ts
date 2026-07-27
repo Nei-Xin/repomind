@@ -42,7 +42,7 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       try {
-        const value = coreFor(input.repo_path).startSession({
+        const value = await coreFor(input.repo_path).startSessionHybrid({
           task: input.task,
           ...(input.client_name ? { clientName: input.client_name } : {}),
           ...(input.client_session_id ? { clientSessionId: input.client_session_id } : {}),
@@ -59,7 +59,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     "repo_memory_search",
-    "Search repository-scoped memories using FTS and deterministic filters, with file-staleness warnings.",
+    "Search repository-scoped memories using hybrid FTS/vector retrieval when configured, with deterministic FTS fallback and file-staleness warnings.",
     {
       query: z.string().min(1),
       repo_path: z.string().min(1),
@@ -69,13 +69,13 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       try {
-        const memories = coreFor(input.repo_path).search(input.query, {
+        const value = await coreFor(input.repo_path).searchHybrid(input.query, {
           ...(input.limit ? { limit: input.limit } : {}),
           ...(input.types ? { types: input.types } : {}),
           ...(input.statuses ? { statuses: input.statuses } : {}),
         });
-        for (const memory of memories) memoryRepositories.set(memory.id, input.repo_path);
-        return result({ strategy: "fts5-with-substring-fallback", memories });
+        for (const memory of value.memories) memoryRepositories.set(memory.id, input.repo_path);
+        return result(value);
       } catch (error) {
         return failure(error);
       }

@@ -37,8 +37,8 @@ layer rather than to how much repository context an arm happens to bundle.
 | `repomind-nogov` | RepoMind's curation with governance switched off: every status eligible, no staleness refresh, no warnings. Isolates curation from governance. |
 | `repomind` | `core.search` exactly as an agent gets it. |
 | `oracle-ceiling` | The fixture's gold facts, minimally rendered. A reference scale, never in the win/loss ledger. |
-| `flat-vector-rag` | Declared, `available: false`. The product has no embeddings; shipping this arm now would mean inventing its results. |
-| `repomind-layered-hybrid` | Declared, `not-implemented`. Listed so the gap stays visible. |
+| `flat-vector-rag` | sqlite-vec cosine retrieval over raw session chunks using the deterministic offline feature-hash provider. |
+| `repomind-layered-hybrid` | Weighted lexical/vector reciprocal-rank fusion over governed L1 memories. L2/L3 layers remain future work. |
 
 The lexical arms call the same `buildMatchExpression` and `searchTokens` that
 production search calls. A baseline cannot drift into a strawman without
@@ -140,12 +140,10 @@ punishing progress.
 > characters and a per-record-kind breakdown are published so anyone can
 > recompute with a real tokenizer.
 >
-> **5. `flat-lexical-rag` is a lower bound on flat RAG, not flat RAG.** It has no
-> embeddings because RepoMind has none. A real vector retriever would very
-> likely beat it on paraphrase and cross-language retrieval, and might beat
-> RepoMind there too. While the vector arm is unavailable those comparisons are
-> reported as unresolved, never as RepoMind wins. Nothing here is evidence
-> against vector retrieval.
+> **5. The vector arms use a deterministic feature-hash embedding.** This keeps
+> sqlite-vec retrieval offline and reproducible, but it is not a learned
+> semantic model. The results do not estimate the quality, latency, or cost of
+> an OpenAI-compatible embedding provider and must not be generalized to one.
 >
 > **6. Metrics only RepoMind can score on are not falsifiability.**
 > `overWarnRate`, `conflictNoiseShare`, and `evidenceCitationRate` are one-sided

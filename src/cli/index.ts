@@ -2,6 +2,7 @@
 import { globSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
+import * as sqliteVec from "sqlite-vec";
 import { RepositoryMemoryCore } from "../core.js";
 import type { MemoryType } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
@@ -38,6 +39,7 @@ Usage:
   repomind memory-invalidate <memory-id> --reason <text> [--repo <path>] [--json]
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind reindex [--repo <path>] [--json]
+  repomind vector-reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind eval (--dataset <path> | --scenarios | --compare) [--limit <n>] [--json]
@@ -157,11 +159,18 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "doctor") {
-    const checks: Record<string, unknown> = { node: process.version, sqlite: true, fts5: false, git: false, initialized: false };
-    const memory = new DatabaseSync(":memory:");
+    const checks: Record<string, unknown> = { node: process.version, sqlite: true, fts5: false, sqliteVec: false, git: false, initialized: false };
+    const memory = new DatabaseSync(":memory:", { allowExtension: true });
     try {
       memory.exec("CREATE VIRTUAL TABLE check_fts USING fts5(content)");
       checks.fts5 = true;
+      try {
+        sqliteVec.load(memory);
+        checks.sqliteVec = true;
+        checks.sqliteVecVersion = (memory.prepare("SELECT vec_version() AS version").get() as { version: string }).version;
+      } catch (error) {
+        checks.sqliteVecError = error instanceof Error ? error.message : String(error);
+      }
     } finally {
       memory.close();
     }
@@ -170,6 +179,7 @@ async function main(): Promise<void> {
       const core = new RepositoryMemoryCore(repositoryPath());
       checks.initialized = true;
       checks.projectId = core.context.marker.projectId;
+      checks.capabilities = (core.status() as { capabilities: unknown }).capabilities;
       core.close();
     } catch { /* an uninitialized repository is a valid diagnostic result */ }
     output(checks);
@@ -180,7 +190,7 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case "status": output(core.status()); break;
-      case "start": output(core.startSession({ task: required(values.task, "--task"), clientName: "cli" })); break;
+      case "start": output(await core.startSessionHybrid({ task: required(values.task, "--task"), clientName: "cli" })); break;
       case "commit": {
         if (values.input) {
           if (values.session || values.key || values.summary || values.status) {
@@ -199,7 +209,11 @@ async function main(): Promise<void> {
         }));
         break;
       }
-      case "search": output(core.search(required(positionals[1], "query"), { limit: values.limit ? Number(values.limit) : 5 })); break;
+      case "search": {
+        const result = await core.searchHybrid(required(positionals[1], "query"), { limit: values.limit ? Number(values.limit) : 5 });
+        output(result.memories);
+        break;
+      }
       case "inspect": output(core.inspect(required(positionals[1], "memory-id"))); break;
       case "record": output(core.record({
         type: memoryType(values.type, "--type"),
@@ -249,6 +263,7 @@ async function main(): Promise<void> {
         break;
       }
       case "reindex": output(core.reindex()); break;
+      case "vector-reindex": output(await core.reindexVectors()); break;
       case "sessions": output(core.listSessions()); break;
       case "session-abandon": core.abandonSession(required(positionals[1], "session-id")); output("Session abandoned."); break;
       default: throw new RepoMindError("INVALID_INPUT", `Unknown command: ${command}`);

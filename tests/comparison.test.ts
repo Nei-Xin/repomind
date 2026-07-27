@@ -133,8 +133,8 @@ describe("comparison run", () => {
       status: "not-evaluated",
       taskSetIsPublic: false,
     });
-    expect(report.arms.find((arm) => arm.key === "flat-vector-rag")).toMatchObject({ status: "unavailable" });
-    expect(report.arms.find((arm) => arm.key === "repomind-layered-hybrid")).toMatchObject({ status: "not-implemented" });
+    expect(report.arms.find((arm) => arm.key === "flat-vector-rag")).toMatchObject({ status: "run" });
+    expect(report.arms.find((arm) => arm.key === "repomind-layered-hybrid")).toMatchObject({ status: "run" });
     expect(report.gates.tier1.every((gate) => gate.passed)).toBe(true);
   }, 300_000);
 

@@ -2,6 +2,10 @@
 
 Status: accepted
 
+Implementation note: the prerequisite comparison benchmark shipped first;
+sqlite-vec hybrid retrieval was then added in schema v7. FTS5 remains the
+zero-configuration path and the mandatory fallback.
+
 ## Context
 
 Vector search adds an embedding provider dependency, cache management, and model-versioning concerns. Most repository queries (commands, file paths, identifiers, error strings) match well lexically.
@@ -13,5 +17,5 @@ Ship FTS5 with identifier-aware tokenization (camelCase/snake_case/path splittin
 ## Consequences
 
 - Search works offline with zero configuration.
-- `repomind eval` provides the baseline that any future hybrid ranking must beat.
-- When embeddings land, their failure must degrade back to FTS5 without breaking session commits.
+- `repomind eval` provides the baseline that hybrid ranking must beat.
+- Embedding failures degrade back to FTS5 without breaking session commits.

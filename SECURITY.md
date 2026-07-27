@@ -46,9 +46,10 @@ guarantee:
 - Sensitive-path exclusion covers common cases (`.env*`, `*.pem`, `*.key`,
   `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `.npmrc`). Project-specific
   secret locations are not known to RepoMind.
-- If you configure a remote LLM or embedding provider in a future version,
-  redaction is what stands between your repository content and that provider.
-  Review it before enabling one.
+- If you configure the optional remote embedding provider, redaction is what
+  stands between memory titles/content and that provider. Evidence bodies and
+  Git diffs are not sent for embedding. Review the redaction limits and your
+  provider's retention policy before enabling one.
 
 ## Verifying
 
