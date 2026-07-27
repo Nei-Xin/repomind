@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { globSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { RepositoryMemoryCore } from "../core.js";
@@ -17,6 +18,8 @@ import { loadFixture } from "../eval/comparison/fixture.js";
 import { renderMarkdown } from "../eval/comparison/report.js";
 import { lintFixtures, runComparison } from "../eval/comparison/runner.js";
 import type { ArmKey } from "../eval/comparison/types.js";
+import { loadAgentManifest } from "../eval/agent/manifest.js";
+import { runAgentEvaluation } from "../eval/agent/runner.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -42,8 +45,9 @@ Usage:
   repomind vector-reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
-  repomind eval (--dataset <path> | --scenarios | --compare) [--limit <n>] [--json]
+  repomind eval (--dataset <path> | --scenarios | --compare | --agent) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
+  repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--repeat <1-100>] [--output <dir>] [--strict] [--json]
   repomind mcp
 `;
 
@@ -71,6 +75,12 @@ const { values, positionals } = parseArgs({
     dataset: { type: "string" },
     scenarios: { type: "boolean", default: false },
     compare: { type: "boolean", default: false },
+    agent: { type: "boolean", default: false },
+    manifest: { type: "string" },
+    runner: { type: "string" },
+    model: { type: "string" },
+    output: { type: "string" },
+    timeout: { type: "string" },
     fixtures: { type: "string" },
     arms: { type: "string" },
     budgets: { type: "string" },
@@ -123,8 +133,26 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "eval") {
-    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : ""].filter(Boolean);
+    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : "", values.agent ? "--agent" : ""].filter(Boolean);
     if (modes.length > 1) throw new RepoMindError("INVALID_INPUT", `${modes.join(" and ")} cannot be combined`);
+    if (values.agent) {
+      const runner = values.runner ?? "opencode";
+      if (runner !== "opencode") throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
+      const repeat = values.repeat ? Number(values.repeat) : 3;
+      const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
+      const report = runAgentEvaluation({
+        manifest: loadAgentManifest(required(values.manifest, "--manifest")),
+        model: values.model ?? "cliproxyapi/gpt-5.6-terra",
+        repeat,
+        outputDirectory: values.output ?? "agent-results",
+        repoMindCli: fileURLToPath(import.meta.url),
+        timeoutMs,
+      });
+      output(report);
+      if (values.strict && !report.integrity.passed) process.exitCode = 1;
+      return;
+    }
     if (values.compare) {
       const paths = globSync(values.fixtures ?? "benchmarks/comparison/*.json").sort();
       if (!paths.length) throw new RepoMindError("INVALID_INPUT", "No comparison fixtures matched");
