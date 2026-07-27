@@ -1,6 +1,7 @@
 import { cpus, platform, release } from "node:os";
 import { performance } from "node:perf_hooks";
 import { RepositoryMemoryCore } from "../../core.js";
+import { RepoMindError } from "../../errors.js";
 import { VERSION } from "../../version.js";
 import { ALPHA_GRID, SCORING_ARMS, buildArms } from "./arms.js";
 import { CAVEATS, NOT_MEASURED, SPEC_COVERAGE } from "./caveats.js";
@@ -66,7 +67,7 @@ export interface ComparisonReport {
   notMeasured: typeof NOT_MEASURED;
   caveats: string[];
   calibrationWarning?: string;
-  latency?: { p50Ms: number; p95Ms: number };
+  latency?: { samples: number; p50Ms: number; p95Ms: number };
 }
 
 export interface ComparisonOptions {
@@ -104,6 +105,9 @@ export function runComparison(options: ComparisonOptions): ComparisonReport {
   const budgets = options.budgets ?? DEFAULT_BUDGETS;
   const requestedArms = options.arms ?? SCORING_ARMS;
   const repeat = options.repeat ?? 5;
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 100) {
+    throw new RepoMindError("INVALID_INPUT", `repeat must be an integer between 1 and 100; received ${String(options.repeat)}`);
+  }
   const alphaGrid = options.alphaSweep === false ? [0.35] : ALPHA_GRID;
 
   validateFixtureSet(options.fixtures.map((entry) => entry.fixture), options.enforceAggregate ?? false);
@@ -152,21 +156,25 @@ export function runComparison(options: ComparisonOptions): ComparisonReport {
           for (const alpha of alphas) {
             const arm = alpha === undefined ? definition : buildArms(alpha).find((entry) => entry.key === armKey)!;
             for (const budget of budgets) {
-              core.close();
-              snapshot.restore();
-              core = new RepositoryMemoryCore(replay.repositoryPath);
-              const started = performance.now();
-              const bundle = arm.assemble({
-                fixture,
-                corpus: replay.corpus,
-                core,
-                repositoryPath: replay.repositoryPath,
-                repoBase: replay.repoBase,
-                repoFiles: replay.repoFiles,
-                budget,
-              });
-              latencies.push(performance.now() - started);
-              const metrics = scoreBundle(fixture, bundle);
+              let measured: { bundle: ReturnType<typeof arm.assemble>; metrics: BundleMetrics } | undefined;
+              for (let sample = 0; sample < repeat; sample++) {
+                core.close();
+                snapshot.restore();
+                core = new RepositoryMemoryCore(replay.repositoryPath);
+                const started = performance.now();
+                const bundle = arm.assemble({
+                  fixture,
+                  corpus: replay.corpus,
+                  core,
+                  repositoryPath: replay.repositoryPath,
+                  repoBase: replay.repoBase,
+                  repoFiles: replay.repoFiles,
+                  budget,
+                });
+                latencies.push(performance.now() - started);
+                measured ??= { bundle, metrics: scoreBundle(fixture, bundle) };
+              }
+              const { bundle, metrics } = measured!;
               cells.push({
                 fixture: fixture.name,
                 ...(placement ? { placement } : {}),
@@ -364,7 +372,11 @@ function assemble(
     ],
     notMeasured: NOT_MEASURED,
     caveats: CAVEATS,
-    latency: { p50Ms: Math.round(percentile(0.5) * 1000) / 1000, p95Ms: Math.round(percentile(0.95) * 1000) / 1000 },
+    latency: {
+      samples: latencies.length,
+      p50Ms: Math.round(percentile(0.5) * 1000) / 1000,
+      p95Ms: Math.round(percentile(0.95) * 1000) / 1000,
+    },
   };
 
   if (!losses.length && cells.length) {

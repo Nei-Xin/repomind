@@ -41,7 +41,7 @@ Usage:
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind eval (--dataset <path> | --scenarios | --compare) [--limit <n>] [--json]
-  repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--lint] [--strict] [--markdown]
+  repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
   repomind mcp
 `;
 

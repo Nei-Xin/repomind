@@ -45,7 +45,7 @@ describe("deterministic conflict detection", () => {
     }
 
     const oldSide = core.inspect(first.id);
-    expect(oldSide.statusReason).toEqual({ kind: "conflict", withMemoryId: second.id });
+    expect(oldSide.statusReason).toEqual({ kind: "conflict", withMemoryIds: [second.id] });
     expect(oldSide.relations).toContainEqual(expect.objectContaining({
       direction: "incoming",
       relation_type: "contradicts",
@@ -54,7 +54,7 @@ describe("deterministic conflict detection", () => {
     expect(oldSide.audit).toContainEqual(expect.objectContaining({ action: "memory_conflict_detected" }));
 
     const newSide = core.inspect(second.id);
-    expect(newSide.statusReason).toEqual({ kind: "conflict", withMemoryId: first.id });
+    expect(newSide.statusReason).toEqual({ kind: "conflict", withMemoryIds: [first.id] });
     expect(newSide.relations).toContainEqual(expect.objectContaining({
       direction: "outgoing",
       relation_type: "contradicts",
@@ -126,9 +126,9 @@ describe("deterministic conflict detection", () => {
     // The replacement stays uncertain because it still contradicts the other side.
     const replacement = core.inspect(corrected.replacementMemoryId);
     expect(replacement.status).toBe("uncertain");
-    expect(replacement.statusReason).toEqual({ kind: "conflict", withMemoryId: second.id });
+    expect(replacement.statusReason).toEqual({ kind: "conflict", withMemoryIds: [second.id] });
     // The surviving side now points at the replacement, not the retired memory.
-    expect(core.inspect(second.id).statusReason).toEqual({ kind: "conflict", withMemoryId: corrected.replacementMemoryId });
+    expect(core.inspect(second.id).statusReason).toEqual({ kind: "conflict", withMemoryIds: [corrected.replacementMemoryId] });
     core.close();
   });
 
@@ -160,6 +160,40 @@ describe("deterministic conflict detection", () => {
     expect(corrected).toMatchObject({ status: "superseded", replacementStored: true });
     expect(core.inspect(corrected.replacementMemoryId).status).toBe("active");
     expect(core.inspect(original.id).status).toBe("superseded");
+    core.close();
+  });
+
+  it("reports every live conflict while reading the v0.4 single-id format", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const first = core.record({ type: "decision", title: "Primary database", content: "Use SQLite." });
+    const second = core.record({ type: "decision", title: "Primary database", content: "Use PostgreSQL." });
+    const third = core.record({ type: "decision", title: "Primary database", content: "Use MySQL." });
+
+    expect(third.conflicts).toEqual([first.id, second.id]);
+    expect(core.inspect(third.id).statusReason).toEqual({ kind: "conflict", withMemoryIds: [first.id, second.id] });
+    expect(core.inspect(first.id).statusReason).toEqual({ kind: "conflict", withMemoryIds: [second.id, third.id] });
+    expect(core.search("Primary database").find((memory) => memory.id === third.id)?.warning)
+      .toContain(`${first.id}, ${second.id}`);
+
+    core.context.database.raw.prepare("UPDATE memories SET status_reason_json=? WHERE id=?")
+      .run(JSON.stringify({ kind: "conflict", withMemoryId: first.id }), third.id);
+    expect(core.inspect(third.id).statusReason).toEqual({ kind: "conflict", withMemoryIds: [first.id] });
+    core.close();
+  });
+
+  it("reactivates the remaining side when its last conflict is invalidated or forgotten", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const first = core.record({ type: "decision", title: "Queue provider", content: "Use SQS." });
+    const second = core.record({ type: "decision", title: "Queue provider", content: "Use RabbitMQ." });
+
+    core.invalidateMemory({ memoryId: second.id, reason: "RabbitMQ was removed." });
+    expect(core.inspect(first.id)).toMatchObject({ status: "active", statusReason: null });
+
+    const third = core.record({ type: "decision", title: "Queue provider", content: "Use Kafka." });
+    expect(core.inspect(first.id).status).toBe("uncertain");
+    core.forgetMemory({ memoryId: third.id, reason: "Incorrect manual entry." });
+    expect(core.inspect(first.id)).toMatchObject({ status: "active", statusReason: null });
+    expect(core.inspect(first.id).audit).toContainEqual(expect.objectContaining({ action: "memory_conflict_reconciled" }));
     core.close();
   });
 });

@@ -12,7 +12,15 @@ repomind eval --compare --json
 repomind eval --compare --markdown
 repomind eval --compare --lint            # validate fixtures only
 repomind eval --compare --strict          # non-zero exit if a gate fails
+repomind eval --compare --repeat 10        # collect ten latency samples per evaluation unit
 ```
+
+`--repeat` accepts an integer from 1 through 100. Repetition rebuilds the same
+context bundle from the same database snapshot and records an independent
+latency sample each time. Deterministic content metrics retain one scoring cell
+per fixture, arm, placement, alpha, and budget, so increasing `--repeat` does
+not inflate the statistical sample size used for quality comparisons. The
+report's `latency.samples` field records the resulting raw sample count.
 
 ## The arms
 

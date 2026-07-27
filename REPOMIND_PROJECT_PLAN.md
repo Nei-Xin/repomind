@@ -1714,8 +1714,8 @@ Total Completion Time
 - [ ] 集成 sqlite-vec。
 - [ ] 实现混合排序。
 - [x] 创建 Benchmark Fixtures。（benchmarks/datasets/basic-retrieval.json）
-- [x] 实现实验 Runner 和指标收集。（repomind eval：Recall@K、MRR、延迟；对照实验待做）
-- [ ] 输出对照实验报告。
+- [x] 实现实验 Runner 和指标收集。（repomind eval：Recall@K、MRR、延迟和多检索臂对照实验）
+- [x] 输出对照实验报告。
 
 验收：
 

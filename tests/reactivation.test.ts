@@ -61,7 +61,7 @@ describe("re-recording retired memories", () => {
     // Reviving a fact its replacement contradicts must surface as a conflict,
     // never as a silently re-activated truth.
     expect(details.status).toBe("uncertain");
-    expect(details.statusReason).toEqual({ kind: "conflict", withMemoryId: corrected.replacementMemoryId });
+    expect(details.statusReason).toEqual({ kind: "conflict", withMemoryIds: [corrected.replacementMemoryId] });
     expect((details.evidence as unknown[]).length).toBeGreaterThan(1);
     expect(details.audit).toContainEqual(expect.objectContaining({ action: "memory_reactivated" }));
     core.close();

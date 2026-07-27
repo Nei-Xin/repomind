@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project follows
 version is `0`, minor releases may change behavior; every such change is listed
 under **Changed** with its migration impact.
 
+## [Unreleased]
+
+### Added
+
+- The comparison benchmark now performs the requested `--repeat` count as
+  independent latency samples while retaining one deterministic scoring cell
+  per fixture, arm, placement, alpha, and budget.
+- Conflict status details now list every known conflicting memory instead of
+  only one. Existing v0.4 single-conflict status records remain readable and
+  are normalized on access; no database migration is required.
+
+### Fixed
+
+- Reject comparison repeat counts outside the integer range 1 through 100.
+- Report the number of latency samples so benchmark repetition is auditable.
+
 ## [0.4.0]
 
 ### Added

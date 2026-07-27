@@ -38,7 +38,14 @@ function parseStatusReason(value: unknown): MemoryStatusReason | null {
   try {
     const parsed = JSON.parse(value) as Partial<MemoryStatusReason>;
     if (parsed.kind === "stale_files" && Array.isArray(parsed.files)) return parsed as MemoryStatusReason;
-    if (parsed.kind === "conflict" && typeof parsed.withMemoryId === "string") return parsed as MemoryStatusReason;
+    if (parsed.kind === "conflict") {
+      const conflict = parsed as { withMemoryIds?: unknown; withMemoryId?: unknown };
+      if (Array.isArray(conflict.withMemoryIds) && conflict.withMemoryIds.every((id) => typeof id === "string")) {
+        return { kind: "conflict", withMemoryIds: [...new Set(conflict.withMemoryIds)] };
+      }
+      // v0.4 stored one conflict id. Normalize it when reading old databases.
+      if (typeof conflict.withMemoryId === "string") return { kind: "conflict", withMemoryIds: [conflict.withMemoryId] };
+    }
     if (parsed.kind === "superseded" && typeof parsed.replacementMemoryId === "string" && typeof parsed.reason === "string") return parsed as MemoryStatusReason;
     if (parsed.kind === "invalid" && typeof parsed.reason === "string") return parsed as MemoryStatusReason;
     return null;
@@ -63,8 +70,9 @@ const DECLARATIVE_TYPES: ReadonlySet<MemoryType> = new Set([
   "architecture", "convention", "decision", "dependency", "location", "requirement", "risk",
 ]);
 
-function conflictWarning(withMemoryId: string): string {
-  return `This memory conflicts with memory ${withMemoryId}; verify before relying on either.`;
+function conflictWarning(withMemoryIds: string[]): string {
+  const label = withMemoryIds.length === 1 ? "memory" : "memories";
+  return `This memory conflicts with ${label} ${withMemoryIds.join(", ")}; verify before relying on either side.`;
 }
 
 function staleWarning(reasons: StaleReason[]): string {
@@ -272,6 +280,7 @@ export class RepositoryMemoryCore {
         reason,
         now,
       );
+      this.reconcileConflictStatuses(this.conflictPeerIds(input.memoryId));
     });
     return { memoryId: input.memoryId, status: "active", lastValidatedAt: now, files: reportedFiles };
   }
@@ -346,6 +355,7 @@ export class RepositoryMemoryCore {
         reason,
         now,
       );
+      this.reconcileConflictStatuses(this.conflictPeerIds(input.memoryId));
     });
     return { memoryId: input.memoryId, status: "superseded", replacementMemoryId, replacementStored, conflicts: replacementConflicts };
   }
@@ -380,6 +390,7 @@ export class RepositoryMemoryCore {
         reason,
         now,
       );
+      this.reconcileConflictStatuses(this.conflictPeerIds(input.memoryId));
     });
     return { memoryId: input.memoryId, status: "invalid" };
   }
@@ -393,6 +404,7 @@ export class RepositoryMemoryCore {
     if (!memory) throw new RepoMindError("MEMORY_NOT_FOUND", `Memory ${input.memoryId} was not found`);
     let evidenceDeleted = 0;
     this.context.database.transaction(() => {
+      const conflictPeers = this.conflictPeerIds(input.memoryId);
       const evidenceIds = (db.prepare("SELECT evidence_id FROM memory_evidence WHERE memory_id=?").all(input.memoryId) as Array<{ evidence_id: string }>)
         .map((row) => row.evidence_id);
       db.prepare("DELETE FROM memories WHERE id=?").run(input.memoryId);
@@ -410,6 +422,7 @@ export class RepositoryMemoryCore {
         INSERT INTO forget_log(id, repository_id, memory_id, memory_type, scope, evidence_deleted, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(`fgt_${randomUUID()}`, this.context.marker.projectId, input.memoryId, memory.type, scope, evidenceDeleted, redactSecrets(input.reason).content.trim(), Date.now());
+      this.reconcileConflictStatuses(conflictPeers);
     });
     return { memoryId: input.memoryId, scope, evidenceDeleted };
   }
@@ -466,7 +479,7 @@ export class RepositoryMemoryCore {
               warning: staleReason
                 ? staleWarning(staleReason.files)
                 : statusReason?.kind === "conflict"
-                  ? conflictWarning(statusReason.withMemoryId)
+                  ? conflictWarning(statusReason.withMemoryIds)
                   : "This memory may be stale or conflicting.",
               ...(staleReason ? { staleReasons: staleReason.files } : {}),
             }
@@ -504,7 +517,7 @@ export class RepositoryMemoryCore {
       ...(staleReason
         ? { warning: staleWarning(staleReason.files) }
         : statusReason?.kind === "conflict"
-          ? { warning: conflictWarning(statusReason.withMemoryId) }
+          ? { warning: conflictWarning(statusReason.withMemoryIds) }
           : {}),
       evidence,
       files,
@@ -811,8 +824,8 @@ export class RepositoryMemoryCore {
   private markConflicts(newMemoryId: string, conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>): void {
     const db = this.context.database.raw;
     const now = Date.now();
-    const first = conflicting[0]!;
-    const newReason: MemoryStatusReason = { kind: "conflict", withMemoryId: first.id };
+    const conflictIds = [...new Set(conflicting.map((memory) => memory.id))];
+    const newReason: MemoryStatusReason = { kind: "conflict", withMemoryIds: conflictIds };
     db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
       .run(stableJson(newReason), now, newMemoryId);
     db.prepare(`
@@ -823,11 +836,16 @@ export class RepositoryMemoryCore {
       newMemoryId,
       JSON.stringify({ status: "active" }),
       JSON.stringify({ status: "uncertain", statusReason: newReason }),
-      conflictWarning(first.id),
+      conflictWarning(conflictIds),
       now,
     );
     for (const other of conflicting) {
-      const otherReason: MemoryStatusReason = { kind: "conflict", withMemoryId: newMemoryId };
+      const previousReason = parseStatusReason(other.status_reason_json);
+      const previousConflictIds = previousReason?.kind === "conflict" ? previousReason.withMemoryIds : [];
+      const otherReason: MemoryStatusReason = {
+        kind: "conflict",
+        withMemoryIds: [...new Set([...previousConflictIds, newMemoryId])],
+      };
       db.prepare("INSERT OR IGNORE INTO memory_relations(source_memory_id, target_memory_id, relation_type, created_at) VALUES (?, ?, 'contradicts', ?)")
         .run(newMemoryId, other.id, now);
       db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
@@ -840,7 +858,54 @@ export class RepositoryMemoryCore {
         other.id,
         JSON.stringify({ status: other.status, statusReason: parseStatusReason(other.status_reason_json) }),
         JSON.stringify({ status: "uncertain", statusReason: otherReason }),
-        conflictWarning(newMemoryId),
+        conflictWarning(otherReason.withMemoryIds),
+        now,
+      );
+    }
+  }
+
+  private conflictPeerIds(memoryId: string): string[] {
+    const rows = this.context.database.raw.prepare(`
+      SELECT target_memory_id AS id FROM memory_relations
+      WHERE source_memory_id=? AND relation_type='contradicts'
+      UNION
+      SELECT source_memory_id AS id FROM memory_relations
+      WHERE target_memory_id=? AND relation_type='contradicts'
+    `).all(memoryId, memoryId) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  private reconcileConflictStatuses(memoryIds: string[]): void {
+    const db = this.context.database.raw;
+    const now = Date.now();
+    for (const memoryId of new Set(memoryIds)) {
+      const memory = db.prepare("SELECT status, status_reason_json FROM memories WHERE id=? AND repository_id=?")
+        .get(memoryId, this.context.marker.projectId) as { status: string; status_reason_json: string | null } | undefined;
+      const previousReason = parseStatusReason(memory?.status_reason_json);
+      if (!memory || memory.status !== "uncertain" || previousReason?.kind !== "conflict") continue;
+
+      const liveConflictIds = this.conflictPeerIds(memoryId).filter((peerId) => {
+        const peer = db.prepare("SELECT status FROM memories WHERE id=? AND repository_id=?")
+          .get(peerId, this.context.marker.projectId) as { status: string } | undefined;
+        return peer?.status === "active" || peer?.status === "uncertain";
+      });
+      const nextReason: MemoryStatusReason | null = liveConflictIds.length
+        ? { kind: "conflict", withMemoryIds: liveConflictIds }
+        : null;
+      const nextStatus = nextReason ? "uncertain" : "active";
+      if (stableJson(previousReason) === stableJson(nextReason) && memory.status === nextStatus) continue;
+
+      db.prepare("UPDATE memories SET status=?, status_reason_json=?, updated_at=? WHERE id=?")
+        .run(nextStatus, nextReason ? stableJson(nextReason) : null, now, memoryId);
+      db.prepare(`
+        INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+        VALUES (?, ?, 'memory_conflict_reconciled', ?, ?, ?, ?)
+      `).run(
+        `aud_${randomUUID()}`,
+        memoryId,
+        JSON.stringify({ status: memory.status, statusReason: previousReason }),
+        JSON.stringify({ status: nextStatus, statusReason: nextReason }),
+        nextReason ? conflictWarning(nextReason.withMemoryIds) : "All related conflicts were retired; memory returned to active.",
         now,
       );
     }

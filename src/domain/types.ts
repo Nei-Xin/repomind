@@ -57,7 +57,7 @@ export interface StaleReason {
 
 export type MemoryStatusReason =
   | { kind: "stale_files"; files: StaleReason[] }
-  | { kind: "conflict"; withMemoryId: string }
+  | { kind: "conflict"; withMemoryIds: string[] }
   | { kind: "superseded"; replacementMemoryId: string; reason: string }
   | { kind: "invalid"; reason: string };
 

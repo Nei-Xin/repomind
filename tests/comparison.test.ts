@@ -137,4 +137,23 @@ describe("comparison run", () => {
     expect(report.arms.find((arm) => arm.key === "repomind-layered-hybrid")).toMatchObject({ status: "not-implemented" });
     expect(report.gates.tier1.every((gate) => gate.passed)).toBe(true);
   }, 300_000);
+
+  it.runIf(fixtures.length)("repeats latency sampling without duplicating scored cells", () => {
+    const report = runComparison({
+      fixtures,
+      budgets: [Number.POSITIVE_INFINITY],
+      arms: ["no-memory"],
+      repeat: 3,
+      alphaSweep: false,
+    });
+    expect(report.header.repeat).toBe(3);
+    expect(report.cells).toHaveLength(fixtures.length);
+    expect(report.latency?.samples).toBe(report.cells.length * 3);
+  }, 300_000);
+
+  it.runIf(fixtures.length)("rejects invalid repeat counts", () => {
+    expect(() => runComparison({ fixtures, repeat: 0 })).toThrow(/between 1 and 100/);
+    expect(() => runComparison({ fixtures, repeat: 1.5 })).toThrow(/between 1 and 100/);
+    expect(() => runComparison({ fixtures, repeat: 101 })).toThrow(/between 1 and 100/);
+  });
 });
