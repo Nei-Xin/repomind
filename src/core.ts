@@ -9,6 +9,10 @@ import type {
   EvidenceKind,
   ForgetMemoryInput,
   ForgetMemoryResult,
+  BeginHostRunInput,
+  FinishHostRunInput,
+  HostRunRecord,
+  HostRunStatus,
   HybridSearchResult,
   InvalidateMemoryInput,
   InvalidateMemoryResult,
@@ -580,10 +584,12 @@ export class RepositoryMemoryCore {
       evidence: count("evidence"),
       memories: count("memories"),
       embeddings: count("memory_embeddings"),
+      hostRuns: count("host_runs"),
       uncertainMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='uncertain'").get(this.context.marker.projectId) as { count: number }).count),
       supersededMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='superseded'").get(this.context.marker.projectId) as { count: number }).count),
       invalidMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='invalid'").get(this.context.marker.projectId) as { count: number }).count),
       openSessions: Number((db.prepare("SELECT count(*) AS count FROM sessions WHERE repository_id=? AND status='open'").get(this.context.marker.projectId) as { count: number }).count),
+      runningHostRuns: Number((db.prepare("SELECT count(*) AS count FROM host_runs WHERE repository_id=? AND status='running'").get(this.context.marker.projectId) as { count: number }).count),
       capabilities: {
         fts5: true,
         vector: this.context.database.vector.available && this.embeddingProvider !== null,
@@ -594,6 +600,8 @@ export class RepositoryMemoryCore {
         automaticExtraction: "deterministic",
         staleDetection: "file-hash",
         governance: ["validate", "correct", "invalidate", "forget"],
+        bootstrap: "review-required",
+        hostRunHistory: true,
       },
     };
   }
@@ -660,6 +668,110 @@ export class RepositoryMemoryCore {
       SELECT id, task, status, client_name, started_at, ended_at FROM sessions
       WHERE repository_id=? ORDER BY started_at DESC
     `).all(this.context.marker.projectId);
+  }
+
+  beginHostRun(input: BeginHostRunInput): HostRunRecord {
+    if (!input.sessionId.trim() || !input.task.trim() || !input.runner.trim() || !input.outputDirectory.trim()) {
+      throw new RepoMindError("INVALID_INPUT", "sessionId, task, runner, and outputDirectory must not be empty");
+    }
+    if (!Number.isInteger(input.retrievedMemories) || input.retrievedMemories < 0) {
+      throw new RepoMindError("INVALID_INPUT", "retrievedMemories must be a non-negative integer");
+    }
+    const session = this.context.database.raw.prepare(
+      "SELECT id FROM sessions WHERE id=? AND repository_id=? AND status='open'",
+    ).get(input.sessionId, this.context.marker.projectId);
+    if (!session) throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} was not found`);
+    const redactedTask = redactSecrets(input.task.trim()).content;
+    const redactedOutput = redactSecrets(input.outputDirectory).content;
+    this.context.database.raw.prepare(`
+      INSERT INTO host_runs(id, repository_id, session_id, task, runner, model, output_directory,
+        status, retrieved_memories, started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+    `).run(
+      input.sessionId,
+      this.context.marker.projectId,
+      input.sessionId,
+      redactedTask,
+      input.runner.trim(),
+      input.model ? redactSecrets(input.model).content : null,
+      redactedOutput,
+      input.retrievedMemories,
+      input.startedAt ?? Date.now(),
+    );
+    return this.inspectHostRun(input.sessionId);
+  }
+
+  finishHostRun(input: FinishHostRunInput): HostRunRecord {
+    const metadata = redactDeep(input.metadata ?? {});
+    const result = this.context.database.raw.prepare(`
+      UPDATE host_runs SET status=?, report_path=?, agent_exit_code=?, agent_signal=?, duration_ms=?,
+        input_tokens=?, output_tokens=?, repo_mind_calls=?, error=?, metadata_json=?, ended_at=?
+      WHERE id=? AND repository_id=? AND status='running'
+    `).run(
+      input.status,
+      input.reportPath ? redactSecrets(input.reportPath).content : null,
+      input.agentExitCode ?? null,
+      input.agentSignal ?? null,
+      input.durationMs ?? null,
+      input.inputTokens ?? null,
+      input.outputTokens ?? null,
+      input.repoMindCalls ?? null,
+      input.error ? redactSecrets(input.error).content : null,
+      JSON.stringify(metadata.value),
+      input.endedAt ?? Date.now(),
+      input.runId,
+      this.context.marker.projectId,
+    );
+    if (result.changes === 0) throw new RepoMindError("INVALID_INPUT", `Running host run ${input.runId} was not found`);
+    return this.inspectHostRun(input.runId);
+  }
+
+  listHostRuns(options: { limit?: number; status?: HostRunStatus } = {}): HostRunRecord[] {
+    const limit = options.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new RepoMindError("INVALID_INPUT", "Host run limit must be an integer between 1 and 200");
+    }
+    const statuses: HostRunStatus[] = ["running", "committed", "partial", "failed", "abandoned"];
+    if (options.status && !statuses.includes(options.status)) {
+      throw new RepoMindError("INVALID_INPUT", `Invalid host run status ${options.status}`);
+    }
+    const rows = this.context.database.raw.prepare(`
+      SELECT * FROM host_runs WHERE repository_id=?${options.status ? " AND status=?" : ""}
+      ORDER BY started_at DESC LIMIT ?
+    `).all(this.context.marker.projectId, ...(options.status ? [options.status] : []), limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.hostRunRecord(row));
+  }
+
+  inspectHostRun(runId: string): HostRunRecord {
+    const row = this.context.database.raw.prepare(
+      "SELECT * FROM host_runs WHERE id=? AND repository_id=?",
+    ).get(runId, this.context.marker.projectId) as Record<string, unknown> | undefined;
+    if (!row) throw new RepoMindError("INVALID_INPUT", `Host run ${runId} was not found`);
+    return this.hostRunRecord(row);
+  }
+
+  private hostRunRecord(row: Record<string, unknown>): HostRunRecord {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      task: String(row.task),
+      runner: String(row.runner),
+      model: row.model === null ? null : String(row.model),
+      outputDirectory: String(row.output_directory),
+      reportPath: row.report_path === null ? null : String(row.report_path),
+      status: row.status as HostRunStatus,
+      agentExitCode: row.agent_exit_code === null ? null : Number(row.agent_exit_code),
+      agentSignal: row.agent_signal === null ? null : String(row.agent_signal),
+      retrievedMemories: Number(row.retrieved_memories),
+      durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
+      inputTokens: row.input_tokens === null ? null : Number(row.input_tokens),
+      outputTokens: row.output_tokens === null ? null : Number(row.output_tokens),
+      repoMindCalls: row.repo_mind_calls === null ? null : Number(row.repo_mind_calls),
+      error: row.error === null ? null : String(row.error),
+      metadata: JSON.parse(String(row.metadata_json)) as Record<string, unknown>,
+      startedAt: Number(row.started_at),
+      endedAt: row.ended_at === null ? null : Number(row.ended_at),
+    };
   }
 
   abandonSession(sessionId: string): void {

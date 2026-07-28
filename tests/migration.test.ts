@@ -36,6 +36,7 @@ describe("database migrations", () => {
         expect(table("memory_relations")).toEqual({ name: "memory_relations" });
         expect(table("forget_log")).toEqual({ name: "forget_log" });
         expect(table("memory_embeddings")).toEqual({ name: "memory_embeddings" });
+        expect(table("host_runs")).toEqual({ name: "host_runs" });
         expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
       } finally {
         upgraded.close();

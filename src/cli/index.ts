@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { RepositoryMemoryCore } from "../core.js";
-import type { MemoryType } from "../domain/types.js";
+import type { HostRunStatus, MemoryType } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
@@ -26,6 +26,7 @@ import { runOpenCodeHost } from "../integrations/opencode/run.js";
 import { redactSecrets } from "../security/redaction.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
+import { applyBootstrapBundle, generateBootstrapBundle, loadBootstrapBundle, writeBootstrapBundle } from "../bootstrap.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
 
@@ -49,6 +50,10 @@ Usage:
   repomind vector-reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
+  repomind runs [--repo <path>] [--status running|committed|partial|failed|abandoned] [--limit <1-200>] [--json]
+  repomind run-inspect <run-id> [--repo <path>] [--json]
+  repomind bootstrap [--repo <path>] [--output <new-candidates.json>] [--json]
+  repomind bootstrap-apply --input <candidates.json> [--candidate <id[,id...]>] --yes [--repo <path>] [--json]
   repomind run --task <text> [--repo <path>] [--runner opencode] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--timeout <ms>] [--output <dir>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
@@ -75,6 +80,7 @@ const { values, positionals } = parseArgs({
     type: { type: "string" },
     title: { type: "string" },
     content: { type: "string" },
+    candidate: { type: "string" },
     reason: { type: "string" },
     input: { type: "string" },
     scope: { type: "string" },
@@ -331,6 +337,39 @@ async function main(): Promise<void> {
     output(checks);
     return;
   }
+  if (command === "bootstrap") {
+    const bundle = generateBootstrapBundle(repositoryPath());
+    if (values.output) {
+      output({ path: writeBootstrapBundle(bundle, values.output), candidates: bundle.candidates.length, bundle });
+    } else {
+      output(bundle);
+    }
+    return;
+  }
+  if (command === "bootstrap-apply") {
+    const bundle = loadBootstrapBundle(required(values.input, "--input"));
+    const selectedIds = values.candidate === undefined
+      ? undefined
+      : values.candidate.split(",").map((id) => id.trim()).filter(Boolean);
+    if (values.candidate !== undefined && !selectedIds?.length) {
+      throw new RepoMindError("INVALID_INPUT", "--candidate must contain at least one candidate id");
+    }
+    const unknownIds = (selectedIds ?? []).filter((id) => !bundle.candidates.some((entry) => entry.id === id));
+    if (unknownIds.length) throw new RepoMindError("INVALID_INPUT", `Unknown bootstrap candidate ids: ${unknownIds.join(", ")}`);
+    if (!values.yes) {
+      const selected = selectedIds?.length
+        ? bundle.candidates.filter((entry) => selectedIds.includes(entry.id))
+        : bundle.candidates;
+      output({
+        wouldApply: selected.map((entry) => ({ id: entry.id, type: entry.type, title: entry.title, source: entry.source })),
+        hint: "Review the candidate bundle and re-run with --yes to store these memories.",
+      });
+      process.exitCode = 1;
+      return;
+    }
+    output(applyBootstrapBundle(repositoryPath(), bundle, selectedIds));
+    return;
+  }
 
   const core = new RepositoryMemoryCore(repositoryPath());
   try {
@@ -412,6 +451,11 @@ async function main(): Promise<void> {
       case "vector-reindex": output(await core.reindexVectors()); break;
       case "sessions": output(core.listSessions()); break;
       case "session-abandon": core.abandonSession(required(positionals[1], "session-id")); output("Session abandoned."); break;
+      case "runs": output(core.listHostRuns({
+        ...(values.limit ? { limit: Number(values.limit) } : {}),
+        ...(values.status ? { status: values.status as HostRunStatus } : {}),
+      })); break;
+      case "run-inspect": output(core.inspectHostRun(required(positionals[1], "run-id"))); break;
       default: throw new RepoMindError("INVALID_INPUT", `Unknown command: ${command}`);
     }
   } finally {

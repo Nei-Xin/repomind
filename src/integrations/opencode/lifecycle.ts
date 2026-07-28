@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { RepositoryMemoryCore } from "../../core.js";
 import type { CommitSessionResult, MemoryResult, StartSessionResult, TestEvidenceInput } from "../../domain/types.js";
+import type { BeginHostRunInput, FinishHostRunInput, HostRunRecord } from "../../domain/types.js";
 
 export interface HostLifecycleStart {
   sessionId: string;
@@ -114,6 +115,36 @@ export function abandonHostLifecycle(
     }
   });
   return { abandonMs: round(performance.now() - started) };
+}
+
+export function beginHostRunLifecycle(
+  repository: string,
+  dataDirectory: string | undefined,
+  input: BeginHostRunInput,
+): HostRunRecord {
+  return withDataDirectorySync(dataDirectory, () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      return core.beginHostRun(input);
+    } finally {
+      core.close();
+    }
+  });
+}
+
+export function finishHostRunLifecycle(
+  repository: string,
+  dataDirectory: string | undefined,
+  input: FinishHostRunInput,
+): HostRunRecord {
+  return withDataDirectorySync(dataDirectory, () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      return core.finishHostRun(input);
+    } finally {
+      core.close();
+    }
+  });
 }
 
 function renderMemory(memory: MemoryResult, index: number): string {

@@ -178,4 +178,33 @@ CREATE TABLE memory_embeddings (
 CREATE INDEX memory_embeddings_repository_model ON memory_embeddings(repository_id, model);
 `,
   },
+  {
+    version: 8,
+    sql: `
+CREATE TABLE host_runs (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+  task TEXT NOT NULL,
+  runner TEXT NOT NULL,
+  model TEXT,
+  output_directory TEXT NOT NULL,
+  report_path TEXT,
+  status TEXT NOT NULL CHECK(status IN ('running','committed','partial','failed','abandoned')),
+  agent_exit_code INTEGER,
+  agent_signal TEXT,
+  retrieved_memories INTEGER NOT NULL DEFAULT 0,
+  duration_ms REAL,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  repo_mind_calls INTEGER,
+  error TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX host_runs_repository_started ON host_runs(repository_id, started_at DESC);
+CREATE INDEX host_runs_repository_status ON host_runs(repository_id, status, started_at DESC);
+`,
+  },
 ] as const;

@@ -66,6 +66,26 @@ under `~/.repomind/runs/` by default. See
 [`docs/opencode-integration.md`](docs/opencode-integration.md) for exit behavior,
 configuration isolation, and machine-readable output.
 
+For a newly initialized repository, generate reviewable memory candidates
+without writing them to the database, then explicitly confirm all or a selected
+subset:
+
+```bash
+repomind bootstrap --output bootstrap-candidates.json --json
+repomind bootstrap-apply --input bootstrap-candidates.json --yes --json
+```
+
+Inspect Host-managed runs even when they used custom artifact directories:
+
+```bash
+repomind runs --status committed --limit 20 --json
+repomind run-inspect ses_... --json
+```
+
+See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
+confirmation and staleness rules, run-history fields, and a continuous-use
+verification workflow.
+
 When a related file changes or is deleted, later search and inspect calls mark the memory `uncertain` and return a concrete warning plus expected/current file hashes. RepoMind does not automatically delete or invalidate the memory because a file change means the conclusion needs review, not necessarily that it is wrong.
 
 Record an explicit repository fact without an LLM:

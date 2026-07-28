@@ -163,6 +163,55 @@ export interface CommitSessionResult {
   memories: { stored: number; skipped: number; conflicts: number };
 }
 
+export type HostRunStatus = "running" | SessionStatus;
+
+export interface HostRunRecord {
+  id: string;
+  sessionId: string;
+  task: string;
+  runner: string;
+  model: string | null;
+  outputDirectory: string;
+  reportPath: string | null;
+  status: HostRunStatus;
+  agentExitCode: number | null;
+  agentSignal: string | null;
+  retrievedMemories: number;
+  durationMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  repoMindCalls: number | null;
+  error: string | null;
+  metadata: Record<string, unknown>;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface BeginHostRunInput {
+  sessionId: string;
+  task: string;
+  runner: string;
+  model?: string;
+  outputDirectory: string;
+  retrievedMemories: number;
+  startedAt?: number;
+}
+
+export interface FinishHostRunInput {
+  runId: string;
+  status: Exclude<HostRunStatus, "running">;
+  reportPath?: string;
+  agentExitCode?: number | null;
+  agentSignal?: string | null;
+  durationMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  repoMindCalls?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+  endedAt?: number;
+}
+
 export interface RecordMemoryInput {
   type: MemoryType;
   title: string;

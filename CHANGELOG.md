@@ -7,6 +7,25 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Persistent Host-managed run history backed by the repository database, with
+  `repomind runs` filtering and `repomind run-inspect` details for successful,
+  failed, interrupted, and output-setup-failed daily runs.
+- Review-first cold-start commands: `repomind bootstrap` creates deterministic,
+  redacted candidates from repository documentation and recent Git history;
+  `repomind bootstrap-apply --yes` validates and stores all or selected
+  candidates.
+- A continuous daily-workflow test proving that a cold repository can be
+  bootstrapped and that a second Host-managed task receives memory produced by
+  the first task.
+
+### Security
+
+- Bootstrap application verifies project identity and source hashes, rejects
+  outside-repository paths and unknown candidate IDs, and never persists
+  candidates without explicit confirmation.
+
 ## [0.9.0] - 2026-07-28
 
 ### Added

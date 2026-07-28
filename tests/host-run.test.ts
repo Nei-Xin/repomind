@@ -143,6 +143,18 @@ describe("daily OpenCode host runner", () => {
       expect(verify.listSessions()).toEqual([
         expect.objectContaining({ id: report.session.id, status: "committed", client_name: "opencode-host" }),
       ]);
+      expect(verify.listHostRuns()).toEqual([
+        expect.objectContaining({
+          id: report.runId,
+          sessionId: report.session.id,
+          status: "committed",
+          retrievedMemories: 1,
+          agentExitCode: 0,
+          repoMindCalls: 0,
+          reportPath: report.artifacts.report,
+        }),
+      ]);
+      expect(verify.inspectHostRun(report.runId)).toMatchObject({ model: "test/model", inputTokens: 20, outputTokens: 5 });
       verify.close();
     });
   });
@@ -169,6 +181,7 @@ describe("daily OpenCode host runner", () => {
     withDataDirectory(dataDirectory, () => {
       const verify = new RepositoryMemoryCore(repository);
       expect(verify.listSessions()).toEqual([expect.objectContaining({ status: "failed" })]);
+      expect(verify.listHostRuns({ status: "failed" })).toEqual([expect.objectContaining({ id: report.runId, agentExitCode: 2 })]);
       verify.close();
     });
   });
@@ -192,6 +205,7 @@ describe("daily OpenCode host runner", () => {
     withDataDirectory(dataDirectory, () => {
       const verify = new RepositoryMemoryCore(repository);
       expect(verify.listSessions()).toEqual([expect.objectContaining({ status: "abandoned" })]);
+      expect(verify.listHostRuns({ status: "abandoned" })).toEqual([expect.objectContaining({ id: report.runId, status: "abandoned" })]);
       verify.close();
     });
   });
@@ -237,6 +251,7 @@ describe("daily OpenCode host runner", () => {
     withDataDirectory(dataDirectory, () => {
       const verify = new RepositoryMemoryCore(repository);
       expect(verify.listSessions()).toEqual([expect.objectContaining({ status: "abandoned" })]);
+      expect(verify.listHostRuns()).toEqual([expect.objectContaining({ status: "abandoned", error: expect.stringContaining("not empty") })]);
       verify.close();
     });
   });

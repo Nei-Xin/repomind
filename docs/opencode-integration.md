@@ -59,10 +59,12 @@ directory under `~/.repomind/runs/`, or under `REPOMIND_DATA_DIR` when set.
 The command performs these phases sequentially:
 
 1. Start a RepoMind session and retrieve up to `--max-memories` memories.
-2. Render the evidence-backed memories into the OpenCode task prompt.
-3. Run OpenCode with JSON events, `--pure`, and a temporary host Agent.
-4. Extract the final response plus observed shell command and test evidence.
-5. Commit a successful, partial, or failed session after a normal process exit.
+2. Register a persistent Host-run record linked to that session.
+3. Render the evidence-backed memories into the OpenCode task prompt.
+4. Run OpenCode with JSON events, `--pure`, and a temporary host Agent.
+5. Extract the final response plus observed shell command and test evidence.
+6. Commit a successful, partial, or failed session after a normal process exit
+   and close the Host-run record.
 
 OpenCode configuration is overlaid through `OPENCODE_CONFIG_CONTENT`; the
 repository's `opencode.json` is not rewritten. The overlay disables the
@@ -104,6 +106,16 @@ instead of producing a success memory. `SIGINT` and `SIGTERM` map to exit codes
 130 and 143. In every handled
 path the session ends as committed, partial, failed, or abandoned rather than
 remaining open.
+
+Query the persistent run catalog without scanning artifact directories:
+
+```powershell
+repomind runs --repo D:\path\to\repository --status committed --limit 20 --json
+repomind run-inspect ses_... --repo D:\path\to\repository --json
+```
+
+The catalog also records output setup failures and interrupted runs. Custom
+`--output` directories remain discoverable through their stored report path.
 
 ### Library integration
 

@@ -11,7 +11,9 @@ import { analyzeAgentEvents, type AgentEventMetrics } from "../../eval/agent/eve
 import {
   abandonHostLifecycle,
   analyzeOpenCodeOutcome,
+  beginHostRunLifecycle,
   commitHostLifecycle,
+  finishHostRunLifecycle,
   hostManagedPrompt,
   startHostLifecycle,
 } from "./lifecycle.js";
@@ -63,6 +65,7 @@ export interface RunOpenCodeHostOptions {
 
 export interface HostRunReport {
   version: 1;
+  runId: string;
   startedAt: string;
   endedAt: string;
   repository: string;
@@ -245,12 +248,24 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
   }
 
   const startedAt = new Date().toISOString();
+  const startedAtMs = Date.parse(startedAt);
   options.onStatus?.("Starting RepoMind session and retrieving memories...");
   const started = await startHostLifecycle(repository, options.task, options.dataDirectory, maxMemories);
   let sessionClosed = false;
+  let runRegistered = false;
   let abandonMs: number | null = null;
+  const outputDirectory = resolve(options.outputDirectory ?? defaultOutputDirectory(started.sessionId, options.dataDirectory));
   try {
-    const outputDirectory = resolve(options.outputDirectory ?? defaultOutputDirectory(started.sessionId, options.dataDirectory));
+    beginHostRunLifecycle(repository, options.dataDirectory, {
+      sessionId: started.sessionId,
+      task: options.task,
+      runner: "opencode",
+      ...(options.model ? { model: options.model } : {}),
+      outputDirectory,
+      retrievedMemories: started.result.memories.length,
+      startedAt: startedAtMs,
+    });
+    runRegistered = true;
     prepareOutputDirectory(outputDirectory);
     const eventsPath = join(outputDirectory, "events.jsonl");
     const stderrPath = join(outputDirectory, "stderr.log");
@@ -317,6 +332,7 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
     writeFileSync(stderrPath, redactedStderr.content, "utf8");
     const rawReport = {
       version: 1 as const,
+      runId: started.sessionId,
       startedAt,
       endedAt: new Date().toISOString(),
       repository,
@@ -360,11 +376,47 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
       },
     };
     writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    finishHostRunLifecycle(repository, options.dataDirectory, {
+      runId: started.sessionId,
+      status: sessionStatus,
+      reportPath,
+      agentExitCode: agent.exitCode,
+      agentSignal: agent.signal,
+      durationMs: Date.now() - startedAtMs,
+      inputTokens: eventMetrics.tokens.input,
+      outputTokens: eventMetrics.tokens.output,
+      repoMindCalls: eventMetrics.repoMindCalls,
+      ...(agent.error ? { error: agent.error } : {}),
+      metadata: {
+        artifacts: report.artifacts,
+        succeeded: report.succeeded,
+        startMs: report.session.startMs,
+        commitMs: report.session.commitMs,
+        abandonMs: report.session.abandonMs,
+        redactions: report.redactions,
+      },
+    });
     options.onStatus?.(`RepoMind session ${sessionStatus}; artifacts: ${outputDirectory}`);
     return report;
   } catch (error) {
+    let abandoned = false;
     if (!sessionClosed) {
-      try { abandonHostLifecycle(repository, started.sessionId, options.dataDirectory); } catch { /* preserve the original error */ }
+      try {
+        abandonHostLifecycle(repository, started.sessionId, options.dataDirectory);
+        sessionClosed = true;
+        abandoned = true;
+      } catch { /* preserve the original error */ }
+    }
+    if (runRegistered) {
+      try {
+        finishHostRunLifecycle(repository, options.dataDirectory, {
+          runId: started.sessionId,
+          status: abandoned ? "abandoned" : "failed",
+          durationMs: Date.now() - startedAtMs,
+          error: error instanceof Error ? error.message : String(error),
+          metadata: { outputDirectory, sessionClosed },
+        });
+      } catch { /* preserve the original error */ }
     }
     throw error;
   }
