@@ -245,6 +245,11 @@ included in v0.13.0. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
+The v0.14 development cycle adds a rebuildable 10,000-L1 scale acceptance
+runner. It measures the final-product latency targets and data-integrity gates
+without claiming that synthetic scale records demonstrate extraction quality
+or Coding Agent task-success improvement.
+
 ## Development
 
 ```bash

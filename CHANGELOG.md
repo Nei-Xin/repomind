@@ -7,6 +7,12 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- A rebuildable fixed-commit 10,000-L1 scale acceptance runner with hard gates
+  for FTS, cached hybrid retrieval, Memory Inspect, Session Start, CLI cold
+  start, Evidence coverage, repository isolation, and SQLite integrity.
+
 ## [0.13.0] - 2026-07-28
 
 ### Added
