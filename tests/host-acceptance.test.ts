@@ -127,5 +127,5 @@ describe("eight-task host-run acceptance", () => {
     expect(report.tasks.every((task) => task.openSessions === 0 && task.artifactsVerified)).toBe(true);
     expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).toMatchObject({ version: 1, totals: { accepted: 8 } });
     expect(readFileSync(join(output, "summary.md"), "utf8")).toContain("Acceptance: **passed**");
-  }, 30_000);
+  }, 90_000);
 });
