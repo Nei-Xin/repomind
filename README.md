@@ -109,6 +109,9 @@ repomind module-inspect l2_... --json
 Module narratives are independent derived records with L1 source links,
 incremental source fingerprints, FTS recall, and a hard character budget. A
 Session Start can return current matching L2 context alongside atomic memories.
+Run the fixed-commit real-repository acceptance with `npm run bench:l2-real`;
+the recorded v0.12 method and results are in
+[`docs/l2-real-repository-acceptance-v0.12.md`](docs/l2-real-repository-acceptance-v0.12.md).
 
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use

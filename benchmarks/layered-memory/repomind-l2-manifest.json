@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "name": "repomind-real-repository-l2",
+  "budgetChars": 4000,
+  "memories": [
+    {
+      "type": "architecture",
+      "title": "SQLite storage boundary",
+      "content": "The storage module owns SQLite connections, migrations, transactions, and derived index persistence.",
+      "scopeType": "module",
+      "scopeValue": "src/storage",
+      "confidence": 0.95,
+      "relatedFiles": ["src/storage/database.ts", "src/storage/migrations.ts"]
+    },
+    {
+      "type": "decision",
+      "title": "Versioned schema upgrades",
+      "content": "All database changes are applied through ordered migrations and verified from every previously released schema.",
+      "scopeType": "module",
+      "scopeValue": "src/storage",
+      "confidence": 0.95,
+      "relatedFiles": ["src/storage/migrations.ts", "tests/migration.test.ts"]
+    },
+    {
+      "type": "risk",
+      "title": "Native SQLite capability risk",
+      "content": "Node SQLite is experimental and sqlite-vec availability must be reported with deterministic fallback behavior.",
+      "scopeType": "module",
+      "scopeValue": "src/storage",
+      "confidence": 0.9,
+      "relatedFiles": ["src/storage/database.ts"]
+    },
+    {
+      "type": "architecture",
+      "title": "MCP protocol boundary",
+      "content": "The MCP module exposes repository-scoped tools over stdio and serializes tool results as protocol JSON only.",
+      "scopeType": "module",
+      "scopeValue": "src/mcp",
+      "confidence": 0.95,
+      "relatedFiles": ["src/mcp/server.ts", "tests/mcp-stdio.test.ts"]
+    },
+    {
+      "type": "convention",
+      "title": "Protocol-clean stdout",
+      "content": "MCP stdout must contain only JSON-RPC messages; diagnostics and warnings belong on stderr.",
+      "scopeType": "module",
+      "scopeValue": "src/mcp",
+      "confidence": 0.98,
+      "relatedFiles": ["src/mcp/server.ts", "tests/mcp-stdio.test.ts"]
+    },
+    {
+      "type": "architecture",
+      "title": "CLI application boundary",
+      "content": "The CLI validates command input, delegates repository operations to RepositoryMemoryCore, and emits stable JSON when requested.",
+      "scopeType": "module",
+      "scopeValue": "src/cli",
+      "confidence": 0.9,
+      "relatedFiles": ["src/cli/index.ts", "src/cli/json.ts"]
+    },
+    {
+      "type": "command",
+      "title": "Production build command",
+      "content": "Run npm run typecheck and npm run build before publishing a release.",
+      "scopeType": "module",
+      "scopeValue": "src/cli",
+      "confidence": 0.95,
+      "relatedFiles": ["package.json", "tsconfig.json"]
+    },
+    {
+      "type": "architecture",
+      "title": "L2 narrative derivation",
+      "content": "Module narratives are independent derived records built only from active evidence-backed L1 memories.",
+      "scopeType": "module",
+      "scopeValue": "src/narratives",
+      "confidence": 0.95,
+      "relatedFiles": ["src/narratives/module-narratives.ts", "tests/module-narrative.test.ts"]
+    },
+    {
+      "type": "requirement",
+      "title": "Traceable bounded conclusions",
+      "content": "Every rendered L2 conclusion retains its L1 Memory ID and the complete narrative stays inside its configured character budget.",
+      "scopeType": "module",
+      "scopeValue": "src/narratives",
+      "confidence": 0.98,
+      "relatedFiles": ["src/narratives/module-narratives.ts"]
+    },
+    {
+      "type": "architecture",
+      "title": "OpenCode host lifecycle",
+      "content": "The OpenCode integration starts retrieval before the Agent, captures execution evidence, and commits or abandons the session outside the model loop.",
+      "scopeType": "module",
+      "scopeValue": "src/integrations/opencode",
+      "confidence": 0.9,
+      "relatedFiles": ["src/integrations/opencode/run.ts", "src/integrations/opencode/lifecycle.ts"]
+    },
+    {
+      "type": "risk",
+      "title": "Interrupted host run cleanup",
+      "content": "Timeouts, spawn failures, and interrupted Agent processes must not leave open RepoMind sessions or running host records.",
+      "scopeType": "module",
+      "scopeValue": "src/integrations/opencode",
+      "confidence": 0.9,
+      "relatedFiles": ["src/integrations/opencode/run.ts", "tests/host-run.test.ts"]
+    },
+    {
+      "type": "architecture",
+      "title": "Rebuildable evaluation suites",
+      "content": "Evaluation code keeps task manifests, raw events, provenance, integrity gates, and paired reports separate from product storage.",
+      "scopeType": "module",
+      "scopeValue": "src/eval/agent",
+      "confidence": 0.9,
+      "relatedFiles": ["src/eval/agent/runner.ts", "src/eval/agent/report.ts"]
+    },
+    {
+      "type": "command",
+      "title": "Default verification suite",
+      "content": "Run npm test to execute deterministic unit, integration, MCP, migration, and cross-process tests without a paid model.",
+      "scopeType": "module",
+      "scopeValue": "src/eval/agent",
+      "confidence": 0.95,
+      "relatedFiles": ["package.json", "tests/agent-eval.test.ts"]
+    }
+  ],
+  "queries": [
+    "SQLite migration transaction",
+    "MCP protocol stdout",
+    "module narrative evidence budget",
+    "OpenCode interrupted session",
+    "Agent evaluation provenance"
+  ]
+}

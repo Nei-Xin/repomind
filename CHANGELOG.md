@@ -16,6 +16,8 @@ under **Changed** with its migration impact.
 - CLI commands `module-rebuild`, `modules`, and `module-inspect`, plus MCP tools
   `repo_module_rebuild`, `repo_module_list`, and `repo_module_inspect`.
 - Migration 9 adds the L2 source-of-truth, source-link, and derived FTS tables.
+- A rebuildable fixed-commit real-repository L2 acceptance runner records
+  functional integrity and P50/P95 latency without using daily RepoMind data.
 
 ### Changed
 
