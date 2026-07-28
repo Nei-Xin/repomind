@@ -11,7 +11,8 @@ under **Changed** with its migration impact.
 
 - Persistent Host-managed run history backed by the repository database, with
   `repomind runs` filtering and `repomind run-inspect` details for successful,
-  failed, interrupted, and output-setup-failed daily runs.
+  failed, interrupted, and output-setup-failed daily runs. Run reports retain
+  the retrieved memory IDs so cross-task reuse is auditable.
 - Review-first cold-start commands: `repomind bootstrap` creates deterministic,
   redacted candidates from repository documentation and recent Git history;
   `repomind bootstrap-apply --yes` validates and stores all or selected

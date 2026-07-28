@@ -55,7 +55,7 @@ describe("realistic daily memory workflow", () => {
     withDataDirectory(dataDirectory, () => initializeRepository(repository!).database.close());
     const bundle = withDataDirectory(dataDirectory, () => generateBootstrapBundle(repository!));
     const readme = bundle.candidates.find((entry) => entry.source.kind === "readme")!;
-    withDataDirectory(dataDirectory, () => applyBootstrapBundle(repository!, bundle, [readme.id]));
+    const bootstrapped = withDataDirectory(dataDirectory, () => applyBootstrapBundle(repository!, bundle, [readme.id]));
 
     const firstSummary = "Implemented the ledger checkpoint convention with append-only snapshot files.";
     const first = await runOpenCodeHost({
@@ -66,6 +66,12 @@ describe("realistic daily memory workflow", () => {
       execute: successfulAgent(firstSummary, () => writeFileSync(join(repository!, "checkpoint.txt"), "append-only\n", "utf8")),
     });
     expect(first).toMatchObject({ succeeded: true, session: { status: "committed", retrievedMemories: 1 } });
+    const firstRunMemory = withDataDirectory(dataDirectory, () => {
+      const core = new RepositoryMemoryCore(repository!);
+      try { return core.search("ledger checkpoint convention append-only snapshot").find((memory) => memory.id !== bootstrapped.memories[0]!.memoryId); }
+      finally { core.close(); }
+    });
+    expect(firstRunMemory).toBeDefined();
 
     let secondPrompt = "";
     const secondExecute: OpenCodeProcessExecutor = async (request) => {
@@ -82,6 +88,7 @@ describe("realistic daily memory workflow", () => {
 
     expect(second).toMatchObject({ succeeded: true, session: { status: "committed" } });
     expect(second.session.retrievedMemories).toBeGreaterThanOrEqual(2);
+    expect(second.session.retrievedMemoryIds).toContain(firstRunMemory!.id);
     expect(secondPrompt).toContain(firstSummary);
     withDataDirectory(dataDirectory, () => {
       const core = new RepositoryMemoryCore(repository!);

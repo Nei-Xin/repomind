@@ -117,7 +117,7 @@ describe("daily OpenCode host runner", () => {
     });
 
     expect(report.succeeded).toBe(true);
-    expect(report.session).toMatchObject({ status: "committed", retrievedMemories: 1 });
+    expect(report.session).toMatchObject({ status: "committed", retrievedMemories: 1, retrievedMemoryIds: [expect.stringMatching(/^mem_/)] });
     expect(report.commit).toMatchObject({ status: "committed" });
     expect(report.agent.events).toMatchObject({ repoMindCalls: 0, turns: 1 });
     expect(report.summary).toContain("[REDACTED:credential]");
@@ -154,7 +154,12 @@ describe("daily OpenCode host runner", () => {
           reportPath: report.artifacts.report,
         }),
       ]);
-      expect(verify.inspectHostRun(report.runId)).toMatchObject({ model: "test/model", inputTokens: 20, outputTokens: 5 });
+      expect(verify.inspectHostRun(report.runId)).toMatchObject({
+        model: "test/model",
+        inputTokens: 20,
+        outputTokens: 5,
+        metadata: { retrievedMemoryIds: report.session.retrievedMemoryIds },
+      });
       verify.close();
     });
   });

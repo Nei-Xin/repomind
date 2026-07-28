@@ -78,8 +78,9 @@ repomind run-inspect ses_... `
 
 Run IDs currently equal their RepoMind session IDs. List and detail results
 include task, model, lifecycle status, retrieval count, Agent exit and signal,
-duration, input/output tokens, Agent-side RepoMind call count, output and report
-paths, failure text, phase timings, redaction counts, and timestamps.
+retrieved memory IDs, duration, input/output tokens, Agent-side RepoMind call
+count, output and report paths, failure text, phase timings, redaction counts,
+and timestamps.
 
 The host registers the run immediately after session retrieval. Normal exits,
 nonzero exits, timeouts, signals, and output setup failures all close both the

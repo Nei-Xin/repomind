@@ -78,6 +78,7 @@ export interface HostRunReport {
     id: string;
     status: "committed" | "partial" | "failed" | "abandoned";
     retrievedMemories: number;
+    retrievedMemoryIds: string[];
     retrievalStrategy: StartSessionResult["retrievalStrategy"] | null;
     retrievalFallbackReason: string | null;
     startMs: number;
@@ -345,6 +346,7 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
         id: started.sessionId,
         status: sessionStatus,
         retrievedMemories: started.result.memories.length,
+        retrievedMemoryIds: started.result.memories.map((memory) => memory.id),
         retrievalStrategy: started.result.retrievalStrategy ?? null,
         retrievalFallbackReason: started.result.retrievalFallbackReason ?? null,
         startMs: started.startMs,
@@ -394,6 +396,7 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
         commitMs: report.session.commitMs,
         abandonMs: report.session.abandonMs,
         redactions: report.redactions,
+        retrievedMemoryIds: report.session.retrievedMemoryIds,
       },
     });
     options.onStatus?.(`RepoMind session ${sessionStatus}; artifacts: ${outputDirectory}`);
