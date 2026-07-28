@@ -138,8 +138,10 @@ commit identities, requires every public baseline check to pass, and requires
 every external hidden check to fail on the unmodified baseline. CI runs this
 validation on Windows and Ubuntu without requiring a model account.
 
-The formal three-repeat v0.6 acceptance run, including its provenance, results,
-acceptance gates, and limitations, is documented in
-[`agent-benchmark-results-v0.6.md`](agent-benchmark-results-v0.6.md).
-The v0.7 three-arm infrastructure acceptance is documented in
+The formal v0.7 three-arm run, including its provenance, confidence intervals,
+and failed outcome acceptance, is documented in
+[`agent-benchmark-results-v0.7.md`](agent-benchmark-results-v0.7.md). The
+deterministic v0.7 infrastructure acceptance is separate and documented in
 [`agent-benchmark-validation-v0.7.md`](agent-benchmark-validation-v0.7.md).
+The earlier v0.6 two-arm result is preserved in
+[`agent-benchmark-results-v0.6.md`](agent-benchmark-results-v0.6.md).

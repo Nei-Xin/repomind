@@ -1,9 +1,10 @@
 # RepoMind v0.7 agent benchmark infrastructure acceptance
 
 This document records deterministic acceptance of the v0.7 three-arm benchmark
-infrastructure. It does not claim new model-outcome results. The formal v0.6
-two-arm outcome remains documented separately until a report v4 three-arm run
-is completed.
+infrastructure. It does not claim model-outcome success. The completed formal
+report-v4 run is documented separately in
+[`agent-benchmark-results-v0.7.md`](agent-benchmark-results-v0.7.md); its
+integrity passed, but its predeclared outcome acceptance failed.
 
 ## Provenance
 
@@ -53,7 +54,8 @@ identical across two independent output directories.
 - Windows validation was run locally. Ubuntu validation is enforced by CI and
   should be checked on the release commit before interpreting portability as
   demonstrated.
-- No new OpenCode/model run is represented here, so v0.7 makes no new claim
-  about pass rate, token reduction, or latency.
+- No OpenCode/model outcome is represented by this infrastructure document.
+  Outcome metrics and their failed formal acceptance are recorded only in the
+  separate v0.7 results document.
 - The reported 95% intervals use a normal approximation over paired deltas;
   small samples must be interpreted cautiously.

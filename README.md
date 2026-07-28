@@ -153,6 +153,13 @@ Aggregate multiple report v4 files without losing their provenance:
 repomind eval --agent-summary --reports "results/**/summary.json" --output aggregate-results --strict --json
 ```
 
-See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol, [`docs/agent-benchmark-validation-v0.7.md`](docs/agent-benchmark-validation-v0.7.md) for v0.7 infrastructure acceptance, and [`docs/agent-benchmark-results-v0.6.md`](docs/agent-benchmark-results-v0.6.md) for the formal v0.6 two-arm results.
+See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol,
+[`docs/agent-benchmark-results-v0.7.md`](docs/agent-benchmark-results-v0.7.md)
+for the formal v0.7 three-arm result (integrity passed, outcome acceptance
+failed), and
+[`docs/agent-benchmark-validation-v0.7.md`](docs/agent-benchmark-validation-v0.7.md)
+for deterministic infrastructure acceptance. The earlier v0.6 two-arm result
+is preserved in
+[`docs/agent-benchmark-results-v0.6.md`](docs/agent-benchmark-results-v0.6.md).
 
 [`docs/architecture.md`](docs/architecture.md) explains how the pieces fit and [`docs/memory-model.md`](docs/memory-model.md) explains what is stored and why; the reasoning behind each structural choice is recorded under [`docs/adr/`](docs/adr/). [`docs/troubleshooting.md`](docs/troubleshooting.md) covers error codes and common situations, and [`CONTRIBUTING.md`](CONTRIBUTING.md) lists the architecture rules a change must respect.
