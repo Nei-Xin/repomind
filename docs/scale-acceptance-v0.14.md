@@ -90,35 +90,40 @@ flush operating-system file or database page caches between samples.
 
 The clean-commit v0.14 acceptance passed all 19 gates on 2026-07-28. The
 runner and target checkout were both fixed at commit
-`a66af50fa5e53d19a64eccc414fb104fa33424f9`, and the report recorded
+`0a0933414542f2e84204eed84232f031405cba8d`, and the report recorded
 `repoMindWorktreeDirty: false`.
 
 The raw artifacts are retained outside the repository at:
 
 ```text
-D:\data\code\project\repomind-test\v0.14-scale-20260728-05
+D:\data\code\project\repomind-test\v0.14-scale-20260728-08
 ```
 
 The JSON report SHA-256 is
-`f6641a246e34866e609bfc2c38cb93b8caa845b61e829c291544c85384d69ba4`;
+`4f569cb81c8f83b166f15a28af4ce6c353db87f9133a3ce4f160baae48c66cb1`;
 the Markdown report SHA-256 is
-`71b8a3e010a4830b9f2e976b3e1bc2414a045cd1ffbb6e29790b4c5d64f4e960`.
+`7dd0c395d9f07dc9bdc1ee82ff811822629dc5be1e0699e1684e105db161e9d7`.
 The runner script SHA-256 recorded inside the report is
-`9b79dd0b33ecf6a63b7bafd3bf1cebb3e009138a6c92cf159bd6c0539d62cf73`.
+`8f85e93d0fedb751c5cecf8e8488fc64d0a18a2a44ab36c97b8bd733d771b178`.
 
-The run stored 10,000 L1 records at 276.511 records/second. All 10,000 were
+The run stored 10,000 L1 records at 307.880 records/second. All 10,000 were
 active, Evidence-backed, file-linked, audited, indexed by FTS, and represented
-in the cached vector index. The SQLite/WAL/SHM footprint was 41,271,296 bytes,
-and observed process RSS reached 200,626,176 bytes.
+in the cached vector index. The SQLite/WAL/SHM footprint was 41,267,200 bytes,
+and observed process RSS reached 195,092,480 bytes.
 
 | Operation | P95 ms | Gate | Result |
 | --- | ---: | ---: | --- |
-| FTS hit | 91.290 | less than 150 | passed |
-| FTS empty result | 135.530 | less than 150 | passed |
-| Cached hybrid search | 344.539 | less than 500 | passed |
-| Memory Inspect | 1.322 | less than 100 | passed |
-| Session Start | 790.598 | less than 1,000 | passed |
-| CLI cold start | 424.517 | less than 1,000 | passed |
+| FTS hit | 91.326 | less than 150 | passed |
+| FTS empty result | 87.604 | less than 150 | passed |
+| Cached hybrid search | 330.503 | less than 500 | passed |
+| Memory Inspect | 1.016 | less than 100 | passed |
+| Session Start | 637.195 | less than 1,000 | passed |
+| CLI cold start | 378.916 | less than 1,000 | passed |
+
+GitHub Actions [CI run #51](https://github.com/Nei-Xin/repomind/actions/runs/30375255695)
+then passed on the same commit in 5 minutes. Its five successful jobs were the
+Ubuntu, Windows, and macOS verification matrix, coverage, and the comparison
+benchmark. The run retained both coverage and comparison-report artifacts.
 
 This evidence was produced on Windows 11 x64 with Node.js 22.20.0 and an AMD
 Ryzen 7 H 255 processor. It proves the stated local scale and integrity gates
