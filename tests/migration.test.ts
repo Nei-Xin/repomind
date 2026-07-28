@@ -39,6 +39,8 @@ describe("database migrations", () => {
         expect(table("host_runs")).toEqual({ name: "host_runs" });
         expect(table("module_narratives")).toEqual({ name: "module_narratives" });
         expect(table("module_narrative_sources")).toEqual({ name: "module_narrative_sources" });
+        expect(table("repository_profiles")).toEqual({ name: "repository_profiles" });
+        expect(table("repository_profile_versions")).toEqual({ name: "repository_profile_versions" });
         expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
       } finally {
         upgraded.close();

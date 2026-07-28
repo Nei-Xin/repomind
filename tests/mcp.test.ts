@@ -47,6 +47,9 @@ describe("MCP server", () => {
         "repo_module_inspect",
         "repo_module_list",
         "repo_module_rebuild",
+        "repo_profile_get",
+        "repo_profile_inspect",
+        "repo_profile_rebuild",
         "repo_session_abandon",
         "repo_session_commit",
         "repo_session_start",
@@ -71,6 +74,42 @@ describe("MCP server", () => {
       expect(response.content[0]).toMatchObject({ type: "text" });
       const text = response.content[0]?.type === "text" ? response.content[0].text : "{}";
       expect(JSON.parse(text)).toMatchObject({ repositoryId: expect.any(String), sessionId: expect.stringMatching(/^ses_/) });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("rebuilds, gets, and inspects a versioned L3 profile through MCP", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    const source = core.record({
+      type: "architecture", title: "Repository boundary", content: "RepoMind is local-first.", confidence: 0.95,
+    });
+    core.close();
+
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const rebuilt = await client.callTool({
+        name: "repo_profile_rebuild",
+        arguments: { repo_path: repository, max_chars: 1200, min_confidence: 0.8 },
+      });
+      const rebuiltText = rebuilt.content[0]?.type === "text" ? rebuilt.content[0].text : "{}";
+      expect(JSON.parse(rebuiltText)).toMatchObject({ created: true, profile: { version: 1, current: true } });
+
+      const profile = await client.callTool({ name: "repo_profile_get", arguments: { repo_path: repository } });
+      const profileText = profile.content[0]?.type === "text" ? profile.content[0].text : "{}";
+      expect(JSON.parse(profileText)).toMatchObject({ version: 1, current: true });
+
+      const inspected = await client.callTool({ name: "repo_profile_inspect", arguments: { repo_path: repository } });
+      const inspectedText = inspected.content[0]?.type === "text" ? inspected.content[0].text : "{}";
+      expect(JSON.parse(inspectedText)).toMatchObject({
+        memorySources: [{ memoryId: source.id, evidenceIds: [expect.stringMatching(/^evd_/)] }],
+        versions: [{ version: 1 }],
+      });
     } finally {
       await client.close();
       await server.close();

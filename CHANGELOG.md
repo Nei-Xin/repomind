@@ -18,6 +18,15 @@ under **Changed** with its migration impact.
 - Migration 9 adds the L2 source-of-truth, source-link, and derived FTS tables.
 - A rebuildable fixed-commit real-repository L2 acceptance runner records
   functional integrity and P50/P95 latency without using daily RepoMind data.
+- A versioned, bounded L3 Repository Profile derived from stable,
+  evidence-backed repository L1 facts and L2 module boundaries. It preserves
+  L1/L2 provenance and every profile version, ignores low-confidence source
+  changes, and injects only a current profile into Session Start.
+- CLI commands `profile-rebuild`, `profile`, and `profile-inspect`, plus MCP
+  tools `repo_profile_rebuild`, `repo_profile_get`, and
+  `repo_profile_inspect`. Session Start supports explicit profile opt-out.
+- Migration 10 adds the L3 profile, live source-link, and version-history
+  tables.
 
 ### Changed
 
@@ -27,7 +36,7 @@ under **Changed** with its migration impact.
 
 ### Validation
 
-- The development baseline passes 132 tests across 27 files, including L2
+- The development baseline passes 137 tests across 29 files, including L2/L3
   provenance, bounded rendering, incremental freshness, FTS recovery,
   cross-process CLI, MCP stdio purity, and upgrades from every prior Schema.
 

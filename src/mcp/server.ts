@@ -40,6 +40,7 @@ export function createMcpServer(): McpServer {
       client_name: z.string().optional(),
       client_session_id: z.string().optional(),
       max_memories: z.number().int().min(1).max(20).optional(),
+      include_repository_profile: z.boolean().optional(),
     },
     async (input) => {
       try {
@@ -48,6 +49,7 @@ export function createMcpServer(): McpServer {
           ...(input.client_name ? { clientName: input.client_name } : {}),
           ...(input.client_session_id ? { clientSessionId: input.client_session_id } : {}),
           ...(input.max_memories ? { maxMemories: input.max_memories } : {}),
+          ...(input.include_repository_profile !== undefined ? { includeRepositoryProfile: input.include_repository_profile } : {}),
         });
         sessionRepositories.set(value.sessionId, input.repo_path);
         for (const memory of value.memories) memoryRepositories.set(memory.id, input.repo_path);
@@ -178,6 +180,52 @@ export function createMcpServer(): McpServer {
         const value = coreFor(repoPath).inspectModuleNarrative(input.narrative_id);
         narrativeRepositories.set(input.narrative_id, repoPath);
         return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_profile_rebuild",
+    "Rebuild the bounded L3 Repository Profile from stable evidence-backed L1 and L2 sources.",
+    {
+      repo_path: z.string().min(1),
+      max_chars: z.number().int().min(1000).max(30_000).optional(),
+      min_confidence: z.number().min(0.5).max(1).optional(),
+    },
+    async (input) => {
+      try {
+        return result(coreFor(input.repo_path).rebuildRepositoryProfile({
+          ...(input.max_chars ? { maxChars: input.max_chars } : {}),
+          ...(input.min_confidence !== undefined ? { minConfidence: input.min_confidence } : {}),
+        }));
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_profile_get",
+    "Get the current L3 Repository Profile summary and freshness state.",
+    { repo_path: z.string().min(1) },
+    async (input) => {
+      try {
+        return result(coreFor(input.repo_path).getRepositoryProfile());
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_profile_inspect",
+    "Inspect the L3 profile, its L1/L2 provenance, and every retained profile version.",
+    { repo_path: z.string().min(1) },
+    async (input) => {
+      try {
+        return result(coreFor(input.repo_path).inspectRepositoryProfile());
       } catch (error) {
         return failure(error);
       }

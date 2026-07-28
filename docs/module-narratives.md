@@ -65,4 +65,5 @@ returned as task context.
 
 This first L2 implementation is deterministic. It does not infer undocumented
 module history, use a remote LLM, or replace L1 retrieval. L3 Repository
-Profiles and L4 Skill Candidates remain separate future layers.
+Profiles consume its module boundaries through a separate confidence-filtered
+projection; L4 Skill Candidates remain a future layer.

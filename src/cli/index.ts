@@ -42,8 +42,11 @@ Usage:
   repomind module-rebuild [--module <path[,path...]>] [--budget <500-20000>] [--repo <path>] [--json]
   repomind modules [--repo <path>] [--json]
   repomind module-inspect <l2-id> [--repo <path>] [--json]
+  repomind profile-rebuild [--budget <1000-30000>] [--min-confidence <0.5-1>] [--repo <path>] [--json]
+  repomind profile [--repo <path>] [--json]
+  repomind profile-inspect [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
-  repomind start --task <text> [--repo <path>] [--json]
+  repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
   repomind search <query> [--repo <path>] [--limit <n>] [--json]
@@ -86,6 +89,8 @@ const { values, positionals } = parseArgs({
     kind: { type: "string" },
     module: { type: "string" },
     budget: { type: "string" },
+    "min-confidence": { type: "string" },
+    "no-profile": { type: "boolean", default: false },
     limit: { type: "string" },
     type: { type: "string" },
     title: { type: "string" },
@@ -428,7 +433,17 @@ async function main(): Promise<void> {
       })); break;
       case "modules": output(core.listModuleNarratives()); break;
       case "module-inspect": output(core.inspectModuleNarrative(required(positionals[1], "l2-id"))); break;
-      case "start": output(await core.startSessionHybrid({ task: required(values.task, "--task"), clientName: "cli" })); break;
+      case "profile-rebuild": output(core.rebuildRepositoryProfile({
+        ...(values.budget ? { maxChars: Number(values.budget) } : {}),
+        ...(values["min-confidence"] ? { minConfidence: Number(values["min-confidence"]) } : {}),
+      })); break;
+      case "profile": output(core.getRepositoryProfile()); break;
+      case "profile-inspect": output(core.inspectRepositoryProfile()); break;
+      case "start": output(await core.startSessionHybrid({
+        task: required(values.task, "--task"),
+        clientName: "cli",
+        includeRepositoryProfile: !values["no-profile"],
+      })); break;
       case "commit": {
         if (values.input) {
           if (values.session || values.key || values.summary || values.status) {

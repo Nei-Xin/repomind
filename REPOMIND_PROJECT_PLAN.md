@@ -1730,7 +1730,7 @@ Total Completion Time
 任务：
 
 - [x] 实现 Module Narrative。（v0.12 开发版：独立存储、L1/Evidence 来源链、FTS 召回）
-- [ ] 实现 Repository Profile。
+- [x] 实现 Repository Profile。（v0.12 开发版：独立存储、L1/L2 来源链、版本历史、长度与置信度门槛、Session Start 注入）
 - [x] 实现增量更新和长度控制。（来源指纹、模块级重建、硬字符预算）
 - [ ] 实现 Skill Candidate 生成。
 - [ ] 实现人工审核与导出。

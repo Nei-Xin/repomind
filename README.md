@@ -113,6 +113,21 @@ Run the fixed-commit real-repository acceptance with `npm run bench:l2-real`;
 the recorded v0.12 method and results are in
 [`docs/l2-real-repository-acceptance-v0.12.md`](docs/l2-real-repository-acceptance-v0.12.md).
 
+Build the bounded L3 repository profile from stable, evidence-backed L1 facts
+and current L2 module boundaries:
+
+```bash
+repomind profile-rebuild --json
+repomind profile-rebuild --budget 6000 --min-confidence 0.8 --json
+repomind profile --json
+repomind profile-inspect --json
+```
+
+The profile is versioned, preserves its L1/L2 provenance, and becomes stale
+when an eligible source changes. Only a current profile is injected into
+Session Start; use `repomind start --no-profile` to opt out. See
+[`docs/repository-profile.md`](docs/repository-profile.md) for the contract.
+
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use
 verification workflow.
@@ -138,7 +153,7 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes fifteen tools:
+The MCP server exposes eighteen tools:
 
 - `repo_session_start`
 - `repo_memory_search`
@@ -150,6 +165,9 @@ The MCP server exposes fifteen tools:
 - `repo_module_rebuild`
 - `repo_module_list`
 - `repo_module_inspect`
+- `repo_profile_rebuild`
+- `repo_profile_get`
+- `repo_profile_inspect`
 - `repo_memory_record`
 - `repo_memory_validate`
 - `repo_memory_correct`
@@ -160,7 +178,7 @@ See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integr
 
 See [`docs/stale-detection.md`](docs/stale-detection.md) for the `active` to `uncertain` behavior and a reproducible validation flow.
 
-See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history, and [`docs/module-narratives.md`](docs/module-narratives.md) for the L2 derivation and provenance contract.
+See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history, [`docs/module-narratives.md`](docs/module-narratives.md) for the L2 derivation contract, and [`docs/repository-profile.md`](docs/repository-profile.md) for L3 freshness and provenance.
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 
@@ -195,9 +213,11 @@ privacy details.
 
 ## Scope
 
-The current development version includes deterministic L2 Module Narratives.
-It intentionally does not include remote LLM extraction, L3 Repository
-Profiles, automatic host-tool observation, or Skill Candidate generation. See
+The current development version includes deterministic L2 Module Narratives
+and an evidence-backed L3 Repository Profile. It intentionally does not include
+remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
+generation. Cross-Agent release proof, export/import and backup/restore,
+macOS CI, coverage reporting, and 10,000-L1 scale proof also remain open. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 

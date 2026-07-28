@@ -30,6 +30,10 @@ import type {
   RecordMemoryInput,
   RebuildModuleNarrativesInput,
   RebuildModuleNarrativesResult,
+  RebuildRepositoryProfileInput,
+  RebuildRepositoryProfileResult,
+  RepositoryProfileDetails,
+  RepositoryProfileSummary,
   StaleReason,
   StartSessionInput,
   StartSessionResult,
@@ -42,6 +46,7 @@ import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
 import { ModuleNarrativeStore } from "./narratives/module-narratives.js";
+import { RepositoryProfileStore } from "./profiles/repository-profile.js";
 import { buildMatchExpression, searchTokens } from "./search/lexical.js";
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
@@ -169,12 +174,14 @@ export class RepositoryMemoryCore {
       this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline" }, snapshot.head);
     });
     try {
+      const repositoryProfile = input.includeRepositoryProfile === false ? null : this.getRepositoryProfile();
       return {
         sessionId,
         repositoryId: this.context.marker.projectId,
         baseline: snapshot,
         memories: this.search(task, { limit: input.maxMemories ?? 5 }),
         moduleNarratives: this.searchModuleNarratives(task),
+        ...(repositoryProfile?.current ? { repositoryProfile } : {}),
       };
     } catch (error) {
       try { this.abandonSession(sessionId); } catch { /* preserve the retrieval error */ }
@@ -748,6 +755,21 @@ export class RepositoryMemoryCore {
     return new ModuleNarrativeStore(this.context).inspect(id);
   }
 
+  rebuildRepositoryProfile(input: RebuildRepositoryProfileInput = {}): RebuildRepositoryProfileResult {
+    this.refreshStaleMemoryStates();
+    return new RepositoryProfileStore(this.context).rebuild(input);
+  }
+
+  getRepositoryProfile(): RepositoryProfileSummary | null {
+    this.refreshStaleMemoryStates();
+    return new RepositoryProfileStore(this.context).get();
+  }
+
+  inspectRepositoryProfile(): RepositoryProfileDetails {
+    this.refreshStaleMemoryStates();
+    return new RepositoryProfileStore(this.context).inspect();
+  }
+
   status(): Record<string, unknown> {
     const db = this.context.database.raw;
     const count = (table: string): number => Number((db.prepare(`SELECT count(*) AS count FROM ${table} WHERE repository_id=?`).get(this.context.marker.projectId) as { count: number }).count);
@@ -759,6 +781,7 @@ export class RepositoryMemoryCore {
       evidence: count("evidence"),
       memories: count("memories"),
       moduleNarratives: count("module_narratives"),
+      repositoryProfiles: count("repository_profiles"),
       embeddings: count("memory_embeddings"),
       hostRuns: count("host_runs"),
       uncertainMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='uncertain'").get(this.context.marker.projectId) as { count: number }).count),
@@ -779,7 +802,7 @@ export class RepositoryMemoryCore {
         maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
-        layeredMemory: { l0: true, l1: true, l2: true, l3: false, l4: false },
+        layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: false },
       },
     };
   }

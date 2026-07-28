@@ -94,6 +94,62 @@ export interface RebuildModuleNarrativesResult {
   narratives: ModuleNarrativeSummary[];
 }
 
+export interface RepositoryProfileSummary {
+  id: string;
+  title: string;
+  content: string;
+  memorySourceCount: number;
+  moduleSourceCount: number;
+  budgetChars: number;
+  minConfidence: number;
+  version: number;
+  current: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RepositoryProfileMemorySource {
+  memoryId: string;
+  type: MemoryType;
+  title: string;
+  confidence: number;
+  evidenceIds: string[];
+}
+
+export interface RepositoryProfileModuleSource {
+  narrativeId: string;
+  modulePath: string;
+  version: number;
+  memoryIds: string[];
+}
+
+export interface RepositoryProfileVersion {
+  version: number;
+  content: string;
+  sourceFingerprint: string;
+  memoryIds: string[];
+  narrativeIds: string[];
+  createdAt: number;
+}
+
+export interface RepositoryProfileDetails extends RepositoryProfileSummary {
+  memorySources: RepositoryProfileMemorySource[];
+  moduleSources: RepositoryProfileModuleSource[];
+  versions: RepositoryProfileVersion[];
+}
+
+export interface RebuildRepositoryProfileInput {
+  maxChars?: number;
+  minConfidence?: number;
+}
+
+export interface RebuildRepositoryProfileResult {
+  created: boolean;
+  updated: boolean;
+  unchanged: boolean;
+  profile: RepositoryProfileSummary;
+}
+
 export interface StaleReason {
   kind: "file_created" | "file_modified" | "file_deleted";
   filePath: string;
@@ -219,6 +275,7 @@ export interface StartSessionInput {
   clientName?: string;
   clientSessionId?: string;
   maxMemories?: number;
+  includeRepositoryProfile?: boolean;
 }
 
 export interface StartSessionResult {
@@ -227,6 +284,7 @@ export interface StartSessionResult {
   baseline: GitSnapshot;
   memories: MemoryResult[];
   moduleNarratives?: ModuleNarrativeSummary[];
+  repositoryProfile?: RepositoryProfileSummary;
   retrievalStrategy?: HybridSearchResult["strategy"];
   retrievalFallbackReason?: string;
 }

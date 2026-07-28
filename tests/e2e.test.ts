@@ -175,4 +175,28 @@ describe("cross-process CLI end-to-end", () => {
       moduleNarratives: [expect.objectContaining({ id: narrativeId })],
     });
   });
+
+  it("rebuilds and optionally injects an L3 repository profile across CLI processes", () => {
+    JSON.parse(cli(repository, data, "init"));
+    JSON.parse(cli(
+      repository, data, "record",
+      "--type", "architecture",
+      "--title", "Repository boundary",
+      "--content", "The repository uses local-first SQLite storage.",
+    ));
+    const rebuilt = JSON.parse(cli(
+      repository, data, "profile-rebuild", "--budget", "1200", "--min-confidence", "0.8",
+    )) as { profile: { id: string } };
+    expect(JSON.parse(cli(repository, data, "profile"))).toMatchObject({ id: rebuilt.profile.id, current: true, version: 1 });
+    expect(JSON.parse(cli(repository, data, "profile-inspect"))).toMatchObject({
+      id: rebuilt.profile.id,
+      memorySources: [{ evidenceIds: [expect.stringMatching(/^evd_/)] }],
+      versions: [{ version: 1 }],
+    });
+    expect(JSON.parse(cli(repository, data, "start", "--task", "Review repository architecture"))).toMatchObject({
+      repositoryProfile: { id: rebuilt.profile.id, current: true },
+    });
+    expect(JSON.parse(cli(repository, data, "start", "--task", "Review repository architecture", "--no-profile")))
+      .not.toHaveProperty("repositoryProfile");
+  });
 });

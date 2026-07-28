@@ -76,21 +76,24 @@ was built for a different architecture, and reinstalling dependencies fixed it"
 is reusable. Extraction deliberately produces few memories rather than
 transcribing activity.
 
-## L2 — Module narratives (not implemented)
+## L2 — Module narratives
 
-An L2 narrative would aggregate the L1 memories and sessions belonging to one
+An L2 narrative aggregates the L1 memories belonging to one
 module: its responsibility and boundary, key files, the decisions that shaped
 it, its common failure modes, and its current risks. Each claim would have to
 trace to lower-layer records, and the narrative would need a length budget so
 it does not decay into a second copy of the codebase.
 
-## L3 — Repository profile (not implemented)
+## L3 — Repository profile
 
-An L3 profile would be the stable repository-level summary: stack, directory
+An L3 profile is the stable repository-level summary: stack, directory
 responsibilities, build and test commands, core decisions, long-term
 constraints, high-risk areas. It is the layer worth offering unprompted at the
 start of a task, which is exactly why it must not be overwritten by one
-low-confidence session.
+low-confidence session. RepoMind derives it from evidence-backed repository L1
+facts and L2 module boundaries, retains every generated version, and exposes
+the complete source chain for inspection. A stale profile remains inspectable
+but is not injected into a new task.
 
 ## L4 — Skill candidates (not implemented)
 
@@ -103,8 +106,8 @@ that starts running things is no longer a memory system.
 
 Each layer trades detail for context cost. L0 is complete and too expensive to
 inject. L1 is small enough to hand an agent and specific enough to act on. L2
-and L3 compress further at the cost of traceability, which is why they must
-stay derivable from L1 and evidence rather than being written directly.
+and L3 compress further at the cost of detail, which is why they stay
+derivable from L1 and evidence rather than being written directly.
 
 Related reading: [`memory-governance.md`](memory-governance.md) for the state
 transitions, [`stale-detection.md`](stale-detection.md) for how file changes

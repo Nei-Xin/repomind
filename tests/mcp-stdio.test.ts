@@ -85,7 +85,7 @@ describe("MCP stdio protocol purity", () => {
     for (const message of parsed) expect(message.jsonrpc).toBe("2.0");
 
     const toolList = parsed.find((message) => message.id === 2)?.result as { tools: Array<{ name: string }> };
-    expect(toolList.tools).toHaveLength(15);
+    expect(toolList.tools).toHaveLength(18);
 
     const errorCall = parsed.find((message) => message.id === 3)?.result as { isError?: boolean; content: Array<{ text: string }> };
     expect(errorCall.isError).toBe(true);

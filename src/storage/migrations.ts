@@ -240,4 +240,48 @@ CREATE VIRTUAL TABLE module_narrative_fts USING fts5(
 );
 `,
   },
+  {
+    version: 10,
+    sql: `
+CREATE TABLE repository_profiles (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  memory_source_count INTEGER NOT NULL CHECK(memory_source_count >= 0),
+  module_source_count INTEGER NOT NULL CHECK(module_source_count >= 0),
+  budget_chars INTEGER NOT NULL CHECK(budget_chars >= 1000),
+  min_confidence REAL NOT NULL CHECK(min_confidence >= 0 AND min_confidence <= 1),
+  version INTEGER NOT NULL CHECK(version > 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK(memory_source_count + module_source_count > 0)
+);
+CREATE TABLE repository_profile_memory_sources (
+  profile_id TEXT NOT NULL REFERENCES repository_profiles(id) ON DELETE CASCADE,
+  memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY(profile_id, memory_id)
+);
+CREATE TABLE repository_profile_module_sources (
+  profile_id TEXT NOT NULL REFERENCES repository_profiles(id) ON DELETE CASCADE,
+  narrative_id TEXT NOT NULL REFERENCES module_narratives(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY(profile_id, narrative_id)
+);
+CREATE TABLE repository_profile_versions (
+  profile_id TEXT NOT NULL REFERENCES repository_profiles(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  memory_ids_json TEXT NOT NULL,
+  narrative_ids_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(profile_id, version)
+);
+CREATE INDEX repository_profile_memory_source ON repository_profile_memory_sources(memory_id);
+CREATE INDEX repository_profile_module_source ON repository_profile_module_sources(narrative_id);
+`,
+  },
 ] as const;
