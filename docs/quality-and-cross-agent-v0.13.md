@@ -21,8 +21,14 @@ that every critical path is sufficiently tested.
 ## macOS
 
 The main CI verification matrix includes `macos-latest` alongside Ubuntu and
-Windows. A configuration change alone is not macOS proof; the exact GitHub
-Actions run and job result must be recorded after the commit is pushed.
+Windows. GitHub Actions
+[CI run 30358584725](https://github.com/Nei-Xin/repomind/actions/runs/30358584725)
+passed all five jobs for commit `fd8093c` on 2026-07-28. The macOS job completed
+in 1 minute 24 seconds and passed install, typecheck, build, all 144 tests, and
+the rebuildable eight-task Agent fixture validation. Ubuntu, Windows, coverage,
+and comparison benchmark jobs also passed. The coverage artifact was 690 KB
+with digest
+`sha256:ab379442663256d35a4c5fde2e62a124ac90ac9fdad71c2a88d4a1b91c176a2b`.
 
 ## Second real Coding Agent
 

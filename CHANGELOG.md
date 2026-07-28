@@ -47,6 +47,9 @@ under **Changed** with its migration impact.
   recorded Windows host.
 - The source-only V8 baseline is 83.00% statements/lines, 77.14% branches, and
   94.33% functions; enforced floors are 80%, 75%, 90%, and 80% respectively.
+- GitHub Actions run `30358584725` passed Ubuntu, Windows, macOS, coverage, and
+  comparison jobs at commit `fd8093c`; macOS completed the full verification
+  suite in 1 minute 24 seconds.
 
 ## [0.12.0] - 2026-07-28
 
