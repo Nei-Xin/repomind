@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-28
+
 ### Added
 
 - Independent L2 Module Narratives derived only from active, evidence-backed

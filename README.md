@@ -215,8 +215,8 @@ privacy details.
 
 ## Scope
 
-The current development version includes deterministic L2 Module Narratives
-and an evidence-backed L3 Repository Profile. It intentionally does not include
+RepoMind v0.12.0 includes deterministic L2 Module Narratives and an
+evidence-backed L3 Repository Profile. It intentionally does not include
 remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
 generation. Cross-Agent release proof, export/import and backup/restore,
 macOS CI, coverage reporting, and 10,000-L1 scale proof also remain open. See
