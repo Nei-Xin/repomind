@@ -12,3 +12,4 @@ export * from "./eval/agent/host-acceptance.js";
 export * from "./bootstrap.js";
 export * from "./narratives/module-narratives.js";
 export * from "./profiles/repository-profile.js";
+export * from "./portability/repository-data.js";

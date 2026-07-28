@@ -802,6 +802,7 @@ export class RepositoryMemoryCore {
         maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
+        portability: { exportFormat: 1, importMode: "replace", backupFormat: 1, restore: "same-project" },
         layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: false },
       },
     };

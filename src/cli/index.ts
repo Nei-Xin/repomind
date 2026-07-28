@@ -28,6 +28,7 @@ import { readCommitInput } from "./commit-input.js";
 import { readReviewInput } from "./review-input.js";
 import { stringifyCliJson } from "./json.js";
 import { applyBootstrapBundle, generateBootstrapBundle, loadBootstrapBundle, writeBootstrapBundle } from "../bootstrap.js";
+import { backupRepository, exportRepository, importRepository, restoreRepository } from "../portability/repository-data.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
 
@@ -58,6 +59,10 @@ Usage:
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind reindex [--repo <path>] [--json]
   repomind vector-reindex [--repo <path>] [--json]
+  repomind export --output <new-export.json> [--allow-sensitive] [--repo <path>] [--json]
+  repomind import --input <export.json> [--dry-run | --yes] [--allow-sensitive] [--repo <path>] [--json]
+  repomind backup --output <new-backup.db> [--repo <path>] [--json]
+  repomind restore --input <backup.db> [--dry-run | --yes] [--allow-unreadable] [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind runs [--repo <path>] [--status running|committed|partial|failed|abandoned] [--limit <1-200>] [--json]
@@ -103,6 +108,9 @@ const { values, positionals } = parseArgs({
     input: { type: "string" },
     scope: { type: "string" },
     yes: { type: "boolean", default: false },
+    "allow-sensitive": { type: "boolean", default: false },
+    "allow-unreadable": { type: "boolean", default: false },
+    "dry-run": { type: "boolean", default: false },
     dataset: { type: "string" },
     scenarios: { type: "boolean", default: false },
     compare: { type: "boolean", default: false },
@@ -412,6 +420,20 @@ async function main(): Promise<void> {
     output(applyBootstrapBundle(repositoryPath(), bundle, selectedIds));
     return;
   }
+  if (command === "restore") {
+    if (values.yes && values["dry-run"]) throw new RepoMindError("INVALID_INPUT", "--yes and --dry-run cannot be combined");
+    const confirmed = values.yes;
+    const result = restoreRepository(repositoryPath(), required(values.input, "--input"), {
+      dryRun: !confirmed,
+      allowUnreadable: values["allow-unreadable"],
+    });
+    output(confirmed || values["dry-run"] ? result : {
+      ...result,
+      hint: "This replaces the live database after retaining a pre-restore backup. Re-run with --yes to confirm.",
+    });
+    if (!confirmed && !values["dry-run"]) process.exitCode = 1;
+    return;
+  }
 
   const core = new RepositoryMemoryCore(repositoryPath());
   try {
@@ -439,6 +461,24 @@ async function main(): Promise<void> {
       })); break;
       case "profile": output(core.getRepositoryProfile()); break;
       case "profile-inspect": output(core.inspectRepositoryProfile()); break;
+      case "export": output(exportRepository(core.context, required(values.output, "--output"), {
+        allowSensitive: values["allow-sensitive"],
+      })); break;
+      case "import": {
+        if (values.yes && values["dry-run"]) throw new RepoMindError("INVALID_INPUT", "--yes and --dry-run cannot be combined");
+        const confirmed = values.yes;
+        const result = importRepository(core.context, required(values.input, "--input"), {
+          allowSensitive: values["allow-sensitive"],
+          dryRun: !confirmed,
+        });
+        output(confirmed || values["dry-run"] ? result : {
+          ...result,
+          hint: "This atomically replaces repository data and rebuilds derived indexes. Re-run with --yes to confirm.",
+        });
+        if (!confirmed && !values["dry-run"]) process.exitCode = 1;
+        break;
+      }
+      case "backup": output(backupRepository(core.context, required(values.output, "--output"))); break;
       case "start": output(await core.startSessionHybrid({
         task: required(values.task, "--task"),
         clientName: "cli",

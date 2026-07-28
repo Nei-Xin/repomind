@@ -7,6 +7,36 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Versioned logical repository exports with deterministic SHA-256 checksums,
+  fixed table and column contracts, repository-level counts, and sensitive
+  value scanning before data leaves local storage.
+- Atomic cross-project logical import in explicit `replace` mode. Project and
+  checkout references are mapped to the initialized target repository,
+  machine-local and derived indexes are excluded, and FTS is rebuilt inside
+  the same transaction.
+- Consistent SQLite backups with a versioned checksum manifest, plus same-
+  project restore that validates integrity and schema, retains a pre-restore
+  snapshot, and rolls back the live database if replacement validation fails.
+- CLI commands `export`, `import`, `backup`, and `restore`, including dry-run,
+  explicit confirmation, no-overwrite, and active-session guards.
+
+### Changed
+
+- `repomind status` now reports the supported logical export, import, backup,
+  and restore contracts under `capabilities.portability`.
+
+### Validation
+
+- Direct portability tests cover cross-project replacement, checksum
+  tampering, transaction rollback on relational failure, sensitive export
+  blocking, physical restore, retained rollback snapshots, and rejected
+  corrupt backups. A separate cross-process CLI test exercises all four public
+  commands.
+- The development baseline passes 144 tests across 31 files, and the
+  rebuildable eight-task Agent fixture suite remains valid.
+
 ## [0.12.0] - 2026-07-28
 
 ### Added

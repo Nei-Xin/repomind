@@ -130,6 +130,25 @@ Session Start; use `repomind start --no-profile` to opt out. See
 [`docs/l3-real-repository-acceptance-v0.12.md`](docs/l3-real-repository-acceptance-v0.12.md)
 for the fixed-commit real-repository result.
 
+Create a portable logical export, preview an atomic replacement import, or
+create and restore a physical same-project backup:
+
+```powershell
+repomind export --output D:\backups\repomind-export.json --json
+repomind import --input D:\backups\repomind-export.json --dry-run --json
+repomind import --input D:\backups\repomind-export.json --yes --json
+repomind backup --output D:\backups\repomind.db --json
+repomind restore --input D:\backups\repomind.db --dry-run --json
+repomind restore --input D:\backups\repomind.db --yes --json
+```
+
+Logical import maps repository references into the initialized target and uses
+explicit `replace` semantics. Physical restore requires the same Project ID
+and retains a pre-restore snapshot. Outputs never overwrite existing files,
+and exports with sensitive-pattern findings require `--allow-sensitive` after
+review. See [`docs/data-portability.md`](docs/data-portability.md) for the data
+contract and recovery procedure.
+
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use
 verification workflow.
@@ -216,10 +235,11 @@ privacy details.
 ## Scope
 
 RepoMind v0.12.0 includes deterministic L2 Module Narratives and an
-evidence-backed L3 Repository Profile. It intentionally does not include
+evidence-backed L3 Repository Profile. v0.13 development adds the first
+versioned export, replace-import, backup, and restore loop. It does not include
 remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
-generation. Cross-Agent release proof, export/import and backup/restore,
-macOS CI, coverage reporting, and 10,000-L1 scale proof also remain open. See
+generation. Cross-Agent release proof, macOS CI, coverage reporting,
+10,000-L1 scale proof, merge import, and encrypted archives remain open. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
