@@ -164,6 +164,9 @@ turns surrounding session start and commit, and computes paired wall-time,
 turn, and token overhead against both baselines.
 
 See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol,
+[`docs/agent-benchmark-results-v0.8.md`](docs/agent-benchmark-results-v0.8.md)
+for the formal v0.8 host-managed result (72/72 runs valid and all outcome
+acceptance gates passed),
 [`docs/agent-benchmark-results-v0.7.md`](docs/agent-benchmark-results-v0.7.md)
 for the formal v0.7 three-arm result (integrity passed, outcome acceptance
 failed), and

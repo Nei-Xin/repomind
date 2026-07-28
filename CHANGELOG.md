@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-28
+
 ### Added
 
 - `repomind eval --agent-profile` for offline attribution of Agent wall time,
@@ -23,6 +25,17 @@ under **Changed** with its migration impact.
 
 - Agent report writers now emit schema v5. Aggregation and offline phase
   profiling continue to accept preserved schema-v4 reports.
+
+### Validation
+
+- The formal host-managed three-arm evaluation completed 72 isolated Agent
+  runs across eight tasks and three repetitions with experiment integrity and
+  every predeclared acceptance gate passing.
+- RepoMind passed 24/24 hidden checks, matched full history on task quality,
+  and reduced mean wall time by 12.711% and input tokens by 12.849% relative
+  to full history in this controlled suite.
+- The complete method, provenance, artifact hashes, paired intervals, and
+  limitations are preserved in `docs/agent-benchmark-results-v0.8.md`.
 
 ## [0.7.1] - 2026-07-28
 
