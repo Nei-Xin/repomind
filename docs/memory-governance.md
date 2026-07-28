@@ -1,5 +1,8 @@
 # Memory governance
 
+Use [`memory-maintenance.md`](memory-maintenance.md) for the `repomind review`
+queue that discovers and closes outstanding governance work.
+
 RepoMind provides explicit, audited transitions for memories that need human or agent review.
 
 ```text

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { RepositoryMemoryCore } from "../core.js";
-import type { HostRunStatus, MemoryType } from "../domain/types.js";
+import type { HostRunStatus, MemoryReviewKind, MemoryReviewQueue, MemoryType } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
@@ -35,6 +35,7 @@ const HELP = `RepoMind ${VERSION}
 Usage:
   repomind init [--repo <path>] [--new-id]
   repomind status [--repo <path>] [--json]
+  repomind review [--kind all|stale|conflict|other] [--limit <1-200>] [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
   repomind start --task <text> [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
@@ -76,6 +77,7 @@ const { values, positionals } = parseArgs({
     key: { type: "string" },
     summary: { type: "string" },
     status: { type: "string" },
+    kind: { type: "string" },
     limit: { type: "string" },
     type: { type: "string" },
     title: { type: "string" },
@@ -133,6 +135,30 @@ function output(value: unknown): void {
 
 function repositoryPath(): string {
   return values.repo ?? process.cwd();
+}
+
+function reviewKind(value: string | undefined): MemoryReviewKind | "all" {
+  const kind = value ?? "all";
+  if (!("all stale conflict other".split(" ") as string[]).includes(kind)) {
+    throw new RepoMindError("INVALID_INPUT", `Invalid --kind ${kind}`);
+  }
+  return kind as MemoryReviewKind | "all";
+}
+
+function renderReviewQueue(queue: MemoryReviewQueue): string {
+  const lines = [
+    `Memory review: ${queue.pending} pending (stale ${queue.counts.stale}, conflict ${queue.counts.conflict}, other ${queue.counts.other})`,
+    `Showing ${queue.returned} for filter ${queue.filter}.`,
+  ];
+  for (const item of queue.items) {
+    lines.push("", `[${item.kind}] ${item.title} (${item.id})`, `  ${item.warning}`);
+    lines.push(`  Evidence: ${item.evidenceCount}; files: ${item.relatedFiles.map((file) => file.filePath).join(", ") || "none"}`);
+    lines.push(`  Inspect: ${item.suggestedCommands.inspect}`);
+    lines.push(`  Resolve: ${item.suggestedCommands.validate}`);
+    lines.push(`           ${item.suggestedCommands.correct}`);
+    lines.push(`           ${item.suggestedCommands.invalidate}`);
+  }
+  return lines.join("\n");
 }
 
 function openCodeTextRenderer(): { feed: (chunk: string) => void; lastText: () => string } {
@@ -375,6 +401,14 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case "status": output(core.status()); break;
+      case "review": {
+        const queue = core.review({
+          ...(values.limit ? { limit: Number(values.limit) } : {}),
+          kind: reviewKind(values.kind),
+        });
+        output(values.json ? queue : renderReviewQueue(queue));
+        break;
+      }
       case "start": output(await core.startSessionHybrid({ task: required(values.task, "--task"), clientName: "cli" })); break;
       case "commit": {
         if (values.input) {

@@ -82,6 +82,19 @@ repomind runs --status committed --limit 20 --json
 repomind run-inspect ses_... --json
 ```
 
+Review memories that need human maintenance, then resolve each item with the
+existing audited governance commands:
+
+```bash
+repomind review
+repomind review --kind stale --json
+repomind memory-validate mem_... --reason "Reviewed against the current files"
+```
+
+The queue refreshes file hashes before listing work and classifies uncertain
+memories as `stale`, `conflict`, or `other`. Validated, corrected, invalidated,
+or conflict-reconciled memories leave the queue on the next review.
+
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use
 verification workflow.

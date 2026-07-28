@@ -7,6 +7,13 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- `repomind review` provides a repository maintenance queue for uncertain
+  memories, classified as stale-file, conflict, or other review work. Each
+  item includes its concrete reason, evidence count, related files, and
+  suggested inspect, validate, correct, and invalidate commands.
+
 ## [0.10.0] - 2026-07-28
 
 ### Added

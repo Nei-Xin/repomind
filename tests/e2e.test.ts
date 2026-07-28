@@ -114,4 +114,29 @@ describe("cross-process CLI end-to-end", () => {
     const inspected = JSON.parse(cli(repository, data, "run-inspect", report.runId)) as { id: string; model: string; reportPath: string };
     expect(inspected).toMatchObject({ id: report.runId, model: "test/model", reportPath: report.artifacts.report });
   });
+
+  it("reviews and resolves uncertain memories across CLI processes", () => {
+    JSON.parse(cli(repository, data, "init"));
+    const first = JSON.parse(cli(
+      repository, data, "record", "--type", "decision", "--title", "Queue backend", "--content", "Use SQLite.",
+    )) as { id: string };
+    const second = JSON.parse(cli(
+      repository, data, "record", "--type", "decision", "--title", "Queue backend", "--content", "Use PostgreSQL.",
+    )) as { id: string };
+
+    const pending = JSON.parse(cli(repository, data, "review", "--kind", "conflict")) as {
+      pending: number;
+      returned: number;
+      counts: { conflict: number };
+      items: Array<{ id: string; suggestedCommands: { inspect: string } }>;
+    };
+    expect(pending).toMatchObject({ pending: 2, returned: 2, counts: { conflict: 2 } });
+    expect(pending.items).toContainEqual(expect.objectContaining({
+      id: first.id,
+      suggestedCommands: expect.objectContaining({ inspect: `repomind inspect ${first.id}` }),
+    }));
+
+    JSON.parse(cli(repository, data, "memory-invalidate", second.id, "--reason", "The repository uses SQLite."));
+    expect(JSON.parse(cli(repository, data, "review"))).toMatchObject({ pending: 0, returned: 0, items: [] });
+  });
 });

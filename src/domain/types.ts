@@ -67,6 +67,38 @@ export type MemoryStatusReason =
   | { kind: "superseded"; replacementMemoryId: string; reason: string }
   | { kind: "invalid"; reason: string };
 
+export type MemoryReviewKind = "stale" | "conflict" | "other";
+
+export interface MemoryReviewItem {
+  id: string;
+  type: MemoryType;
+  title: string;
+  confidence: number;
+  status: "uncertain";
+  kind: MemoryReviewKind;
+  warning: string;
+  statusReason: MemoryStatusReason | null;
+  evidenceCount: number;
+  relatedFiles: Array<{ filePath: string; fileHash: string | null }>;
+  updatedAt: number;
+  suggestedCommands: {
+    inspect: string;
+    validate: string;
+    correct: string;
+    invalidate: string;
+  };
+}
+
+export interface MemoryReviewQueue {
+  repositoryId: string;
+  generatedAt: number;
+  filter: MemoryReviewKind | "all";
+  pending: number;
+  returned: number;
+  counts: Record<MemoryReviewKind, number>;
+  items: MemoryReviewItem[];
+}
+
 export interface ValidateMemoryInput {
   memoryId: string;
   reason: string;

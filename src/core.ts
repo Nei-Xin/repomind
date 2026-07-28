@@ -17,6 +17,9 @@ import type {
   InvalidateMemoryInput,
   InvalidateMemoryResult,
   MemoryResult,
+  MemoryReviewItem,
+  MemoryReviewKind,
+  MemoryReviewQueue,
   MemoryStatusReason,
   MemoryType,
   RecordMemoryInput,
@@ -573,6 +576,86 @@ export class RepositoryMemoryCore {
     };
   }
 
+  review(options: { limit?: number; kind?: MemoryReviewKind | "all" } = {}): MemoryReviewQueue {
+    const limit = options.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new RepoMindError("INVALID_INPUT", "review limit must be an integer from 1 to 200");
+    }
+    const filter = options.kind ?? "all";
+    if (!["all", "stale", "conflict", "other"].includes(filter)) {
+      throw new RepoMindError("INVALID_INPUT", `Invalid review kind ${filter}`);
+    }
+
+    this.refreshStaleMemoryStates();
+    const db = this.context.database.raw;
+    const rows = db.prepare(`
+      SELECT m.id, m.type, m.title, m.confidence, m.status_reason_json, m.updated_at,
+        (SELECT count(*) FROM memory_evidence me WHERE me.memory_id=m.id) AS evidence_count
+      FROM memories m
+      WHERE m.repository_id=? AND m.status='uncertain'
+      ORDER BY m.updated_at DESC, m.id
+    `).all(this.context.marker.projectId) as Array<{
+      id: string;
+      type: MemoryType;
+      title: string;
+      confidence: number;
+      status_reason_json: string | null;
+      updated_at: number;
+      evidence_count: number;
+    }>;
+
+    const classified = rows.map((row) => {
+      const statusReason = parseStatusReason(row.status_reason_json);
+      const kind: MemoryReviewKind = statusReason?.kind === "stale_files"
+        ? "stale"
+        : statusReason?.kind === "conflict"
+          ? "conflict"
+          : "other";
+      const warning = statusReason?.kind === "stale_files"
+        ? staleWarning(statusReason.files)
+        : statusReason?.kind === "conflict"
+          ? conflictWarning(statusReason.withMemoryIds)
+          : "This memory needs manual review.";
+      return { row, statusReason, kind, warning };
+    });
+    const counts: Record<MemoryReviewKind, number> = { stale: 0, conflict: 0, other: 0 };
+    for (const item of classified) counts[item.kind]++;
+    const selected = classified.filter((item) => filter === "all" || item.kind === filter).slice(0, limit);
+    const items: MemoryReviewItem[] = selected.map(({ row, statusReason, kind, warning }) => {
+      const relatedFiles = db.prepare(
+        "SELECT file_path, file_hash FROM memory_files WHERE memory_id=? ORDER BY file_path",
+      ).all(row.id) as Array<{ file_path: string; file_hash: string | null }>;
+      return {
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        confidence: row.confidence,
+        status: "uncertain",
+        kind,
+        warning,
+        statusReason,
+        evidenceCount: Number(row.evidence_count),
+        relatedFiles: relatedFiles.map((file) => ({ filePath: file.file_path, fileHash: file.file_hash })),
+        updatedAt: Number(row.updated_at),
+        suggestedCommands: {
+          inspect: `repomind inspect ${row.id}`,
+          validate: `repomind memory-validate ${row.id} --reason "<review reason>"`,
+          correct: `repomind memory-correct ${row.id} --reason "<review reason>" --title "<title>" --content "<content>"`,
+          invalidate: `repomind memory-invalidate ${row.id} --reason "<review reason>"`,
+        },
+      };
+    });
+    return {
+      repositoryId: this.context.marker.projectId,
+      generatedAt: Date.now(),
+      filter,
+      pending: classified.length,
+      returned: items.length,
+      counts,
+      items,
+    };
+  }
+
   status(): Record<string, unknown> {
     const db = this.context.database.raw;
     const count = (table: string): number => Number((db.prepare(`SELECT count(*) AS count FROM ${table} WHERE repository_id=?`).get(this.context.marker.projectId) as { count: number }).count);
@@ -600,6 +683,7 @@ export class RepositoryMemoryCore {
         automaticExtraction: "deterministic",
         staleDetection: "file-hash",
         governance: ["validate", "correct", "invalidate", "forget"],
+        maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
       },
