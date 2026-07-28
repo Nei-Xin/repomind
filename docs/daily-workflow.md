@@ -1,8 +1,7 @@
 # Daily repository workflow
 
-RepoMind v0.10 development adds two pieces needed beyond the daily
-`repomind run` command: reviewable cold-start candidates and persistent run
-history. The package version remains `0.9.0` until the v0.10 release gates pass.
+RepoMind v0.10 adds two pieces beyond the daily `repomind run` command:
+reviewable cold-start candidates and persistent run history.
 
 ## Bootstrap a cold repository
 

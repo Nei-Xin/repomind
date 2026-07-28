@@ -5,9 +5,10 @@ and persistent run-history workflow. The run used the real `repomind run`
 entry point with OpenCode for two consecutive repository tasks, followed by a
 forced timeout that exercised lifecycle cleanup.
 
-The package still reported `0.9.0`. The version bump remains intentionally
-deferred until release preparation. The exact tested v0.10 source commit was
-`30a15bd41a15f75090d58aa3af3745c00879fd68`.
+The executable reported `0.9.0` during acceptance because the version bump was
+deliberately deferred. The exact tested v0.10 source commit was
+`30a15bd41a15f75090d58aa3af3745c00879fd68`; only release metadata and
+documentation changed afterward.
 
 ## Verdict
 
@@ -29,6 +30,7 @@ deferred until release preparation. The exact tested v0.10 source commit was
 | Generated at | `2026-07-28T16:24:07.0961312+08:00` |
 | Tested RepoMind commit | `30a15bd41a15f75090d58aa3af3745c00879fd68` |
 | Reported RepoMind version | `0.9.0` (pre-release metadata) |
+| Release version | `0.10.0` |
 | Model | `cliproxyapi/gpt-5.6-terra` |
 | Runner | OpenCode `1.18.7` |
 | Node.js | `v22.20.0` |

@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-28
+
 ### Added
 
 - Persistent Host-managed run history backed by the repository database, with
