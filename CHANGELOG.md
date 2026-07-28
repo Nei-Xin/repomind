@@ -21,6 +21,11 @@ under **Changed** with its migration impact.
   snapshot, and rolls back the live database if replacement validation fails.
 - CLI commands `export`, `import`, `backup`, and `restore`, including dry-run,
   explicit confirmation, no-overwrite, and active-session guards.
+- A rebuildable fixed-commit real-repository recovery drill covering logical
+  migration, physical recovery, corruption rejection, unreadable-database
+  approval, retained rollback snapshots, and P50/P95 operation latency.
+- V8 coverage reporting with enforceable aggregate floors and downloadable CI
+  artifacts. The main verification matrix now includes macOS.
 
 ### Changed
 
@@ -36,6 +41,12 @@ under **Changed** with its migration impact.
   commands.
 - The development baseline passes 144 tests across 31 files, and the
   rebuildable eight-task Agent fixture suite remains valid.
+- The real-repository recovery drill passed at commit `97f9816` with 15 L1
+  memories, 15 Evidence records, 10 L2 narratives, and one L3 profile. The
+  slowest measured P95 was 94.046 ms for confirmed physical restore on the
+  recorded Windows host.
+- The source-only V8 baseline is 83.00% statements/lines, 77.14% branches, and
+  94.33% functions; enforced floors are 80%, 75%, 90%, and 80% respectively.
 
 ## [0.12.0] - 2026-07-28
 

@@ -4,6 +4,17 @@ export default defineConfig({
   test: {
     environment: "node",
     fileParallelism: false,
-    coverage: { reporter: ["text", "html"] },
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      reporter: ["text", "html", "json-summary", "lcov"],
+      reportsDirectory: "coverage",
+      thresholds: {
+        statements: 80,
+        branches: 75,
+        functions: 90,
+        lines: 80,
+      },
+    },
   },
 });
