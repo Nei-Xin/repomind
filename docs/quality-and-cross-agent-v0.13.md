@@ -14,9 +14,9 @@ generated test repositories do not dilute or inflate the product-code result.
 | Lines | 83.00% | 80% |
 
 `npm run test:coverage` generates text, HTML, JSON summary, and LCOV reports.
-CI runs the same command on Ubuntu and uploads the complete `coverage/`
-directory. The floors are initial regression guards, not a claim that every
-critical path is sufficiently tested.
+CI builds the package, runs the same command on Ubuntu, and uploads the complete
+`coverage/` directory. The floors are initial regression guards, not a claim
+that every critical path is sufficiently tested.
 
 ## macOS
 
