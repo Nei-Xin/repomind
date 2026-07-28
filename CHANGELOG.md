@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-28
+
 ### Added
 
 - Versioned logical repository exports with deterministic SHA-256 checksums,
