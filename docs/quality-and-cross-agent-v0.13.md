@@ -33,20 +33,40 @@ with digest
 ## Second real Coding Agent
 
 The acceptance target is the existing v0.10 repository and data directory
-created by real OpenCode runs. The test uses Claude Code 2.1.220 with a
-one-command `--mcp-config` and `--strict-mcp-config`; it does not change Claude,
-OpenCode, or Codex global configuration.
+created by real OpenCode runs. The accepted test used Claude Code 2.1.220 with
+an isolated `--mcp-config` and `--strict-mcp-config`; it did not change
+OpenCode or Codex configuration. Claude Code used its configured
+`gpt-5.6-luna` model, so this proves a second real Agent host and MCP client,
+not an Anthropic-model comparison.
 
-The first attempt on 2026-07-28 did not reach RepoMind. Claude Code reported
-`OAuth session expired and could not be refreshed`, with zero input/output
-tokens and zero cost. Therefore second-Agent interoperability is **not yet
-accepted**. After Claude authentication is restored, rerun the two prompts in:
+The first attempt was blocked before MCP by an expired OAuth session. After
+authentication was restored, the formal run on 2026-07-28 passed:
+
+- Claude Code discovered all 18 RepoMind tools and reported the MCP server as
+  connected.
+- `repo_memory_search` read four memories created by the earlier OpenCode runs,
+  including the same active verified-command memory and two stale warnings.
+- `repo_memory_inspect` returned memory
+  `mem_fecf31ac-3e60-424d-9bfa-2723e78b6811`, one `test_result` Evidence item,
+  commit `2e0a80822d00aa387995131c58079288ec0ebd04`, and three related files.
+- `repo_profile_rebuild` created current L3 profile
+  `l3_41d61e91-a4bd-4282-8a7b-d80d63947c67`, version 1, from the eligible
+  OpenCode-created L1 source.
+- `repo_session_start` injected that current profile. A separate Claude Code
+  process called `repo_session_abandon` for
+  `ses_0ad277d1-fa45-4aef-8e62-9be530378fef`.
+- New Claude Code sessions independently repeated memory search and retrieved
+  the same persisted L3 profile through `repo_profile_get`.
+- CLI verification reported four memories, one repository profile, no open
+  Sessions, no running Host Runs, and a clean target Git worktree.
+
+The isolated configuration, prompts, initial authentication failure, and final
+acceptance summary are stored in:
 
 ```text
 D:\data\code\project\repomind-test\v0.13-cross-agent-claude-20260728
 ```
 
-Acceptance requires tool discovery, memory search and inspect against the
-OpenCode-created database, L3 rebuild/get, Session Start and Abandon, and a
-second independent Claude process proving persistence. An authentication
-failure is external evidence, not a RepoMind failure or a passing result.
+Result: **accepted**. This proves OpenCode and Claude Code can access one
+repository-scoped RepoMind database across independent processes. It does not
+evaluate relative model quality or remote LLM extraction.

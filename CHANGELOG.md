@@ -50,6 +50,10 @@ under **Changed** with its migration impact.
 - GitHub Actions run `30358584725` passed Ubuntu, Windows, macOS, coverage, and
   comparison jobs at commit `fd8093c`; macOS completed the full verification
   suite in 1 minute 24 seconds.
+- Real Claude Code 2.1.220 processes connected through isolated MCP
+  configuration, recalled and inspected memories created by prior OpenCode
+  runs, created and reloaded an L3 profile, and closed their RepoMind Session.
+  Final verification found no open Sessions and no target worktree changes.
 
 ## [0.12.0] - 2026-07-28
 

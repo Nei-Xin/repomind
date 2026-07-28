@@ -238,10 +238,10 @@ RepoMind v0.12.0 includes deterministic L2 Module Narratives and an
 evidence-backed L3 Repository Profile. v0.13 development adds the first
 versioned export, replace-import, backup, and restore loop. It does not include
 remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
-generation. Cross-Agent release proof, 10,000-L1 scale proof, merge import, and
-encrypted archives remain open. Source-only V8 coverage reporting, regression
-floors, and an actual successful macOS CI run are included in v0.13
-development. See
+generation. The 10,000-L1 scale proof, merge import, and encrypted archives
+remain open. Source-only V8 coverage reporting, regression floors, an actual
+successful macOS CI run, and OpenCode-to-Claude Code MCP interoperability are
+included in v0.13 development. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
