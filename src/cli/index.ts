@@ -22,6 +22,8 @@ import { hashAgentManifest, loadAgentManifest } from "../eval/agent/manifest.js"
 import { runAgentEvaluation } from "../eval/agent/runner.js";
 import { aggregateAgentReports, writeAgentAggregateReport } from "../eval/agent/aggregate.js";
 import { profileAgentReport, writeAgentProfileReport } from "../eval/agent/profile.js";
+import { runOpenCodeHost } from "../integrations/opencode/run.js";
+import { redactSecrets } from "../security/redaction.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -47,6 +49,7 @@ Usage:
   repomind vector-reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
+  repomind run --task <text> [--repo <path>] [--runner opencode] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--timeout <ms>] [--output <dir>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
   repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--lifecycle agent-managed|host-managed] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
@@ -87,7 +90,9 @@ const { values, positionals } = parseArgs({
     raw: { type: "string" },
     manifest: { type: "string" },
     runner: { type: "string" },
+    "runner-executable": { type: "string" },
     model: { type: "string" },
+    "max-memories": { type: "string" },
     lifecycle: { type: "string" },
     output: { type: "string" },
     timeout: { type: "string" },
@@ -124,6 +129,32 @@ function repositoryPath(): string {
   return values.repo ?? process.cwd();
 }
 
+function openCodeTextRenderer(): { feed: (chunk: string) => void; lastText: () => string } {
+  let buffer = "";
+  let rendered = "";
+  const renderLine = (line: string): void => {
+    if (!line.trim().startsWith("{")) return;
+    try {
+      const event = JSON.parse(line) as { type?: string; part?: { text?: unknown } };
+      if (event.type !== "text" || typeof event.part?.text !== "string" || !event.part.text.trim()) return;
+      rendered = redactSecrets(event.part.text.trim()).content;
+      console.log(rendered);
+    } catch { /* malformed Agent output is retained in the artifact */ }
+  };
+  return {
+    feed(chunk) {
+      buffer += chunk;
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
+        renderLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    },
+    lastText: () => rendered,
+  };
+}
+
 async function main(): Promise<void> {
   const command = positionals[0];
   if (!command || values.help) {
@@ -140,6 +171,58 @@ async function main(): Promise<void> {
       output({ projectId: context.marker.projectId, repositoryRoot: context.root, databasePath: context.database.path });
     } finally {
       context.database.close();
+    }
+    return;
+  }
+  if (command === "run") {
+    const runner = values.runner ?? "opencode";
+    if (runner !== "opencode") throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
+    const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
+    const maxMemories = values["max-memories"] ? Number(values["max-memories"]) : 5;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
+    if (!Number.isInteger(maxMemories) || maxMemories < 0 || maxMemories > 20) {
+      throw new RepoMindError("INVALID_INPUT", `Invalid --max-memories ${values["max-memories"]}`);
+    }
+    const controller = new AbortController();
+    let interruptedBy: NodeJS.Signals | null = null;
+    const interrupt = (signal: NodeJS.Signals): void => {
+      interruptedBy ??= signal;
+      controller.abort(signal);
+    };
+    const onSigint = (): void => interrupt("SIGINT");
+    const onSigterm = (): void => interrupt("SIGTERM");
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    const renderer = openCodeTextRenderer();
+    try {
+      const report = await runOpenCodeHost({
+        repository: repositoryPath(),
+        task: required(values.task, "--task"),
+        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
+        ...(values.model ? { model: values.model } : {}),
+        maxMemories,
+        timeoutMs,
+        ...(values.output ? { outputDirectory: values.output } : {}),
+        signal: controller.signal,
+        ...(!values.json ? {
+          onStatus: (message: string) => console.error(`[RepoMind] ${redactSecrets(message).content}`),
+          onStdout: renderer.feed,
+          onStderr: (chunk: string) => process.stderr.write(redactSecrets(chunk).content),
+        } : {}),
+      });
+      if (values.json) output(report);
+      else {
+        if (report.summary !== renderer.lastText()) console.log(report.summary);
+        console.error(`[RepoMind] exit=${report.agent.exitCode ?? "none"} session=${report.session.status} retrieved=${report.session.retrievedMemories}`);
+      }
+      if (!report.succeeded) {
+        process.exitCode = interruptedBy === "SIGINT" ? 130
+          : interruptedBy === "SIGTERM" ? 143
+            : report.agent.exitCode && report.agent.exitCode > 0 ? report.agent.exitCode : 1;
+      }
+    } finally {
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
     }
     return;
   }

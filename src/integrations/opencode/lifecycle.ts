@@ -22,6 +22,10 @@ export interface HostLifecycleCommit {
   result: CommitSessionResult;
 }
 
+export interface HostLifecycleAbandon {
+  abandonMs: number;
+}
+
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
@@ -93,6 +97,23 @@ export function commitHostLifecycle(input: {
     }
   });
   return { commitMs: round(performance.now() - started), result };
+}
+
+export function abandonHostLifecycle(
+  repository: string,
+  sessionId: string,
+  dataDirectory?: string,
+): HostLifecycleAbandon {
+  const started = performance.now();
+  withDataDirectorySync(dataDirectory, () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      core.abandonSession(sessionId);
+    } finally {
+      core.close();
+    }
+  });
+  return { abandonMs: round(performance.now() - started) };
 }
 
 function renderMemory(memory: MemoryResult, index: number): string {

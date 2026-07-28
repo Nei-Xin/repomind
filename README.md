@@ -47,6 +47,25 @@ repomind search "SQLite loader" --json
 repomind inspect <memory-id> --json
 ```
 
+Run an OpenCode task with RepoMind managing the complete lifecycle outside the
+model loop:
+
+```powershell
+repomind run `
+  --repo D:\path\to\repository `
+  --task "Fix invoice quantity arithmetic" `
+  --model cliproxyapi/gpt-5.6-terra
+```
+
+`repomind run` starts and retrieves before OpenCode, injects the returned
+memories, captures command and test evidence, and commits after a normal Agent
+exit. Omit `--model` to use OpenCode's configured default. Interrupted, timed
+out, or unstartable Agent processes abandon the session instead of leaving it
+open. Redacted `events.jsonl`, `stderr.log`, and `run.json` artifacts are stored
+under `~/.repomind/runs/` by default. See
+[`docs/opencode-integration.md`](docs/opencode-integration.md) for exit behavior,
+configuration isolation, and machine-readable output.
+
 When a related file changes or is deleted, later search and inspect calls mark the memory `uncertain` and return a concrete warning plus expected/current file hashes. RepoMind does not automatically delete or invalidate the memory because a file change means the conclusion needs review, not necessarily that it is wrong.
 
 Record an explicit repository fact without an LLM:

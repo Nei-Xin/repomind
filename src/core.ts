@@ -153,23 +153,33 @@ export class RepositoryMemoryCore {
       this.insertEvidence(sessionId, "user_requirement", rawTask, {}, null);
       this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline" }, snapshot.head);
     });
-    return {
-      sessionId,
-      repositoryId: this.context.marker.projectId,
-      baseline: snapshot,
-      memories: this.search(task, { limit: input.maxMemories ?? 5 }),
-    };
+    try {
+      return {
+        sessionId,
+        repositoryId: this.context.marker.projectId,
+        baseline: snapshot,
+        memories: this.search(task, { limit: input.maxMemories ?? 5 }),
+      };
+    } catch (error) {
+      try { this.abandonSession(sessionId); } catch { /* preserve the retrieval error */ }
+      throw error;
+    }
   }
 
   async startSessionHybrid(input: StartSessionInput): Promise<StartSessionResult> {
     const started = this.startSession(input);
-    const retrieval = await this.searchHybrid(input.task, { limit: input.maxMemories ?? 5 });
-    return {
-      ...started,
-      memories: retrieval.memories,
-      retrievalStrategy: retrieval.strategy,
-      ...(retrieval.fallbackReason ? { retrievalFallbackReason: retrieval.fallbackReason } : {}),
-    };
+    try {
+      const retrieval = await this.searchHybrid(input.task, { limit: input.maxMemories ?? 5 });
+      return {
+        ...started,
+        memories: retrieval.memories,
+        retrievalStrategy: retrieval.strategy,
+        ...(retrieval.fallbackReason ? { retrievalFallbackReason: retrieval.fallbackReason } : {}),
+      };
+    } catch (error) {
+      try { this.abandonSession(started.sessionId); } catch { /* preserve the retrieval error */ }
+      throw error;
+    }
   }
 
   commitSession(input: CommitSessionInput): CommitSessionResult {

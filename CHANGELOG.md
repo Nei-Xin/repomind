@@ -7,6 +7,27 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- `repomind run --task <text>` as a daily OpenCode entry point for the
+  host-managed lifecycle. It retrieves memory before Agent execution, injects
+  the evidence-backed context, captures OpenCode JSON events, and commits
+  command and test evidence without exposing RepoMind MCP to the model loop.
+- Abort, timeout, spawn-failure, and output-setup cleanup for daily runs. A
+  process that does not complete normally abandons its RepoMind session rather
+  than leaving it open; normal nonzero Agent exits are committed as failed
+  sessions so their evidence remains inspectable.
+- Redacted run artifacts under the RepoMind data directory, including Agent
+  events, stderr, and a machine-readable lifecycle report with phase status,
+  retrieval count, exit code, event metrics, and commit result.
+
+### Security
+
+- Daily host-managed runs overlay OpenCode configuration in memory, disable the
+  conventional `mcp.repomind` entry, run with external plugins disabled, and
+  redact captured output before display or persistence. User project
+  configuration files are not modified.
+
 ## [0.8.0] - 2026-07-28
 
 ### Added
