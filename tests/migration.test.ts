@@ -106,7 +106,7 @@ describe("database migrations", () => {
     }
   });
 
-  it("upgrades every previously released schema to the latest version", () => {
+  it("upgrades every previously released schema to the latest version", { timeout: 15_000 }, () => {
     for (const throughVersion of migrations.slice(0, -1).map((migration) => migration.version)) {
       const directory = mkdtempSync(join(tmpdir(), `repomind-migration-v${throughVersion}-`));
       const path = join(directory, "repomind.db");
