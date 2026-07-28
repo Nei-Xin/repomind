@@ -75,4 +75,32 @@ describe("staleness refresh cost", () => {
     expect(core.search("settled file rule")[0]).toMatchObject({ status: "active" });
     core.close();
   });
+
+  it("keeps the repository-wide fast path correct when many memories share a file", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    for (let index = 0; index < 250; index++) {
+      core.record({
+        type: "convention",
+        title: `Scaled shared rule ${index}`,
+        content: `Scaled rule ${index} points at the shared readme.`,
+        relatedFiles: ["README.txt"],
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+
+    try {
+      reads.length = 0;
+      expect(core.search("scaled shared rule").length).toBeGreaterThan(0);
+      expect(reads.filter((path) => path.endsWith("README.txt"))).toEqual([]);
+
+      writeFileSync(join(repository, "README.txt"), "changed for every linked memory\n", "utf8");
+      const changed = core.search("scaled shared rule");
+      expect(changed.length).toBeGreaterThan(0);
+      expect(changed.every((memory) => memory.status === "uncertain")).toBe(true);
+      expect(core.status()).toMatchObject({ uncertainMemories: 250 });
+      expect(reads.filter((path) => path.endsWith("README.txt"))).toHaveLength(1);
+    } finally {
+      core.close();
+    }
+  });
 });

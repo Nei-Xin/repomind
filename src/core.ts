@@ -1042,6 +1042,41 @@ export class RepositoryMemoryCore {
 
   private refreshStaleMemoryStates(memoryId?: string): void {
     const db = this.context.database.raw;
+    const checkedAt = Date.now();
+
+    // Searches refresh the whole repository, and large repositories commonly
+    // attach thousands of memories to a small set of files. Check each unique
+    // stored fingerprint first so the unchanged case does not materialize and
+    // group every memory-file row in JavaScript.
+    if (!memoryId) {
+      const fingerprints = db.prepare(`
+        SELECT DISTINCT mf.file_path, mf.file_hash, mf.file_size, mf.file_mtime_ms
+        FROM memories m JOIN memory_files mf ON mf.memory_id=m.id
+        WHERE m.repository_id=? AND m.status IN ('active','uncertain')
+      `).all(this.context.marker.projectId) as Array<{
+        file_path: string;
+        file_hash: string | null;
+        file_size: number | null;
+        file_mtime_ms: number | null;
+      }>;
+      let allStable = true;
+      for (const fingerprint of fingerprints) {
+        const stat = this.fileStat(fingerprint.file_path);
+        const raciness = stat ? checkedAt - stat.mtimeMs : 0;
+        if (
+          !stat
+          || !fingerprint.file_hash
+          || fingerprint.file_size !== stat.size
+          || fingerprint.file_mtime_ms !== stat.mtimeMs
+          || raciness <= RACY_MTIME_WINDOW_MS
+        ) {
+          allStable = false;
+          break;
+        }
+      }
+      if (allStable) return;
+    }
+
     const rows = db.prepare(`
       SELECT m.id, m.status, m.status_reason_json, mf.file_path, mf.file_hash, mf.file_size, mf.file_mtime_ms
       FROM memories m JOIN memory_files mf ON mf.memory_id=m.id
@@ -1082,7 +1117,6 @@ export class RepositoryMemoryCore {
       return value;
     };
 
-    const checkedAt = Date.now();
     const updates: Array<{ id: string; previousStatus: string; previousReason: string | null; reason: MemoryStatusReason & { kind: "stale_files" } }> = [];
     const backfill: Array<{ memoryId: string; filePath: string; size: number; mtimeMs: number }> = [];
     for (const [id, files] of grouped) {
