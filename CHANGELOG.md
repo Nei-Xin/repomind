@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-28
+
 ### Added
 
 - `repomind run --task <text>` as a daily OpenCode entry point for the
@@ -31,6 +33,15 @@ under **Changed** with its migration impact.
   conventional `mcp.repomind` entry, run with external plugins disabled, and
   redact captured output before display or persistence. User project
   configuration files are not modified.
+
+### Validation
+
+- The rebuildable daily-run acceptance completed all eight OpenCode tasks with
+  integrity and acceptance passing: 8/8 retrieved memory, exited cleanly,
+  committed sessions, and passed both public and hidden checks. Agents made
+  zero RepoMind MCP calls and left zero open sessions.
+- The complete method, per-task results, provenance, report hashes, and limits
+  are preserved in `docs/agent-run-acceptance-results-v0.9.md`.
 
 ## [0.8.0] - 2026-07-28
 
