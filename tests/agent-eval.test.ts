@@ -8,6 +8,7 @@ import { aggregateAgentReports, renderAgentAggregateMarkdown } from "../src/eval
 import { hashAgentManifest, loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
 import { buildAgentReport, type AgentArm, type AgentRunResult } from "../src/eval/agent/report.js";
 import { parseChangedFiles, runAgentEvaluation, type ProcessExecutor } from "../src/eval/agent/runner.js";
+import { analyzeOpenCodeOutcome } from "../src/integrations/opencode/lifecycle.js";
 
 const TEST_PROVENANCE = {
   repoMindVersion: "test", repoMindCommit: "abc", repoMindDirty: false, node: process.version,
@@ -32,6 +33,19 @@ describe("agent event analysis", () => {
     ].join("\n"));
     expect(metrics).toMatchObject({ turns: 1, fileReads: 2, repeatedFileReads: 1, repoMindCalls: 1, retrievedMemories: 1 });
     expect(metrics.tokens).toEqual({ input: 12, output: 3, reasoning: 2, cacheRead: 4, cacheWrite: 1 });
+  });
+
+  it("extracts the final response and test evidence for host commits", () => {
+    const outcome = analyzeOpenCodeOutcome([
+      JSON.stringify({ type: "tool_use", part: { tool: "bash", state: {
+        status: "completed", input: { command: "npm test" }, output: "2 tests passed", metadata: { exit: 0 },
+      } } }),
+      JSON.stringify({ type: "text", part: { text: "Fixed the invoice calculation." } }),
+    ].join("\n"), "fallback");
+    expect(outcome.summary).toBe("Fixed the invoice calculation.");
+    expect(outcome.commands).toEqual([{
+      command: "npm test", exitCode: 0, summary: "2 tests passed", isTest: true,
+    }]);
   });
 });
 
@@ -79,15 +93,23 @@ describe("agent manifest", () => {
 
 function reportRun(arm: AgentArm, hiddenPass: boolean): AgentRunResult {
   const repoMind = arm === "repomind";
+  const wallDurationMs = repoMind ? 110 : arm === "full-history" ? 120 : 100;
   return {
     taskId: "history", arm, iteration: 1, repository: `/${arm}`,
     requestedCommit: "abc", baseCommit: "abc", agentExitCode: 0, agentSignal: null,
-    wallDurationMs: repoMind ? 110 : arm === "full-history" ? 120 : 100,
+    startMs: repoMind ? null : 0, agentMs: wallDurationMs, commitMs: repoMind ? null : 0,
+    totalLifecycleMs: wallDurationMs, wallDurationMs,
     publicChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
     hiddenChecks: [{ command: "node", args: [], exitCode: hiddenPass ? 0 : 1, signal: null, stdout: "", stderr: "", durationMs: 1, passed: hiddenPass }],
     changedFiles: ["answer.js"], unexpectedChanges: [],
     sessionsBeforeCleanup: repoMind ? [{ id: "s1", status: "committed" }] : [],
     abandonedSessions: 0, openSessionsAfterCleanup: 0,
+    lifecycle: {
+      mode: repoMind ? "agent-managed" : "none", timing: repoMind ? "nested-in-agent" : "not-applicable",
+      startAttempted: repoMind, startSucceeded: repoMind, sessionId: repoMind ? "s1" : null,
+      retrievedMemories: repoMind ? 1 : 0, commitAttempted: repoMind, commitSucceeded: repoMind,
+      commitStatus: repoMind ? "committed" : null, evidenceCreated: 0, error: null,
+    },
     events: {
       turns: 1,
       tokens: { input: repoMind ? 70 : arm === "full-history" ? 130 : 100, output: repoMind ? 12 : 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
@@ -155,7 +177,7 @@ describe("paired agent report", () => {
 });
 
 describe("aggregate agent report", () => {
-  it("recomputes paired metrics from traceable version 4 source reports", () => {
+  it("recomputes paired metrics from traceable report-v4 and report-v5 sources", () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-aggregate-"));
     try {
       const paths = ["windows.json", "ubuntu.json"].map((name, index) => {
@@ -164,8 +186,20 @@ describe("aggregate agent report", () => {
           provenance: { ...TEST_PROVENANCE, os: { ...TEST_PROVENANCE.os, platform: index ? "linux" : "win32" } },
           runs: [reportRun("no-memory", false), reportRun("full-history", false), reportRun("repomind", true)],
         });
+        const serialized = JSON.parse(JSON.stringify(report)) as Record<string, unknown>;
+        if (index === 1) {
+          serialized.version = 4;
+          delete serialized.repoMindLifecycle;
+          for (const run of serialized.runs as Array<Record<string, unknown>>) {
+            delete run.startMs;
+            delete run.agentMs;
+            delete run.commitMs;
+            delete run.totalLifecycleMs;
+            delete run.lifecycle;
+          }
+        }
         const path = join(root, name);
-        writeFileSync(path, `${JSON.stringify(report)}\n`, "utf8");
+        writeFileSync(path, `${JSON.stringify(serialized)}\n`, "utf8");
         return path;
       });
       const aggregate = aggregateAgentReports(paths);
@@ -183,7 +217,7 @@ describe("aggregate agent report", () => {
 });
 
 describe("controlled agent evaluation", () => {
-  it("runs isolated rotating arms and writes reports", () => {
+  it("runs isolated rotating arms and writes reports", async () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-eval-"));
     const base = join(root, "base");
     const output = join(root, "output");
@@ -216,7 +250,7 @@ describe("controlled agent evaluation", () => {
         }
         return real(request);
       };
-      const report = runAgentEvaluation({
+      const report = await runAgentEvaluation({
         manifest: parseAgentManifest({
           version: 2, name: "fake suite", tasks: [{
             id: "smoke", baseRepository: base, baseCommit: commit, prompt: "Do it",
@@ -244,7 +278,8 @@ describe("controlled agent evaluation", () => {
         runnerVersion: "fake-opencode 1.0",
         taskBaseCommits: { smoke: commit },
       });
-      expect(report.version).toBe(4);
+      expect(report.version).toBe(5);
+      expect(report.repoMindLifecycle).toBe("agent-managed");
       expect(runnerArgs.every((args) => args.includes("--pure"))).toBe(true);
       expect(prompts.some((prompt) => prompt.includes("A failed attempt used the legacy answer."))).toBe(true);
       expect(report.integrity).toEqual({ passed: true, failures: [] });
@@ -254,7 +289,7 @@ describe("controlled agent evaluation", () => {
       expect(markdown).toContain("RepoMind vs full-history");
       expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).not.toHaveProperty("runs.0.rawLog");
 
-      const legacy = runAgentEvaluation({
+      const legacy = await runAgentEvaluation({
         manifest: parseAgentManifest({
           version: 1, name: "legacy suite", tasks: [{
             id: "legacy", baseRepository: base, baseCommit: commit, prompt: "Do it",
@@ -271,6 +306,31 @@ describe("controlled agent evaluation", () => {
       expect(legacy.runs.map((run) => run.arm)).toEqual(["no-memory", "repomind"]);
       expect(legacy.arms["full-history"]).toBeUndefined();
       expect(legacy.comparisons["full-history"]).toBeNull();
+
+      const host = await runAgentEvaluation({
+        manifest: parseAgentManifest({
+          version: 1, name: "host lifecycle", tasks: [{
+            id: "host", baseRepository: base, baseCommit: commit, prompt: "Use the hidden rule",
+            publicChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
+            hiddenChecks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
+            memories: [{ type: "decision", title: "Hidden rule", content: "Use the historical answer." }],
+            allowedChanges: [],
+          }],
+        }),
+        model: "test/model", repeat: 1, outputDirectory: join(root, "host-output"),
+        repoMindCli: join(process.cwd(), "dist", "cli", "index.js"),
+        lifecycleMode: "host-managed", runnerExecutable: "fake-opencode", execute,
+      });
+      const hostRun = host.runs.find((run) => run.arm === "repomind")!;
+      expect(host.repoMindLifecycle).toBe("host-managed");
+      expect(hostRun.lifecycle).toMatchObject({
+        mode: "host-managed", startSucceeded: true, retrievedMemories: 1,
+        commitSucceeded: true, commitStatus: "committed",
+      });
+      expect(hostRun.events.repoMindCalls).toBe(0);
+      expect(hostRun.totalLifecycleMs).toBeCloseTo(hostRun.startMs! + hostRun.agentMs + hostRun.commitMs!, 3);
+      expect(prompts.at(-1)).toContain("Hidden rule");
+      expect(host.integrity).toEqual({ passed: true, failures: [] });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

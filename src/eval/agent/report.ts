@@ -3,6 +3,8 @@ import type { AgentEventMetrics } from "./events.js";
 
 export type AgentArm = "no-memory" | "full-history" | "repomind";
 export type AgentBaselineArm = Exclude<AgentArm, "repomind">;
+export type RepoMindLifecycleMode = "agent-managed" | "host-managed";
+export type AgentLifecycleMode = "none" | RepoMindLifecycleMode;
 export type PairedMetricKey = "hiddenSuccess" | "publicSuccess" | "wallDurationMs" | "inputTokens" | "outputTokens" | "fileReads";
 
 export interface CheckResult {
@@ -25,6 +27,10 @@ export interface AgentRunResult {
   baseCommit: string;
   agentExitCode: number | null;
   agentSignal: string | null;
+  startMs: number | null;
+  agentMs: number;
+  commitMs: number | null;
+  totalLifecycleMs: number;
   wallDurationMs: number;
   publicChecks: CheckResult[];
   hiddenChecks: CheckResult[];
@@ -33,6 +39,19 @@ export interface AgentRunResult {
   sessionsBeforeCleanup: Array<{ id: string; status: string }>;
   abandonedSessions: number;
   openSessionsAfterCleanup: number;
+  lifecycle: {
+    mode: AgentLifecycleMode;
+    timing: "not-applicable" | "nested-in-agent" | "sequential";
+    startAttempted: boolean;
+    startSucceeded: boolean;
+    sessionId: string | null;
+    retrievedMemories: number;
+    commitAttempted: boolean;
+    commitSucceeded: boolean;
+    commitStatus: string | null;
+    evidenceCreated: number;
+    error: string | null;
+  };
   events: AgentEventMetrics;
 }
 
@@ -88,6 +107,10 @@ interface ArmSummary {
   publicPasses: number;
   hiddenPasses: number;
   meanWallDurationMs: number;
+  meanStartMs: number | null;
+  meanAgentMs: number;
+  meanCommitMs: number | null;
+  meanTotalLifecycleMs: number;
   meanInputTokens: number;
   meanOutputTokens: number;
   meanFileReads: number;
@@ -96,12 +119,13 @@ interface ArmSummary {
 }
 
 export interface AgentEvalReport {
-  version: 4;
+  version: 5;
   name: string;
   generatedAt: string;
   runner: "opencode";
   model: string;
   repeat: number;
+  repoMindLifecycle: RepoMindLifecycleMode;
   outputDirectory: string;
   provenance: AgentProvenance;
   runs: AgentRunResult[];
@@ -120,6 +144,7 @@ export interface BuildAgentReportInput {
   runner: "opencode";
   model: string;
   repeat: number;
+  repoMindLifecycle?: RepoMindLifecycleMode;
   outputDirectory: string;
   provenance: AgentProvenance;
   runs: AgentRunResult[];
@@ -158,11 +183,21 @@ function metricValue(run: AgentRunResult, key: PairedMetricKey): number {
   switch (key) {
     case "hiddenSuccess": return passed(run.hiddenChecks);
     case "publicSuccess": return passed(run.publicChecks);
-    case "wallDurationMs": return run.wallDurationMs;
+    case "wallDurationMs": return run.totalLifecycleMs;
     case "inputTokens": return run.events.tokens.input;
     case "outputTokens": return run.events.tokens.output;
     case "fileReads": return run.events.fileReads;
   }
+}
+
+function retrievedMemories(run: AgentRunResult): number {
+  return run.lifecycle.mode === "host-managed" ? run.lifecycle.retrievedMemories : run.events.retrievedMemories;
+}
+
+function committedSession(run: AgentRunResult): boolean {
+  return run.lifecycle.mode === "host-managed"
+    ? run.lifecycle.commitSucceeded && run.lifecycle.commitStatus === "committed"
+    : run.sessionsBeforeCleanup.some((session) => session.status === "committed");
 }
 
 function collectPairs(runs: AgentRunResult[], baselineArm: AgentBaselineArm): AgentPair[] {
@@ -244,9 +279,9 @@ function evaluateAcceptance(
   const inputTokens = metric(noMemory, "inputTokens");
   const fileReads = metric(noMemory, "fileReads");
   const repoMindRuns = runs.filter((run) => run.arm === "repomind");
-  const retrievalRate = repoMindRuns.length ? repoMindRuns.filter((run) => run.events.retrievedMemories > 0).length / repoMindRuns.length : 0;
+  const retrievalRate = repoMindRuns.length ? repoMindRuns.filter((run) => retrievedMemories(run) > 0).length / repoMindRuns.length : 0;
   const sessionCommitRate = repoMindRuns.length
-    ? repoMindRuns.filter((run) => run.sessionsBeforeCleanup.some((session) => session.status === "committed")).length / repoMindRuns.length
+    ? repoMindRuns.filter(committedSession).length / repoMindRuns.length
     : 0;
   if (criteria.minRepoMindHiddenPassRate !== undefined) checks.push({
     id: "repoMindHiddenPassRate", passed: hidden.repoMindMean >= criteria.minRepoMindHiddenPassRate,
@@ -307,17 +342,25 @@ function evaluateAcceptance(
 }
 
 function summarizeArm(runs: AgentRunResult[]): ArmSummary {
+  const presentMean = (values: Array<number | null>): number | null => {
+    const present = values.filter((value): value is number => value !== null);
+    return present.length ? round(mean(present)) : null;
+  };
   return {
     runs: runs.length,
     agentCleanExits: runs.filter((run) => run.agentExitCode === 0).length,
     publicPasses: runs.filter((run) => passed(run.publicChecks)).length,
     hiddenPasses: runs.filter((run) => passed(run.hiddenChecks)).length,
-    meanWallDurationMs: round(mean(runs.map((run) => run.wallDurationMs))),
+    meanWallDurationMs: round(mean(runs.map((run) => run.totalLifecycleMs))),
+    meanStartMs: presentMean(runs.map((run) => run.startMs)),
+    meanAgentMs: round(mean(runs.map((run) => run.agentMs))),
+    meanCommitMs: presentMean(runs.map((run) => run.commitMs)),
+    meanTotalLifecycleMs: round(mean(runs.map((run) => run.totalLifecycleMs))),
     meanInputTokens: round(mean(runs.map((run) => run.events.tokens.input))),
     meanOutputTokens: round(mean(runs.map((run) => run.events.tokens.output))),
     meanFileReads: round(mean(runs.map((run) => run.events.fileReads))),
     repoMindCalls: runs.reduce((sum, run) => sum + run.events.repoMindCalls, 0),
-    retrievedMemories: runs.reduce((sum, run) => sum + run.events.retrievedMemories, 0),
+    retrievedMemories: runs.reduce((sum, run) => sum + retrievedMemories(run), 0),
   };
 }
 
@@ -340,12 +383,30 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
   }
   for (const run of input.runs) {
     const label = `${run.taskId}/${run.arm}-${run.iteration}`;
+    const expectedLifecycle = input.repoMindLifecycle ?? "agent-managed";
     if (run.agentExitCode !== 0) failures.push(`${label}: agent exited with ${run.agentExitCode ?? run.agentSignal ?? "unknown"}`);
     if (run.baseCommit !== run.requestedCommit) failures.push(`${label}: clone is not at the resolved base commit`);
     if (run.unexpectedChanges.length) failures.push(`${label}: unexpected changes: ${run.unexpectedChanges.join(", ")}`);
     if ([...run.publicChecks, ...run.hiddenChecks].some((check) => check.exitCode === null)) failures.push(`${label}: a check could not be executed`);
     if (run.openSessionsAfterCleanup) failures.push(`${label}: open RepoMind sessions remain after cleanup`);
-    if (run.arm === "repomind" && run.events.repoMindCalls === 0) failures.push(`${label}: RepoMind MCP was not called`);
+    if ([run.startMs, run.agentMs, run.commitMs, run.totalLifecycleMs].some((value) => value !== null && (!Number.isFinite(value) || value < 0))) {
+      failures.push(`${label}: lifecycle timing contains an invalid value`);
+    }
+    if (run.lifecycle.error) failures.push(`${label}: lifecycle error: ${run.lifecycle.error}`);
+    if (run.wallDurationMs !== run.totalLifecycleMs) failures.push(`${label}: wall time does not equal total lifecycle time`);
+    if (run.lifecycle.mode === "host-managed") {
+      const components = (run.startMs ?? 0) + run.agentMs + (run.commitMs ?? 0);
+      if (Math.abs(components - run.totalLifecycleMs) > 2) failures.push(`${label}: lifecycle phases do not add up to total time`);
+    }
+    if (run.arm === "repomind" && run.lifecycle.mode === "agent-managed" && run.events.repoMindCalls === 0) failures.push(`${label}: RepoMind MCP was not called`);
+    if (run.arm === "repomind" && run.lifecycle.mode === "host-managed") {
+      if (run.events.repoMindCalls !== 0) failures.push(`${label}: host-managed Agent called RepoMind MCP`);
+      if (!run.lifecycle.startSucceeded) failures.push(`${label}: host-managed session start failed`);
+      if (!run.lifecycle.commitSucceeded) failures.push(`${label}: host-managed session commit failed`);
+    }
+    if (run.arm === "repomind" && run.lifecycle.mode === "none") failures.push(`${label}: RepoMind lifecycle is missing`);
+    if (run.arm === "repomind" && run.lifecycle.mode !== expectedLifecycle) failures.push(`${label}: RepoMind lifecycle does not match report mode ${expectedLifecycle}`);
+    if (run.arm !== "repomind" && run.lifecycle.mode !== "none") failures.push(`${label}: ${run.arm} arm has a RepoMind lifecycle`);
     if (run.arm !== "repomind" && run.events.repoMindCalls !== 0) failures.push(`${label}: ${run.arm} arm called RepoMind MCP`);
   }
   const comparisons: AgentEvalReport["comparisons"] = {
@@ -354,8 +415,8 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
   };
   const integrity = { passed: failures.length === 0, failures };
   return {
-    version: 4, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
-    model: input.model, repeat: input.repeat, outputDirectory: input.outputDirectory,
+    version: 5, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
+    model: input.model, repeat: input.repeat, repoMindLifecycle: input.repoMindLifecycle ?? "agent-managed", outputDirectory: input.outputDirectory,
     provenance: input.provenance, runs: input.runs, arms, comparisons, integrity,
     acceptance: evaluateAcceptance(input.acceptanceCriteria, integrity.passed, comparisons, input.runs),
   };
@@ -384,19 +445,19 @@ function comparisonMarkdown(comparison: PairedComparison): string {
 export function renderAgentMarkdown(report: AgentEvalReport): string {
   const armRows = (["no-memory", "full-history", "repomind"] as const).flatMap((arm) => {
     const value = report.arms[arm];
-    return value ? [`| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanWallDurationMs / 1000).toFixed(1)} s | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`] : [];
+    return value ? [`| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanTotalLifecycleMs / 1000).toFixed(1)} s | ${value.meanStartMs === null ? "n/a" : `${value.meanStartMs.toFixed(1)} ms`} | ${value.meanAgentMs.toFixed(1)} ms | ${value.meanCommitMs === null ? "n/a" : `${value.meanCommitMs.toFixed(1)} ms`} | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`] : [];
   }).join("\n");
   const comparisonSections = (["no-memory", "full-history"] as const).flatMap((arm) => {
     const comparison = report.comparisons[arm];
     return comparison ? [comparisonMarkdown(comparison)] : [];
   }).join("\n\n");
   const runs = report.runs.map((run) =>
-    `| ${run.taskId} | ${run.arm}-${run.iteration} | ${passed(run.hiddenChecks) ? "pass" : "fail"} | ${passed(run.publicChecks) ? "pass" : "fail"} | ${(run.wallDurationMs / 1000).toFixed(1)} s | ${run.events.tokens.input} | ${run.events.fileReads} | ${run.events.repoMindCalls} |`,
+    `| ${run.taskId} | ${run.arm}-${run.iteration} | ${run.lifecycle.mode} | ${passed(run.hiddenChecks) ? "pass" : "fail"} | ${passed(run.publicChecks) ? "pass" : "fail"} | ${run.startMs === null ? "n/a" : run.startMs.toFixed(1)} | ${run.agentMs.toFixed(1)} | ${run.commitMs === null ? "n/a" : run.commitMs.toFixed(1)} | ${run.totalLifecycleMs.toFixed(1)} | ${run.events.tokens.input} | ${run.events.fileReads} | ${run.events.repoMindCalls} |`,
   ).join("\n");
   const acceptanceRows = report.acceptance.checks.map((check) =>
     `| ${check.id} | ${check.passed ? "yes" : "NO"} | ${String(check.measured)} | ${check.target} | ${check.detail} |`,
   ).join("\n");
   const dirty = report.provenance.repoMindDirty === null ? "unavailable" : String(report.provenance.repoMindDirty);
   const provenanceRows = Object.entries(report.provenance.taskBaseCommits).map(([task, commit]) => `| task:${task} | \`${commit}\` |`).join("\n");
-  return `# RepoMind controlled agent benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| RepoMind worktree dirty | ${dirty} |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n## Results\n\n| Arm | Hidden checks | Public checks | Mean wall time | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Hidden | Public | Wall time | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
+  return `# RepoMind controlled agent benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepoMind lifecycle: ${report.repoMindLifecycle}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| RepoMind worktree dirty | ${dirty} |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n## Results\n\n| Arm | Hidden checks | Public checks | Mean total | Mean start | Mean Agent | Mean commit | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Lifecycle | Hidden | Public | Start ms | Agent ms | Commit ms | Total ms | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
 }

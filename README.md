@@ -142,12 +142,12 @@ The comparison benchmark scores the context bundle each memory strategy delivers
 Run a controlled OpenCode three-arm task benchmark:
 
 ```bash
-repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-terra --repeat 3 --output agent-results --strict --require-acceptance --json
+repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-terra --lifecycle host-managed --repeat 3 --output agent-results --strict --require-acceptance --json
 ```
 
-Manifest v2 compares no-memory, raw full-history, and RepoMind arms. Each arm starts from a fresh clone at the same commit, and execution order rotates by repetition. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. Reports include paired deltas against both baselines, separately configured acceptance gates, and full provenance. A reproducible eight-task suite can be generated with `node benchmarks/agent-suite/create.mjs <new-directory>` and validated with `npm run bench:agent-fixtures`.
+Manifest v2 compares no-memory, raw full-history, and RepoMind arms. Each arm starts from a fresh clone at the same commit, and execution order rotates by repetition. `--lifecycle host-managed` starts retrieval before OpenCode, injects the returned memories, and commits the session after Agent execution and external checks. The backward-compatible default is `agent-managed`, where OpenCode calls RepoMind MCP tools itself. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. Report v5 includes paired deltas, lifecycle phase telemetry, separately configured acceptance gates, and full provenance. A reproducible eight-task suite can be generated with `node benchmarks/agent-suite/create.mjs <new-directory>` and validated with `npm run bench:agent-fixtures`.
 
-Aggregate multiple report v4 files without losing their provenance:
+Aggregate multiple report v4 or v5 files without losing their provenance:
 
 ```bash
 repomind eval --agent-summary --reports "results/**/summary.json" --output aggregate-results --strict --json

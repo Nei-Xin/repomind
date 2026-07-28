@@ -12,6 +12,17 @@ under **Changed** with its migration impact.
 - `repomind eval --agent-profile` for offline attribution of Agent wall time,
   model turns, tokens, direct RepoMind MCP duration, and the model cycles around
   session start and commit calls from an existing report-v4 result.
+- Reusable OpenCode host-lifecycle helpers for starting retrieval, injecting
+  memory context, extracting Agent evidence, and committing a session outside
+  the model loop.
+- `repomind eval --agent --lifecycle host-managed` with sequential start,
+  Agent, commit timing and report-v5 lifecycle telemetry. The existing
+  `agent-managed` MCP workflow remains the default.
+
+### Compatibility
+
+- Agent report writers now emit schema v5. Aggregation and offline phase
+  profiling continue to accept preserved schema-v4 reports.
 
 ## [0.7.1] - 2026-07-28
 

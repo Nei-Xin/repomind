@@ -49,7 +49,7 @@ Usage:
   repomind session-abandon <session-id> [--repo <path>]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
-  repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
+  repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--lifecycle agent-managed|host-managed] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
   repomind eval --agent-summary --reports <glob> [--output <dir>] [--strict] [--json]
   repomind eval --agent-profile --report <summary.json> [--raw <dir>] [--output <dir>] [--strict] [--json]
   repomind mcp
@@ -88,6 +88,7 @@ const { values, positionals } = parseArgs({
     manifest: { type: "string" },
     runner: { type: "string" },
     model: { type: "string" },
+    lifecycle: { type: "string" },
     output: { type: "string" },
     timeout: { type: "string" },
     fixtures: { type: "string" },
@@ -166,15 +167,20 @@ async function main(): Promise<void> {
       if (runner !== "opencode") throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
       const repeat = values.repeat ? Number(values.repeat) : 3;
       const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
+      const lifecycleMode = values.lifecycle ?? "agent-managed";
+      if (lifecycleMode !== "agent-managed" && lifecycleMode !== "host-managed") {
+        throw new RepoMindError("INVALID_INPUT", `Unsupported --lifecycle ${lifecycleMode}`);
+      }
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
       const manifestPath = required(values.manifest, "--manifest");
-      const report = runAgentEvaluation({
+      const report = await runAgentEvaluation({
         manifest: loadAgentManifest(manifestPath),
         manifestSha256: hashAgentManifest(manifestPath),
         model: values.model ?? "cliproxyapi/gpt-5.6-terra",
         repeat,
         outputDirectory: values.output ?? "agent-results",
         repoMindCli: fileURLToPath(import.meta.url),
+        lifecycleMode,
         timeoutMs,
       });
       output(report);

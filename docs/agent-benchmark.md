@@ -11,6 +11,7 @@ repomind eval --agent `
   --manifest D:\path\to\manifest.json `
   --runner opencode `
   --model cliproxyapi/gpt-5.6-terra `
+  --lifecycle host-managed `
   --repeat 3 `
   --output D:\path\to\results `
   --strict `
@@ -24,6 +25,25 @@ repetition. The RepoMind arm gets an isolated data directory and the manifest
 memories. The full-history arm receives raw history that can contain obsolete
 attempts and noise, but no MCP server. The no-memory arm receives neither.
 Manifest v1 remains supported and retains the original alternating two-arm run.
+
+## Lifecycle modes
+
+`--lifecycle agent-managed` is the backward-compatible default. The RepoMind
+MCP server is exposed to OpenCode, so session start and commit happen inside
+the model loop. Their direct execution time is nested inside Agent wall time.
+
+`--lifecycle host-managed` keeps RepoMind MCP out of the Agent tool set. The
+runner starts a session before OpenCode, injects the retrieved memories into the
+task prompt, runs the Agent, and commits the session from the host using the
+Agent's final response and observed command/test events. Start, Agent, and
+commit are timed as sequential phases, and all three are included in
+`totalLifecycleMs`. External public and hidden checks run after commit and stay
+outside both the model context and stored memory evidence.
+
+Host-managed mode uses the exported `startHostLifecycle`,
+`hostManagedPrompt`, `analyzeOpenCodeOutcome`, and `commitHostLifecycle`
+functions internally. They are exported from the package root for other
+OpenCode hosts to reuse without depending on the benchmark runner.
 
 ## Manifest
 
@@ -81,12 +101,14 @@ The report includes hidden/public pass counts, duration, tokens, file reads,
 tool failures, RepoMind calls, retrieved memories, changed files, and session
 cleanup. It also records the RepoMind version, commit, and worktree state, Node
 and operating system, runner version, manifest SHA-256, and the resolved base
-commit for each task. `--strict` fails on experiment-integrity defects: agent crashes, wrong
-base commits, unexpected file changes, cross-arm MCP use, missing RepoMind use,
-or sessions left open after cleanup. A hidden-check failure remains a legitimate
+commit for each task. Report v5 records `startMs`, `agentMs`, `commitMs`,
+`totalLifecycleMs`, and lifecycle success/status telemetry for every run.
+`--strict` fails on experiment-integrity defects: agent crashes, wrong base
+commits, unexpected file changes, cross-arm MCP use, missing or failed
+RepoMind lifecycle operations, phase totals that do not reconcile, or sessions left open after cleanup. A hidden-check failure remains a legitimate
 task outcome and does not by itself invalidate the experiment.
 
-The report keeps `integrity` and `acceptance` separate. Report schema v4 stores
+The report keeps `integrity` and `acceptance` separate. Report schema v5 stores
 independent paired comparisons against no-memory and full-history. Acceptance criteria are
 declared in the manifest and produce individual measured gates. A configured
 task win means that task's RepoMind hidden pass rate must be strictly higher
@@ -100,7 +122,7 @@ success, wall time, input/output tokens, and file reads.
 
 ## Aggregate reports
 
-Combine report v4 files from multiple models or operating systems:
+Combine report v4 or v5 files from multiple models or operating systems:
 
 ```powershell
 repomind eval --agent-summary `
@@ -117,7 +139,7 @@ override each experiment's acceptance result.
 
 ## Offline phase profiles
 
-Attribute the runtime and token cost of an existing report-v4 run without
+Attribute the runtime and token cost of an existing report-v4 or report-v5 run without
 calling the model again:
 
 ```powershell

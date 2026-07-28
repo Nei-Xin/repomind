@@ -8,9 +8,10 @@ import { RepositoryMemoryCore } from "../../core.js";
 import { RepoMindError } from "../../errors.js";
 import { initializeRepository } from "../../repository.js";
 import { VERSION } from "../../version.js";
+import { analyzeOpenCodeOutcome, commitHostLifecycle, hostManagedPrompt, startHostLifecycle } from "../../integrations/opencode/lifecycle.js";
 import { analyzeAgentEvents } from "./events.js";
 import type { AgentCheck, AgentManifest, AgentTask } from "./manifest.js";
-import { buildAgentReport, renderAgentMarkdown, type AgentArm, type AgentEvalReport, type AgentRunResult, type CheckResult } from "./report.js";
+import { buildAgentReport, renderAgentMarkdown, type AgentArm, type AgentEvalReport, type AgentRunResult, type CheckResult, type RepoMindLifecycleMode } from "./report.js";
 
 export interface ProcessRequest {
   command: string;
@@ -36,6 +37,7 @@ export interface RunAgentEvaluationOptions {
   runnerExecutable?: string;
   manifestSha256?: string;
   timeoutMs?: number;
+  lifecycleMode?: RepoMindLifecycleMode;
   execute?: ProcessExecutor;
 }
 
@@ -60,7 +62,10 @@ function resolveOpenCode(executable = "opencode"): string {
   return `${executable}.exe`;
 }
 
-function controlledConfig(model: string, repoMindCli: string | null, dataDirectory: string): object {
+function controlledConfig(model: string, repoMindCli: string | null, dataDirectory: string, lifecycleMode: RepoMindLifecycleMode): object {
+  const lifecycleInstruction = lifecycleMode === "host-managed"
+    ? "RepoMind lifecycle is managed by the host. Do not call RepoMind session or memory tools."
+    : "If RepoMind tools are available, start and commit the repository session and always close it before the final response.";
   return {
     $schema: "https://opencode.ai/config.json",
     default_agent: "benchmark",
@@ -68,7 +73,7 @@ function controlledConfig(model: string, repoMindCli: string | null, dataDirecto
       benchmark: {
         description: "Controlled primary agent for RepoMind evaluation",
         mode: "primary", model, variant: "medium",
-        prompt: "Complete the requested repository task directly. Do not delegate or start background agents. Inspect only relevant files, make the smallest justified change, run required verification, and provide a final result. If RepoMind tools are available, start and commit the repository session and always close it before the final response.",
+        prompt: `Complete the requested repository task directly. Do not delegate or start background agents. Inspect only relevant files, make the smallest justified change, run required verification, and provide a final result. ${lifecycleInstruction}`,
         tools: { task: false, call_omo_agent: false, teammate: false, background_output: false, background_cancel: false },
         permission: { task: "deny", call_omo_agent: "deny", teammate: "deny", "task_*": "deny", question: "deny" },
       },
@@ -153,7 +158,7 @@ function sessionState(repository: string, dataDirectory: string, clean: boolean)
   }
 }
 
-function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: RunAgentEvaluationOptions, execute: ProcessExecutor, runner: string): AgentRunResult {
+async function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: RunAgentEvaluationOptions, execute: ProcessExecutor, runner: string): Promise<AgentRunResult> {
   const name = `${task.id}-${arm}-${iteration}`;
   const repository = join(options.outputDirectory, "runs", name);
   const dataDirectory = join(options.outputDirectory, "data", name);
@@ -165,22 +170,71 @@ function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: 
   const requestedCommit = requireSuccess(execute({ command: "git", args: ["rev-parse", task.baseCommit], cwd: repository, timeoutMs: 30_000 }), `Resolve base commit for ${task.id}`);
   const baseCommit = requireSuccess(execute({ command: "git", args: ["rev-parse", "HEAD"], cwd: repository, timeoutMs: 30_000 }), `Inspect base commit for ${task.id}`);
   if (arm === "repomind") seedRepoMind(repository, dataDirectory, task);
-  writeFileSync(join(repository, "opencode.json"), `${JSON.stringify(controlledConfig(options.model, arm === "repomind" ? options.repoMindCli : null, dataDirectory), null, 2)}\n`, "utf8");
+  const repoMindLifecycle = options.lifecycleMode ?? "agent-managed";
+  let startMs: number | null = arm === "repomind" && repoMindLifecycle === "agent-managed" ? null : 0;
+  let commitMs: number | null = arm === "repomind" && repoMindLifecycle === "agent-managed" ? null : 0;
+  let hostSessionId: string | null = null;
+  let hostRetrievedMemories = 0;
+  let hostStartSucceeded = false;
+  let hostCommitSucceeded = false;
+  let hostCommitStatus: string | null = null;
+  let hostEvidenceCreated = 0;
+  let lifecycleError: string | null = null;
+  let prompt = taskPrompt(task, arm);
+  if (arm === "repomind" && repoMindLifecycle === "host-managed") {
+    const phaseStarted = performance.now();
+    try {
+      const hostStart = await startHostLifecycle(repository, task.prompt, dataDirectory);
+      hostSessionId = hostStart.sessionId;
+      hostRetrievedMemories = hostStart.result.memories.length;
+      hostStartSucceeded = true;
+      prompt = hostManagedPrompt(task.prompt, hostStart.result.memories);
+      startMs = Math.round((performance.now() - phaseStarted) * 1000) / 1000;
+    } catch (error) {
+      startMs = Math.round((performance.now() - phaseStarted) * 1000) / 1000;
+      lifecycleError = `start: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  const exposeMcp = arm === "repomind" && repoMindLifecycle === "agent-managed";
+  writeFileSync(join(repository, "opencode.json"), `${JSON.stringify(controlledConfig(options.model, exposeMcp ? options.repoMindCli : null, dataDirectory, repoMindLifecycle), null, 2)}\n`, "utf8");
   appendFileSync(join(repository, ".git", "info", "exclude"), "\nopencode.json\n.repomind/\n", "utf8");
 
   const started = performance.now();
   const agent = execute({
     command: runner,
-    args: ["run", "--pure", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, taskPrompt(task, arm)],
+    args: ["run", "--pure", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, prompt],
     cwd: repository, timeoutMs: options.timeoutMs ?? 600_000,
   });
-  const wallDurationMs = Math.round(performance.now() - started);
+  const agentMs = Math.round((performance.now() - started) * 1000) / 1000;
   const rawLog = agent.stdout ?? "";
   const stderrLog = agent.stderr ?? agent.error?.message ?? "";
   const resultDirectory = join(options.outputDirectory, "raw");
   mkdirSync(resultDirectory, { recursive: true });
   writeFileSync(join(resultDirectory, `${name}.jsonl`), rawLog, "utf8");
   writeFileSync(join(resultDirectory, `${name}.stderr.txt`), stderrLog, "utf8");
+  if (arm === "repomind" && repoMindLifecycle === "host-managed" && hostSessionId) {
+    const phaseStarted = performance.now();
+    try {
+      const outcome = analyzeOpenCodeOutcome(rawLog, `OpenCode completed task ${task.id} with exit code ${agent.status ?? "unknown"}.`);
+      const observedTests = outcome.commands.filter((command) => command.isTest).map(({ isTest: _isTest, ...command }) => command);
+      const observedCommands = outcome.commands.filter((command) => !command.isTest).map(({ isTest: _isTest, ...command }) => command);
+      const observedTestsPass = observedTests.every((test) => test.exitCode === 0);
+      const committed = commitHostLifecycle({
+        repository, dataDirectory, sessionId: hostSessionId,
+        idempotencyKey: `${task.id}-${iteration}-host-lifecycle`,
+        status: agent.status === 0 ? observedTestsPass ? "success" : "partial" : "failed",
+        summary: outcome.summary,
+        tests: observedTests, commands: observedCommands,
+      });
+      commitMs = Math.round((performance.now() - phaseStarted) * 1000) / 1000;
+      hostCommitSucceeded = true;
+      hostCommitStatus = committed.result.status;
+      hostEvidenceCreated = committed.result.evidenceCreated;
+    } catch (error) {
+      commitMs = Math.round((performance.now() - phaseStarted) * 1000) / 1000;
+      lifecycleError = [lifecycleError, `commit: ${error instanceof Error ? error.message : String(error)}`].filter(Boolean).join("; ");
+    }
+  }
   const publicChecks = runChecks(task.publicChecks, repository, execute);
   const hiddenChecks = runChecks(task.hiddenChecks, repository, execute);
   const statusResult = execute({ command: "git", args: ["status", "--short"], cwd: repository, timeoutMs: 30_000 });
@@ -188,16 +242,39 @@ function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: 
   const changedFiles = parseChangedFiles(statusResult.stdout);
   const unexpectedChanges = task.allowedChanges ? changedFiles.filter((path) => !task.allowedChanges!.includes(path)) : [];
   const sessions = arm === "repomind" ? sessionState(repository, dataDirectory, true) : { sessions: [], abandoned: 0, openAfter: 0 };
+  const events = analyzeAgentEvents(rawLog);
+  const lifecycleMode = arm === "repomind" ? repoMindLifecycle : "none";
+  const agentManagedStart = events.toolCalls.repomind_repo_session_start ?? 0;
+  const agentManagedCommit = events.toolCalls.repomind_repo_session_commit ?? 0;
+  const committedSession = sessions.sessions.find((session) => session.status !== "open") ?? null;
+  const totalLifecycleMs = lifecycleMode === "host-managed"
+    ? Math.round(((startMs ?? 0) + agentMs + (commitMs ?? 0)) * 1000) / 1000
+    : agentMs;
   return {
     taskId: task.id, arm, iteration, repository, requestedCommit, baseCommit,
-    agentExitCode: agent.status, agentSignal: agent.signal, wallDurationMs,
+    agentExitCode: agent.status, agentSignal: agent.signal,
+    startMs, agentMs, commitMs, totalLifecycleMs, wallDurationMs: totalLifecycleMs,
     publicChecks, hiddenChecks, changedFiles, unexpectedChanges,
     sessionsBeforeCleanup: sessions.sessions, abandonedSessions: sessions.abandoned,
-    openSessionsAfterCleanup: sessions.openAfter, events: analyzeAgentEvents(rawLog),
+    openSessionsAfterCleanup: sessions.openAfter,
+    lifecycle: {
+      mode: lifecycleMode,
+      timing: lifecycleMode === "host-managed" ? "sequential" : lifecycleMode === "agent-managed" ? "nested-in-agent" : "not-applicable",
+      startAttempted: lifecycleMode === "host-managed" || agentManagedStart > 0,
+      startSucceeded: lifecycleMode === "host-managed" ? hostStartSucceeded : agentManagedStart > 0,
+      sessionId: hostSessionId ?? sessions.sessions[0]?.id ?? null,
+      retrievedMemories: lifecycleMode === "host-managed" ? hostRetrievedMemories : events.retrievedMemories,
+      commitAttempted: lifecycleMode === "host-managed" ? hostSessionId !== null : agentManagedCommit > 0,
+      commitSucceeded: lifecycleMode === "host-managed" ? hostCommitSucceeded : committedSession !== null,
+      commitStatus: lifecycleMode === "host-managed" ? hostCommitStatus : committedSession?.status ?? null,
+      evidenceCreated: hostEvidenceCreated,
+      error: lifecycleError,
+    },
+    events,
   };
 }
 
-export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEvalReport {
+export async function runAgentEvaluation(options: RunAgentEvaluationOptions): Promise<AgentEvalReport> {
   if (!Number.isInteger(options.repeat) || options.repeat < 1 || options.repeat > 100) {
     throw new RepoMindError("INVALID_INPUT", "--repeat must be an integer between 1 and 100");
   }
@@ -223,11 +300,11 @@ export function runAgentEvaluation(options: RunAgentEvaluationOptions): AgentEva
     ];
     const orders = options.manifest.version === 2 ? threeArmOrders : twoArmOrders;
     const order = orders[(iteration - 1) % orders.length]!;
-    for (const arm of order) runs.push(executeRun(task, arm, iteration, normalized, execute, runner));
+    for (const arm of order) runs.push(await executeRun(task, arm, iteration, normalized, execute, runner));
   }
   const report = buildAgentReport({
     name: options.manifest.name, runner: "opencode", model: options.model,
-    repeat: options.repeat, outputDirectory, runs,
+    repeat: options.repeat, repoMindLifecycle: options.lifecycleMode ?? "agent-managed", outputDirectory, runs,
     provenance: {
       repoMindVersion: VERSION,
       repoMindCommit,

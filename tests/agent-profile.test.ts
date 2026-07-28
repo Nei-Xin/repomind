@@ -41,15 +41,24 @@ const REPOMIND_RAW = [
 ].join("\n");
 
 function run(arm: AgentArm, raw: string, wallDurationMs: number): AgentRunResult {
+  const repoMind = arm === "repomind";
   return {
     taskId: "profile", arm, iteration: 1, repository: `/${arm}`,
     requestedCommit: "abc", baseCommit: "abc", agentExitCode: 0, agentSignal: null,
-    wallDurationMs,
+    startMs: repoMind ? null : 0, agentMs: wallDurationMs, commitMs: repoMind ? null : 0,
+    totalLifecycleMs: wallDurationMs, wallDurationMs,
     publicChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
     hiddenChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
     changedFiles: [], unexpectedChanges: [],
-    sessionsBeforeCleanup: arm === "repomind" ? [{ id: "s1", status: "committed" }] : [],
-    abandonedSessions: 0, openSessionsAfterCleanup: 0, events: analyzeAgentEvents(raw),
+    sessionsBeforeCleanup: repoMind ? [{ id: "s1", status: "committed" }] : [],
+    abandonedSessions: 0, openSessionsAfterCleanup: 0,
+    lifecycle: {
+      mode: repoMind ? "agent-managed" : "none", timing: repoMind ? "nested-in-agent" : "not-applicable",
+      startAttempted: repoMind, startSucceeded: repoMind, sessionId: repoMind ? "s1" : null,
+      retrievedMemories: repoMind ? 1 : 0, commitAttempted: repoMind, commitSucceeded: repoMind,
+      commitStatus: repoMind ? "committed" : null, evidenceCreated: 0, error: null,
+    },
+    events: analyzeAgentEvents(raw),
   };
 }
 

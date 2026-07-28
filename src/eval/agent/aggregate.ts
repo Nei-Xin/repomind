@@ -46,7 +46,7 @@ function metricValue(run: AgentRunResult, key: PairedMetricKey): number {
   switch (key) {
     case "hiddenSuccess": return run.hiddenChecks.every((check) => check.passed) ? 1 : 0;
     case "publicSuccess": return run.publicChecks.every((check) => check.passed) ? 1 : 0;
-    case "wallDurationMs": return run.wallDurationMs;
+    case "wallDurationMs": return run.totalLifecycleMs ?? run.wallDurationMs;
     case "inputTokens": return run.events.tokens.input;
     case "outputTokens": return run.events.tokens.output;
     case "fileReads": return run.events.fileReads;
@@ -72,8 +72,9 @@ export function loadAgentReport(path: string): LoadedAgentReport {
     });
   }
   const candidate = value as Partial<AgentEvalReport>;
-  if (candidate.version !== 4 || !Array.isArray(candidate.runs) || !candidate.provenance) {
-    throw new RepoMindError("INVALID_INPUT", `Agent report ${path} is not report schema version 4`);
+  const version = (value as { version?: unknown }).version;
+  if ((version !== 4 && version !== 5) || !Array.isArray(candidate.runs) || !candidate.provenance) {
+    throw new RepoMindError("INVALID_INPUT", `Agent report ${path} is not report schema version 4 or 5`);
   }
   return { report: candidate as AgentEvalReport, path: absolute, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
