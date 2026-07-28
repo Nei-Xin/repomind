@@ -21,6 +21,7 @@ export function createMcpServer(): McpServer {
   const cores = new Map<string, RepositoryMemoryCore>();
   const sessionRepositories = new Map<string, string>();
   const memoryRepositories = new Map<string, string>();
+  const narrativeRepositories = new Map<string, string>();
   const coreFor = (repoPath: string): RepositoryMemoryCore => {
     let core = cores.get(repoPath);
     if (!core) {
@@ -122,6 +123,60 @@ export function createMcpServer(): McpServer {
           action: item.action,
           reason: item.reason,
         })));
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_module_rebuild",
+    "Incrementally rebuild bounded L2 module narratives from active evidence-backed L1 memories.",
+    {
+      repo_path: z.string().min(1),
+      modules: z.array(z.string().min(1)).min(1).optional(),
+      max_chars: z.number().int().min(500).max(20_000).optional(),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).rebuildModuleNarratives({
+          ...(input.modules ? { modules: input.modules } : {}),
+          ...(input.max_chars ? { maxChars: input.max_chars } : {}),
+        });
+        for (const narrative of value.narratives) narrativeRepositories.set(narrative.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_module_list",
+    "List L2 module narratives and report whether each still matches its active L1 sources.",
+    { repo_path: z.string().min(1) },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).listModuleNarratives();
+        for (const narrative of value) narrativeRepositories.set(narrative.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_module_inspect",
+    "Inspect one L2 narrative and trace every conclusion to L1 memories and Evidence ids.",
+    { narrative_id: z.string().min(1), repo_path: z.string().optional() },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? narrativeRepositories.get(input.narrative_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the narrative was not returned by this server process");
+        const value = coreFor(repoPath).inspectModuleNarrative(input.narrative_id);
+        narrativeRepositories.set(input.narrative_id, repoPath);
         return result(value);
       } catch (error) {
         return failure(error);

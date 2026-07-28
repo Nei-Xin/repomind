@@ -148,4 +148,31 @@ describe("cross-process CLI end-to-end", () => {
       expect.objectContaining({ memoryId: second.id, action: "memory_invalidated" }),
     ]));
   });
+
+  it("rebuilds and recalls an L2 module narrative across CLI processes", () => {
+    JSON.parse(cli(repository, data, "init"));
+    const memory = JSON.parse(cli(
+      repository, data, "record",
+      "--type", "architecture",
+      "--title", "Storage boundary",
+      "--content", "The storage module owns SQLite transactions.",
+      "--scope-type", "module",
+      "--scope-value", "src/storage",
+    )) as { id: string };
+    const rebuilt = JSON.parse(cli(
+      repository, data, "module-rebuild", "--module", "src/storage", "--budget", "900",
+    )) as { created: number; narratives: Array<{ id: string }> };
+    expect(rebuilt.created).toBe(1);
+    const narrativeId = rebuilt.narratives[0]!.id;
+    expect(JSON.parse(cli(repository, data, "modules"))).toEqual([
+      expect.objectContaining({ id: narrativeId, modulePath: "src/storage", current: true }),
+    ]);
+    expect(JSON.parse(cli(repository, data, "module-inspect", narrativeId))).toMatchObject({
+      id: narrativeId,
+      sources: [{ memoryId: memory.id, evidenceIds: [expect.stringMatching(/^evd_/)] }],
+    });
+    expect(JSON.parse(cli(repository, data, "start", "--task", "Change the storage transaction boundary"))).toMatchObject({
+      moduleNarratives: [expect.objectContaining({ id: narrativeId })],
+    });
+  });
 });

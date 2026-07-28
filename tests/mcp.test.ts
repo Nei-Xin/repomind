@@ -44,6 +44,9 @@ describe("MCP server", () => {
         "repo_memory_review_apply",
         "repo_memory_search",
         "repo_memory_validate",
+        "repo_module_inspect",
+        "repo_module_list",
+        "repo_module_rebuild",
         "repo_session_abandon",
         "repo_session_commit",
         "repo_session_start",
@@ -68,6 +71,47 @@ describe("MCP server", () => {
       expect(response.content[0]).toMatchObject({ type: "text" });
       const text = response.content[0]?.type === "text" ? response.content[0].text : "{}";
       expect(JSON.parse(text)).toMatchObject({ repositoryId: expect.any(String), sessionId: expect.stringMatching(/^ses_/) });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("rebuilds and inspects evidence-backed L2 module narratives through MCP", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    core.record({
+      type: "architecture",
+      title: "Storage boundary",
+      content: "The storage module owns database transactions.",
+      scopeType: "module",
+      scopeValue: "src/storage",
+    });
+    core.close();
+
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const rebuilt = await client.callTool({
+        name: "repo_module_rebuild",
+        arguments: { repo_path: repository, modules: ["src/storage"], max_chars: 1000 },
+      });
+      const rebuiltText = rebuilt.content[0]?.type === "text" ? rebuilt.content[0].text : "{}";
+      const narrative = (JSON.parse(rebuiltText) as { narratives: Array<{ id: string }> }).narratives[0]!;
+      expect(narrative.id).toMatch(/^l2_/u);
+
+      const inspected = await client.callTool({
+        name: "repo_module_inspect",
+        arguments: { narrative_id: narrative.id },
+      });
+      const inspectedText = inspected.content[0]?.type === "text" ? inspected.content[0].text : "{}";
+      expect(JSON.parse(inspectedText)).toMatchObject({
+        id: narrative.id,
+        current: true,
+        sources: [{ memoryId: expect.stringMatching(/^mem_/), evidenceIds: [expect.stringMatching(/^evd_/)] }],
+      });
     } finally {
       await client.close();
       await server.close();

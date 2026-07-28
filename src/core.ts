@@ -25,7 +25,11 @@ import type {
   MemoryReviewQueue,
   MemoryStatusReason,
   MemoryType,
+  ModuleNarrativeDetails,
+  ModuleNarrativeSummary,
   RecordMemoryInput,
+  RebuildModuleNarrativesInput,
+  RebuildModuleNarrativesResult,
   StaleReason,
   StartSessionInput,
   StartSessionResult,
@@ -37,6 +41,7 @@ import type { EmbeddingProvider } from "./embedding/provider.js";
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
+import { ModuleNarrativeStore } from "./narratives/module-narratives.js";
 import { buildMatchExpression, searchTokens } from "./search/lexical.js";
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
@@ -169,6 +174,7 @@ export class RepositoryMemoryCore {
         repositoryId: this.context.marker.projectId,
         baseline: snapshot,
         memories: this.search(task, { limit: input.maxMemories ?? 5 }),
+        moduleNarratives: this.searchModuleNarratives(task),
       };
     } catch (error) {
       try { this.abandonSession(sessionId); } catch { /* preserve the retrieval error */ }
@@ -275,6 +281,13 @@ export class RepositoryMemoryCore {
 
   record(input: RecordMemoryInput): StoreMemoryResult {
     if (!input.title.trim() || !input.content.trim()) throw new RepoMindError("INVALID_INPUT", "title and content must not be empty");
+    const scopeType = input.scopeType ?? "repository";
+    if (scopeType !== "repository" && !input.scopeValue?.trim()) {
+      throw new RepoMindError("INVALID_INPUT", `${scopeType} scope requires scopeValue`);
+    }
+    if (scopeType === "repository" && input.scopeValue?.trim()) {
+      throw new RepoMindError("INVALID_INPUT", "repository scope must not define scopeValue");
+    }
     let result: StoreMemoryResult = { id: "", stored: false, reactivated: false, conflicts: [] };
     this.context.database.transaction(() => {
       const evidenceId = this.insertEvidence(null, "manual", input.content, { title: input.title }, null);
@@ -715,6 +728,26 @@ export class RepositoryMemoryCore {
     }));
   }
 
+  rebuildModuleNarratives(input: RebuildModuleNarrativesInput = {}): RebuildModuleNarrativesResult {
+    this.refreshStaleMemoryStates();
+    return new ModuleNarrativeStore(this.context).rebuild(input);
+  }
+
+  listModuleNarratives(): ModuleNarrativeSummary[] {
+    this.refreshStaleMemoryStates();
+    return new ModuleNarrativeStore(this.context).list();
+  }
+
+  searchModuleNarratives(query: string, limit = 2): ModuleNarrativeSummary[] {
+    this.refreshStaleMemoryStates();
+    return new ModuleNarrativeStore(this.context).search(query, limit).filter((item) => item.current);
+  }
+
+  inspectModuleNarrative(id: string): ModuleNarrativeDetails {
+    this.refreshStaleMemoryStates();
+    return new ModuleNarrativeStore(this.context).inspect(id);
+  }
+
   status(): Record<string, unknown> {
     const db = this.context.database.raw;
     const count = (table: string): number => Number((db.prepare(`SELECT count(*) AS count FROM ${table} WHERE repository_id=?`).get(this.context.marker.projectId) as { count: number }).count);
@@ -725,6 +758,7 @@ export class RepositoryMemoryCore {
       sessions: count("sessions"),
       evidence: count("evidence"),
       memories: count("memories"),
+      moduleNarratives: count("module_narratives"),
       embeddings: count("memory_embeddings"),
       hostRuns: count("host_runs"),
       uncertainMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='uncertain'").get(this.context.marker.projectId) as { count: number }).count),
@@ -745,6 +779,7 @@ export class RepositoryMemoryCore {
         maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
+        layeredMemory: { l0: true, l1: true, l2: true, l3: false, l4: false },
       },
     };
   }
@@ -753,7 +788,7 @@ export class RepositoryMemoryCore {
    * Rebuilds the FTS index from the memories table. Needed after a tokenizer
    * change, and the recovery path when the index is damaged (STO-009).
    */
-  reindex(): { memories: number } {
+  reindex(): { memories: number; moduleNarratives: number } {
     const db = this.context.database.raw;
     const rows = db.prepare(
       "SELECT id, title, content, tags_json FROM memories WHERE repository_id=?",
@@ -768,7 +803,7 @@ export class RepositoryMemoryCore {
           .run(row.id, this.context.marker.projectId, row.title, row.content, searchTokens(row.title, row.content, tags, files));
       }
     });
-    return { memories: rows.length };
+    return { memories: rows.length, moduleNarratives: new ModuleNarrativeStore(this.context).reindex() };
   }
 
   private memoryResultsByIds(ids: string[], scores: Map<string, number>): MemoryResult[] {

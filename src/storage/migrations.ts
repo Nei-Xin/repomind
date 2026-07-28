@@ -207,4 +207,37 @@ CREATE INDEX host_runs_repository_started ON host_runs(repository_id, started_at
 CREATE INDEX host_runs_repository_status ON host_runs(repository_id, status, started_at DESC);
 `,
   },
+  {
+    version: 9,
+    sql: `
+CREATE TABLE module_narratives (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  module_path TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  source_count INTEGER NOT NULL CHECK(source_count > 0),
+  budget_chars INTEGER NOT NULL CHECK(budget_chars >= 500),
+  version INTEGER NOT NULL CHECK(version > 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(repository_id, module_path)
+);
+CREATE TABLE module_narrative_sources (
+  narrative_id TEXT NOT NULL REFERENCES module_narratives(id) ON DELETE CASCADE,
+  memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY(narrative_id, memory_id)
+);
+CREATE INDEX module_narrative_sources_memory ON module_narrative_sources(memory_id);
+CREATE VIRTUAL TABLE module_narrative_fts USING fts5(
+  narrative_id UNINDEXED,
+  repository_id UNINDEXED,
+  module_path,
+  title,
+  content
+);
+`,
+  },
 ] as const;

@@ -39,13 +39,16 @@ Usage:
   repomind review [--kind all|stale|conflict|other] [--limit <1-200>] [--repo <path>] [--json]
   repomind review-apply --input <decisions.json|-> [--repo <path>] [--json]
   repomind review-history [--limit <1-200>] [--repo <path>] [--json]
+  repomind module-rebuild [--module <path[,path...]>] [--budget <500-20000>] [--repo <path>] [--json]
+  repomind modules [--repo <path>] [--json]
+  repomind module-inspect <l2-id> [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
   repomind start --task <text> [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
   repomind search <query> [--repo <path>] [--limit <n>] [--json]
   repomind inspect <memory-id> [--repo <path>] [--json]
-  repomind record --type <type> --title <text> --content <text> [--repo <path>] [--json]
+  repomind record --type <type> --title <text> --content <text> [--scope-type repository|module|path] [--scope-value <path>] [--related-files <csv>] [--repo <path>] [--json]
   repomind memory-validate <memory-id> --reason <text> [--repo <path>] [--json]
   repomind memory-correct <memory-id> --reason <text> --title <text> --content <text> [--type <type>] [--repo <path>] [--json]
   repomind memory-invalidate <memory-id> --reason <text> [--repo <path>] [--json]
@@ -81,10 +84,15 @@ const { values, positionals } = parseArgs({
     summary: { type: "string" },
     status: { type: "string" },
     kind: { type: "string" },
+    module: { type: "string" },
+    budget: { type: "string" },
     limit: { type: "string" },
     type: { type: "string" },
     title: { type: "string" },
     content: { type: "string" },
+    "scope-type": { type: "string" },
+    "scope-value": { type: "string" },
+    "related-files": { type: "string" },
     candidate: { type: "string" },
     reason: { type: "string" },
     input: { type: "string" },
@@ -414,6 +422,12 @@ async function main(): Promise<void> {
       }
       case "review-apply": output(core.applyReview(readReviewInput(required(values.input, "--input")))); break;
       case "review-history": output(core.reviewHistory(values.limit ? Number(values.limit) : undefined)); break;
+      case "module-rebuild": output(core.rebuildModuleNarratives({
+        ...(values.module ? { modules: values.module.split(",").map((item) => item.trim()).filter(Boolean) } : {}),
+        ...(values.budget ? { maxChars: Number(values.budget) } : {}),
+      })); break;
+      case "modules": output(core.listModuleNarratives()); break;
+      case "module-inspect": output(core.inspectModuleNarrative(required(positionals[1], "l2-id"))); break;
       case "start": output(await core.startSessionHybrid({ task: required(values.task, "--task"), clientName: "cli" })); break;
       case "commit": {
         if (values.input) {
@@ -439,11 +453,21 @@ async function main(): Promise<void> {
         break;
       }
       case "inspect": output(core.inspect(required(positionals[1], "memory-id"))); break;
-      case "record": output(core.record({
-        type: memoryType(values.type, "--type"),
-        title: required(values.title, "--title"),
-        content: required(values.content, "--content"),
-      })); break;
+      case "record": {
+        const scopeType = values["scope-type"] ?? "repository";
+        if (!("repository module path".split(" ") as string[]).includes(scopeType)) {
+          throw new RepoMindError("INVALID_INPUT", `Invalid --scope-type ${scopeType}`);
+        }
+        output(core.record({
+          type: memoryType(values.type, "--type"),
+          title: required(values.title, "--title"),
+          content: required(values.content, "--content"),
+          scopeType: scopeType as "repository" | "module" | "path",
+          ...(values["scope-value"] ? { scopeValue: values["scope-value"] } : {}),
+          ...(values["related-files"] ? { relatedFiles: values["related-files"].split(",").map((item) => item.trim()).filter(Boolean) } : {}),
+        }));
+        break;
+      }
       case "memory-validate": output(core.validateMemory({
         memoryId: required(positionals[1], "memory-id"),
         reason: required(values.reason, "--reason"),

@@ -97,6 +97,19 @@ The queue refreshes file hashes before listing work and classifies uncertain
 memories as `stale`, `conflict`, or `other`. Validated, corrected, invalidated,
 or conflict-reconciled memories leave the queue on the next review.
 
+Build bounded L2 narratives from active, evidence-backed L1 memories:
+
+```bash
+repomind module-rebuild --json
+repomind module-rebuild --module src/storage --budget 4000 --json
+repomind modules --json
+repomind module-inspect l2_... --json
+```
+
+Module narratives are independent derived records with L1 source links,
+incremental source fingerprints, FTS recall, and a hard character budget. A
+Session Start can return current matching L2 context alongside atomic memories.
+
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use
 verification workflow.
@@ -122,7 +135,7 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes twelve tools:
+The MCP server exposes fifteen tools:
 
 - `repo_session_start`
 - `repo_memory_search`
@@ -131,6 +144,9 @@ The MCP server exposes twelve tools:
 - `repo_memory_inspect`
 - `repo_memory_review`
 - `repo_memory_review_apply`
+- `repo_module_rebuild`
+- `repo_module_list`
+- `repo_module_inspect`
 - `repo_memory_record`
 - `repo_memory_validate`
 - `repo_memory_correct`
@@ -141,7 +157,7 @@ See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integr
 
 See [`docs/stale-detection.md`](docs/stale-detection.md) for the `active` to `uncertain` behavior and a reproducible validation flow.
 
-See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, and [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history.
+See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history, and [`docs/module-narratives.md`](docs/module-narratives.md) for the L2 derivation and provenance contract.
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 
@@ -176,7 +192,11 @@ privacy details.
 
 ## Scope
 
-The current release intentionally does not include remote LLM extraction, L2/L3 narratives, automatic host-tool observation, or Skill Candidate generation. See `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged roadmap.
+The current development version includes deterministic L2 Module Narratives.
+It intentionally does not include remote LLM extraction, L3 Repository
+Profiles, automatic host-tool observation, or Skill Candidate generation. See
+`REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
+roadmap.
 
 ## Development
 

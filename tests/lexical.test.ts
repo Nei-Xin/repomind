@@ -94,7 +94,7 @@ describe("ideographic search end to end", () => {
     db.prepare("UPDATE memory_fts SET search_tokens=? WHERE memory_id=?").run("架构约定 所有外部调用必须经过统一适配器。", recorded.id);
     expect(core.search(query)).toEqual([]);
 
-    expect(core.reindex()).toEqual({ memories: 1 });
+    expect(core.reindex()).toEqual({ memories: 1, moduleNarratives: 0 });
     expect(core.search(query)[0]).toMatchObject({ id: recorded.id });
     core.close();
   });

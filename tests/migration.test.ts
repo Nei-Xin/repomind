@@ -37,6 +37,8 @@ describe("database migrations", () => {
         expect(table("forget_log")).toEqual({ name: "forget_log" });
         expect(table("memory_embeddings")).toEqual({ name: "memory_embeddings" });
         expect(table("host_runs")).toEqual({ name: "host_runs" });
+        expect(table("module_narratives")).toEqual({ name: "module_narratives" });
+        expect(table("module_narrative_sources")).toEqual({ name: "module_narrative_sources" });
         expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
       } finally {
         upgraded.close();
@@ -99,6 +101,27 @@ describe("database migrations", () => {
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades every previously released schema to the latest version", () => {
+    for (const throughVersion of migrations.slice(0, -1).map((migration) => migration.version)) {
+      const directory = mkdtempSync(join(tmpdir(), `repomind-migration-v${throughVersion}-`));
+      const path = join(directory, "repomind.db");
+      try {
+        legacyDatabase(path, throughVersion).close();
+        const upgraded = new Database(path);
+        try {
+          const versions = upgraded.raw.prepare("SELECT version FROM schema_migrations ORDER BY version").all();
+          expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
+          expect(upgraded.raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='module_narratives'").get())
+            .toEqual({ name: "module_narratives" });
+        } finally {
+          upgraded.close();
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   });
 

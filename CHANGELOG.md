@@ -7,6 +7,28 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Independent L2 Module Narratives derived only from active, evidence-backed
+  L1 memories, with module-scoped incremental rebuilds, bounded content,
+  source fingerprints, L1/Evidence provenance inspection, FTS retrieval, and
+  optional Session Start context.
+- CLI commands `module-rebuild`, `modules`, and `module-inspect`, plus MCP tools
+  `repo_module_rebuild`, `repo_module_list`, and `repo_module_inspect`.
+- Migration 9 adds the L2 source-of-truth, source-link, and derived FTS tables.
+
+### Changed
+
+- `repomind reindex` now rebuilds both L1 and L2 FTS indexes.
+- Manual CLI recording accepts module/path scope and related files, allowing
+  explicit L1 facts to participate in deterministic L2 derivation.
+
+### Validation
+
+- The development baseline passes 132 tests across 27 files, including L2
+  provenance, bounded rendering, incremental freshness, FTS recovery,
+  cross-process CLI, MCP stdio purity, and upgrades from every prior Schema.
+
 ## [0.11.0] - 2026-07-28
 
 ### Added

@@ -54,6 +54,46 @@ export interface HybridSearchResult {
   fallbackReason?: string;
 }
 
+export interface ModuleNarrativeSummary {
+  id: string;
+  modulePath: string;
+  title: string;
+  content: string;
+  sourceCount: number;
+  budgetChars: number;
+  version: number;
+  current: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ModuleNarrativeSource {
+  memoryId: string;
+  type: MemoryType;
+  title: string;
+  confidence: number;
+  lastValidatedAt: number | null;
+  files: string[];
+  evidenceIds: string[];
+}
+
+export interface ModuleNarrativeDetails extends ModuleNarrativeSummary {
+  sources: ModuleNarrativeSource[];
+}
+
+export interface RebuildModuleNarrativesInput {
+  modules?: string[];
+  maxChars?: number;
+}
+
+export interface RebuildModuleNarrativesResult {
+  created: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+  narratives: ModuleNarrativeSummary[];
+}
+
 export interface StaleReason {
   kind: "file_created" | "file_modified" | "file_deleted";
   filePath: string;
@@ -186,6 +226,7 @@ export interface StartSessionResult {
   repositoryId: string;
   baseline: GitSnapshot;
   memories: MemoryResult[];
+  moduleNarratives?: ModuleNarrativeSummary[];
   retrievalStrategy?: HybridSearchResult["strategy"];
   retrievalFallbackReason?: string;
 }
