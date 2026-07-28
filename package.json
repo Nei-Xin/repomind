@@ -38,7 +38,8 @@
     "test:watch": "vitest",
     "start": "node dist/cli/index.js",
     "bench": "node dist/cli/index.js eval --compare --strict --json > comparison-report.json",
-    "bench:agent-fixtures": "node benchmarks/agent-suite/validate.mjs"
+    "bench:agent-fixtures": "node benchmarks/agent-suite/validate.mjs",
+    "bench:host-run": "npm run build --silent && node benchmarks/agent-suite/run-host.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

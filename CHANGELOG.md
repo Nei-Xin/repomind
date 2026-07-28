@@ -20,6 +20,10 @@ under **Changed** with its migration impact.
 - Redacted run artifacts under the RepoMind data directory, including Agent
   events, stderr, and a machine-readable lifecycle report with phase status,
   retrieval count, exit code, event metrics, and commit result.
+- A rebuildable eight-task `repomind run` acceptance harness that creates fresh
+  fixed-commit fixtures, seeds isolated memories, exercises the daily
+  host-managed runner, applies external public and hidden checks, validates
+  artifacts and session cleanup, and writes JSON and Markdown summaries.
 
 ### Security
 

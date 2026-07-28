@@ -8,3 +8,4 @@ export * from "./search/vector-index.js";
 export * from "./repository.js";
 export * from "./integrations/opencode/lifecycle.js";
 export * from "./integrations/opencode/run.js";
+export * from "./eval/agent/host-acceptance.js";

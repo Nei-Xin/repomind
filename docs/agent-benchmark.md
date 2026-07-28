@@ -191,6 +191,32 @@ commit identities, requires every public baseline check to pass, and requires
 every external hidden check to fail on the unmodified baseline. CI runs this
 validation on Windows and Ubuntu without requiring a model account.
 
+## Accept the daily `repomind run` path
+
+The three-arm benchmark answers comparative research questions. Use the
+dedicated host-run acceptance harness to verify the daily product path across
+all eight tasks:
+
+```powershell
+npm run bench:host-run -- `
+  --workspace D:\data\code\project\repomind-test\host-run-acceptance-v0.9 `
+  --model cliproxyapi/gpt-5.6-terra `
+  --strict
+```
+
+The workspace must not exist. The command rebuilds the fixed-commit suite,
+then clones every task again under `results/runs`. Each clone gets its own
+RepoMind database and manifest memory before the harness invokes the same
+`runOpenCodeHost` implementation used by `repomind run`.
+
+For every task, acceptance requires at least one retrieved memory, zero Agent
+RepoMind calls, a clean Agent exit, a committed session, passing public and
+external hidden checks, no open sessions, only allowlisted file changes, and
+present, parseable, secret-scanned run artifacts. Results are written to
+`results/summary.json` and `results/summary.md`. `--strict` returns a nonzero
+exit code when any task or integrity requirement fails. Omitting `--model`
+uses OpenCode's configured default model.
+
 The formal v0.8 host-managed three-arm run, including its provenance, lifecycle
 costs, confidence intervals, and passed outcome acceptance, is documented in
 [`agent-benchmark-results-v0.8.md`](agent-benchmark-results-v0.8.md). The
