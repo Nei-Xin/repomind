@@ -27,6 +27,15 @@ under **Changed** with its migration impact.
   outside-repository paths and unknown candidate IDs, and never persists
   candidates without explicit confirmation.
 
+### Validation
+
+- The formal continuous-workflow acceptance passed with selective cold-start
+  bootstrap, two successful real OpenCode tasks, verified reuse of task 1
+  memory by task 2, persistent history for all runs, and clean timeout
+  abandonment with zero open sessions or running Host runs.
+- The method, provenance, artifact hashes, final-state audit, and limitations
+  are preserved in `docs/daily-workflow-acceptance-results-v0.10.md`.
+
 ## [0.9.0] - 2026-07-28
 
 ### Added

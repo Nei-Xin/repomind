@@ -205,6 +205,9 @@ turn, and token overhead against both baselines.
 See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol,
 [`docs/agent-run-acceptance-results-v0.9.md`](docs/agent-run-acceptance-results-v0.9.md)
 for the formal v0.9 daily-run acceptance (8/8 tasks accepted),
+[`docs/daily-workflow-acceptance-results-v0.10.md`](docs/daily-workflow-acceptance-results-v0.10.md)
+for the formal v0.10 continuous-workflow acceptance (reviewed bootstrap,
+cross-task memory reuse, persistent run history, and timeout cleanup),
 [`docs/agent-benchmark-results-v0.8.md`](docs/agent-benchmark-results-v0.8.md)
 for the formal v0.8 host-managed result (72/72 runs valid and all outcome
 acceptance gates passed),
