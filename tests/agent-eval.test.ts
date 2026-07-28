@@ -198,11 +198,13 @@ describe("controlled agent evaluation", () => {
         timeout: request.timeoutMs, windowsHide: true, shell: false,
       });
       const prompts: string[] = [];
+      const runnerArgs: string[][] = [];
       const execute: ProcessExecutor = (request) => {
         if (request.command === "fake-opencode") {
           if (request.args[0] === "--version") {
             return { status: 0, signal: null, stdout: "fake-opencode 1.0\n", stderr: "", error: undefined } as SpawnSyncReturns<string>;
           }
+          runnerArgs.push(request.args);
           prompts.push(request.args.at(-1) ?? "");
           const config = JSON.parse(readFileSync(join(request.cwd, "opencode.json"), "utf8")) as { mcp: Record<string, unknown> };
           const events = [{ type: "step_finish", part: { tokens: { input: 10, output: 2 } } }];
@@ -243,6 +245,7 @@ describe("controlled agent evaluation", () => {
         taskBaseCommits: { smoke: commit },
       });
       expect(report.version).toBe(4);
+      expect(runnerArgs.every((args) => args.includes("--pure"))).toBe(true);
       expect(prompts.some((prompt) => prompt.includes("A failed attempt used the legacy answer."))).toBe(true);
       expect(report.integrity).toEqual({ passed: true, failures: [] });
       const markdown = readFileSync(join(output, "summary.md"), "utf8");

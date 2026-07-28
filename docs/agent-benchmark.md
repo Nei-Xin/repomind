@@ -3,6 +3,8 @@
 `repomind eval --agent` measures end-to-end coding-agent task outcomes using
 no-memory, raw full-history, and RepoMind arms. It currently supports OpenCode and always creates a controlled
 primary agent that cannot delegate work to background agents.
+The runner passes OpenCode `--pure`, so globally configured plugins cannot add
+unversioned tools, MCP servers, or prompt behavior to the controlled arms.
 
 ```powershell
 repomind eval --agent `

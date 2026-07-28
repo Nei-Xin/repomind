@@ -7,6 +7,13 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-28
+
+### Fixed
+
+- Run controlled OpenCode Agent evaluations with `--pure` so global plugins do
+  not inject untracked tools, MCP servers, or prompt behavior into any arm.
+
 ## [0.7.0] - 2026-07-28
 
 ### Added

@@ -171,7 +171,7 @@ function executeRun(task: AgentTask, arm: AgentArm, iteration: number, options: 
   const started = performance.now();
   const agent = execute({
     command: runner,
-    args: ["run", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, taskPrompt(task, arm)],
+    args: ["run", "--pure", "--format", "json", "--auto", "--agent", "benchmark", "--dir", repository, taskPrompt(task, arm)],
     cwd: repository, timeoutMs: options.timeoutMs ?? 600_000,
   });
   const wallDurationMs = Math.round(performance.now() - started);
