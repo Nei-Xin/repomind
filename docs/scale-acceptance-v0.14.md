@@ -90,38 +90,38 @@ flush operating-system file or database page caches between samples.
 
 The clean-commit v0.14 acceptance passed all 19 gates on 2026-07-28. The
 runner and target checkout were both fixed at commit
-`0a0933414542f2e84204eed84232f031405cba8d`, and the report recorded
+`01d79f26b572a8caf9d2e1c4376991c24f2209fd`, and the report recorded
 `repoMindWorktreeDirty: false`.
 
 The raw artifacts are retained outside the repository at:
 
 ```text
-D:\data\code\project\repomind-test\v0.14-scale-20260728-08
+D:\data\code\project\repomind-test\v0.14-scale-20260729-09
 ```
 
 The JSON report SHA-256 is
-`4f569cb81c8f83b166f15a28af4ce6c353db87f9133a3ce4f160baae48c66cb1`;
+`6f82f0ff52c28b6117d05040fb2974a6b11bf5185c583824ac4305727b5acb43`;
 the Markdown report SHA-256 is
-`7dd0c395d9f07dc9bdc1ee82ff811822629dc5be1e0699e1684e105db161e9d7`.
+`efa578f052fe60994112188d2e7e55413409c7c8b3a87a064e7a7b14b8a54af1`.
 The runner script SHA-256 recorded inside the report is
 `8f85e93d0fedb751c5cecf8e8488fc64d0a18a2a44ab36c97b8bd733d771b178`.
 
-The run stored 10,000 L1 records at 307.880 records/second. All 10,000 were
+The run stored 10,000 L1 records at 319.880 records/second. All 10,000 were
 active, Evidence-backed, file-linked, audited, indexed by FTS, and represented
-in the cached vector index. The SQLite/WAL/SHM footprint was 41,267,200 bytes,
-and observed process RSS reached 195,092,480 bytes.
+in the cached vector index. The SQLite/WAL/SHM footprint was 41,218,048 bytes,
+and observed process RSS reached 194,277,376 bytes.
 
 | Operation | P95 ms | Gate | Result |
 | --- | ---: | ---: | --- |
-| FTS hit | 91.326 | less than 150 | passed |
-| FTS empty result | 87.604 | less than 150 | passed |
-| Cached hybrid search | 330.503 | less than 500 | passed |
-| Memory Inspect | 1.016 | less than 100 | passed |
-| Session Start | 637.195 | less than 1,000 | passed |
-| CLI cold start | 378.916 | less than 1,000 | passed |
+| FTS hit | 80.363 | less than 150 | passed |
+| FTS empty result | 76.431 | less than 150 | passed |
+| Cached hybrid search | 302.774 | less than 500 | passed |
+| Memory Inspect | 0.891 | less than 100 | passed |
+| Session Start | 621.154 | less than 1,000 | passed |
+| CLI cold start | 374.829 | less than 1,000 | passed |
 
-GitHub Actions [CI run #51](https://github.com/Nei-Xin/repomind/actions/runs/30375255695)
-then passed on the same commit in 5 minutes. Its five successful jobs were the
+GitHub Actions [CI run #53](https://github.com/Nei-Xin/repomind/actions/runs/30376367751)
+then passed on the same commit in 4 minutes 19 seconds. Its five successful jobs were the
 Ubuntu, Windows, and macOS verification matrix, coverage, and the comparison
 benchmark. The run retained both coverage and comparison-report artifacts.
 
