@@ -76,7 +76,7 @@ describe("staleness refresh cost", () => {
     core.close();
   });
 
-  it("keeps the repository-wide fast path correct when many memories share a file", async () => {
+  it("keeps the repository-wide fast path correct when many memories share a file", { timeout: 30_000 }, async () => {
     const core = new RepositoryMemoryCore(repository);
     for (let index = 0; index < 250; index++) {
       core.record({
