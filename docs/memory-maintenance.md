@@ -92,3 +92,49 @@ An empty result is an explicit closed state:
 
 This command does not make governance decisions automatically. A stale file
 proves only that evidence changed; it does not prove the memory is false.
+
+## Apply an approved batch
+
+Create a strict JSON decision file after inspecting every listed memory:
+
+```json
+{
+  "actions": [
+    {
+      "memoryId": "mem_...",
+      "action": "validate",
+      "reason": "Checked against the current implementation and tests"
+    },
+    {
+      "memoryId": "mem_...",
+      "action": "invalidate",
+      "reason": "Disproven by the current integration test"
+    }
+  ]
+}
+```
+
+Apply the decisions from a file or stdin:
+
+```bash
+repomind review-apply --input review-decisions.json --json
+repomind review-apply --input - --json
+```
+
+Every target must still be pending review. RepoMind validates the complete
+batch before writing and applies it in one transaction, so an invalid or stale
+decision cannot leave a partially applied batch. Correction remains a
+single-memory operation because it requires replacement content and metadata.
+
+MCP clients can use `repo_memory_review` and `repo_memory_review_apply` with
+the same workflow. The MCP apply tool accepts snake-case `memory_id` fields.
+
+## Inspect maintenance history
+
+```bash
+repomind review-history --limit 50 --json
+```
+
+The history is derived from the existing append-only memory audit log. It
+includes uncertain, conflict, reconciliation, validation, correction, and
+invalidation events without creating a second source of truth.

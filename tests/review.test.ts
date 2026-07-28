@@ -68,4 +68,26 @@ describe("memory maintenance review", () => {
     expect(() => core.review({ kind: "retired" as MemoryReviewKind })).toThrow(/Invalid review kind/u);
     core.close();
   });
+
+  it("applies a reviewed batch atomically and exposes maintenance history", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const first = core.record({ type: "decision", title: "Queue backend", content: "Use SQLite." });
+    const second = core.record({ type: "decision", title: "Queue backend", content: "Use PostgreSQL." });
+
+    expect(() => core.applyReview([
+      { memoryId: first.id, action: "validate", reason: "SQLite is confirmed." },
+      { memoryId: "mem_missing", action: "invalidate", reason: "Not applicable." },
+    ])).toThrow(/was not found/u);
+    expect(core.review()).toMatchObject({ pending: 2 });
+
+    const applied = core.applyReview([
+      { memoryId: second.id, action: "invalidate", reason: "PostgreSQL is not used." },
+    ]);
+    expect(applied).toMatchObject({ applied: 1, remaining: 0 });
+    expect(core.reviewHistory()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ memoryId: second.id, action: "memory_invalidated", reason: "PostgreSQL is not used." }),
+      expect.objectContaining({ memoryId: first.id, action: "memory_conflict_reconciled" }),
+    ]));
+    core.close();
+  });
 });

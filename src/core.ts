@@ -17,6 +17,9 @@ import type {
   InvalidateMemoryInput,
   InvalidateMemoryResult,
   MemoryResult,
+  MemoryMaintenanceHistoryEntry,
+  MemoryReviewAction,
+  MemoryReviewBatchResult,
   MemoryReviewItem,
   MemoryReviewKind,
   MemoryReviewQueue,
@@ -654,6 +657,62 @@ export class RepositoryMemoryCore {
       counts,
       items,
     };
+  }
+
+  applyReview(actions: MemoryReviewAction[]): MemoryReviewBatchResult {
+    if (!actions.length || actions.length > 100) {
+      throw new RepoMindError("INVALID_INPUT", "review actions must contain from 1 to 100 items");
+    }
+    const ids = actions.map((item) => item.memoryId.trim());
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length || actions.some((item) => !item.reason.trim())) {
+      throw new RepoMindError("INVALID_INPUT", "review actions require unique memory ids and non-empty reasons");
+    }
+    this.refreshStaleMemoryStates();
+    const db = this.context.database.raw;
+    for (const id of ids) {
+      const row = db.prepare("SELECT status FROM memories WHERE id=? AND repository_id=?")
+        .get(id, this.context.marker.projectId) as { status: string } | undefined;
+      if (!row) throw new RepoMindError("MEMORY_NOT_FOUND", `Memory ${id} was not found`);
+      if (row.status !== "uncertain") {
+        throw new RepoMindError("INVALID_INPUT", `Memory ${id} is ${row.status}, not pending review`);
+      }
+    }
+    const results = this.context.database.transaction(() => actions.map((item) => item.action === "validate"
+      ? this.validateMemory({ memoryId: item.memoryId, reason: item.reason })
+      : this.invalidateMemory({ memoryId: item.memoryId, reason: item.reason })));
+    return { applied: results.length, results, remaining: this.review({ limit: 1 }).pending };
+  }
+
+  reviewHistory(limit = 50): MemoryMaintenanceHistoryEntry[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new RepoMindError("INVALID_INPUT", "history limit must be an integer from 1 to 200");
+    }
+    const rows = this.context.database.raw.prepare(`
+      SELECT m.id AS memory_id, m.type, m.title, a.action, a.reason, a.created_at
+      FROM memory_audit_log a
+      JOIN memories m ON m.id=a.memory_id
+      WHERE m.repository_id=? AND a.action IN (
+        'memory_marked_uncertain', 'memory_conflict_detected', 'memory_conflict_reconciled',
+        'memory_validated', 'memory_corrected', 'memory_invalidated'
+      )
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT ?
+    `).all(this.context.marker.projectId, limit) as Array<{
+      memory_id: string;
+      type: MemoryType;
+      title: string;
+      action: string;
+      reason: string | null;
+      created_at: number;
+    }>;
+    return rows.map((row) => ({
+      memoryId: row.memory_id,
+      type: row.type,
+      title: row.title,
+      action: row.action,
+      reason: row.reason,
+      createdAt: Number(row.created_at),
+    }));
   }
 
   status(): Record<string, unknown> {

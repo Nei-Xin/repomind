@@ -7,12 +7,25 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-28
+
 ### Added
 
 - `repomind review` provides a repository maintenance queue for uncertain
   memories, classified as stale-file, conflict, or other review work. Each
   item includes its concrete reason, evidence count, related files, and
   suggested inspect, validate, correct, and invalidate commands.
+- `repomind review-apply --input <json|->` atomically applies an approved batch
+  of validation and invalidation decisions, while `repomind review-history`
+  exposes the existing audit trail as an operational maintenance log.
+- MCP clients can list and apply review work through `repo_memory_review` and
+  `repo_memory_review_apply`. The missing `repo_session_abandon` lifecycle tool
+  is now available to non-host-managed MCP clients.
+
+### Changed
+
+- Nested database operations use SQLite savepoints, allowing an entire review
+  batch to commit or roll back as one unit.
 
 ## [0.10.0] - 2026-07-28
 

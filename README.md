@@ -89,6 +89,8 @@ existing audited governance commands:
 repomind review
 repomind review --kind stale --json
 repomind memory-validate mem_... --reason "Reviewed against the current files"
+repomind review-apply --input review-decisions.json --json
+repomind review-history --limit 20 --json
 ```
 
 The queue refreshes file hashes before listing work and classifies uncertain
@@ -120,12 +122,15 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes nine tools:
+The MCP server exposes twelve tools:
 
 - `repo_session_start`
 - `repo_memory_search`
 - `repo_session_commit`
+- `repo_session_abandon`
 - `repo_memory_inspect`
+- `repo_memory_review`
+- `repo_memory_review_apply`
 - `repo_memory_record`
 - `repo_memory_validate`
 - `repo_memory_correct`
@@ -136,7 +141,7 @@ See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integr
 
 See [`docs/stale-detection.md`](docs/stale-detection.md) for the `active` to `uncertain` behavior and a reproducible validation flow.
 
-See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions.
+See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, and [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history.
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 

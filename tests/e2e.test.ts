@@ -136,7 +136,16 @@ describe("cross-process CLI end-to-end", () => {
       suggestedCommands: expect.objectContaining({ inspect: `repomind inspect ${first.id}` }),
     }));
 
-    JSON.parse(cli(repository, data, "memory-invalidate", second.id, "--reason", "The repository uses SQLite."));
+    const decisions = join(data, "review-decisions.json");
+    writeFileSync(decisions, JSON.stringify({ actions: [{
+      memoryId: second.id,
+      action: "invalidate",
+      reason: "The repository uses SQLite.",
+    }] }), "utf8");
+    expect(JSON.parse(cli(repository, data, "review-apply", "--input", decisions))).toMatchObject({ applied: 1, remaining: 0 });
     expect(JSON.parse(cli(repository, data, "review"))).toMatchObject({ pending: 0, returned: 0, items: [] });
+    expect(JSON.parse(cli(repository, data, "review-history"))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ memoryId: second.id, action: "memory_invalidated" }),
+    ]));
   });
 });

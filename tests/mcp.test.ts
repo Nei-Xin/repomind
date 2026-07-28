@@ -40,8 +40,11 @@ describe("MCP server", () => {
         "repo_memory_inspect",
         "repo_memory_invalidate",
         "repo_memory_record",
+        "repo_memory_review",
+        "repo_memory_review_apply",
         "repo_memory_search",
         "repo_memory_validate",
+        "repo_session_abandon",
         "repo_session_commit",
         "repo_session_start",
       ]);
@@ -65,6 +68,54 @@ describe("MCP server", () => {
       expect(response.content[0]).toMatchObject({ type: "text" });
       const text = response.content[0]?.type === "text" ? response.content[0].text : "{}";
       expect(JSON.parse(text)).toMatchObject({ repositoryId: expect.any(String), sessionId: expect.stringMatching(/^ses_/) });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("reviews a conflict and abandons an interrupted session through the protocol", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    const first = core.record({ type: "decision", title: "Queue backend", content: "Use SQLite." });
+    const second = core.record({ type: "decision", title: "Queue backend", content: "Use PostgreSQL." });
+    core.close();
+
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const pending = await client.callTool({
+        name: "repo_memory_review",
+        arguments: { repo_path: repository, kind: "conflict" },
+      });
+      const pendingText = pending.content[0]?.type === "text" ? pending.content[0].text : "{}";
+      expect(JSON.parse(pendingText)).toMatchObject({ pending: 2, returned: 2 });
+
+      const applied = await client.callTool({
+        name: "repo_memory_review_apply",
+        arguments: {
+          repo_path: repository,
+          actions: [{ memory_id: second.id, action: "invalidate", reason: "SQLite is confirmed." }],
+        },
+      });
+      const appliedText = applied.content[0]?.type === "text" ? applied.content[0].text : "{}";
+      expect(JSON.parse(appliedText)).toMatchObject({ applied: 1, remaining: 0 });
+
+      const started = await client.callTool({
+        name: "repo_session_start",
+        arguments: { task: "Interrupted task", repo_path: repository },
+      });
+      const startedText = started.content[0]?.type === "text" ? started.content[0].text : "{}";
+      const sessionId = (JSON.parse(startedText) as { sessionId: string }).sessionId;
+      const abandoned = await client.callTool({
+        name: "repo_session_abandon",
+        arguments: { session_id: sessionId },
+      });
+      const abandonedText = abandoned.content[0]?.type === "text" ? abandoned.content[0].text : "{}";
+      expect(JSON.parse(abandonedText)).toEqual({ sessionId, status: "abandoned" });
+      expect(first.id).toMatch(/^mem_/u);
     } finally {
       await client.close();
       await server.close();

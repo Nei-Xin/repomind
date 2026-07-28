@@ -83,6 +83,53 @@ export function createMcpServer(): McpServer {
   );
 
   server.tool(
+    "repo_memory_review",
+    "List uncertain memories that require human validation, correction, or invalidation.",
+    {
+      repo_path: z.string().min(1),
+      kind: z.enum(["all", "stale", "conflict", "other"]).optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).review({
+          ...(input.kind ? { kind: input.kind } : {}),
+          ...(input.limit ? { limit: input.limit } : {}),
+        });
+        for (const memory of value.items) memoryRepositories.set(memory.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_memory_review_apply",
+    "Atomically apply user-approved validate or invalidate decisions to pending review memories.",
+    {
+      repo_path: z.string().min(1),
+      actions: z.array(z.object({
+        memory_id: z.string().min(1),
+        action: z.enum(["validate", "invalidate"]),
+        reason: z.string().min(1),
+      })).min(1).max(100),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).applyReview(input.actions.map((item) => ({
+          memoryId: item.memory_id,
+          action: item.action,
+          reason: item.reason,
+        })));
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
     "repo_session_commit",
     "Commit a task result, capture final Git evidence, and store deterministic L1 memories.",
     {
@@ -111,6 +158,26 @@ export function createMcpServer(): McpServer {
           ...(input.remaining_work ? { remainingWork: input.remaining_work } : {}),
         });
         return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_session_abandon",
+    "Abandon an open session after an interrupted or cancelled task.",
+    {
+      session_id: z.string().min(1),
+      repo_path: z.string().optional(),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? sessionRepositories.get(input.session_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required after an MCP server restart");
+        coreFor(repoPath).abandonSession(input.session_id);
+        sessionRepositories.delete(input.session_id);
+        return result({ sessionId: input.session_id, status: "abandoned" });
       } catch (error) {
         return failure(error);
       }

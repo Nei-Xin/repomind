@@ -5,6 +5,7 @@ import { migrations } from "./migrations.js";
 export class Database {
   readonly raw: DatabaseSync;
   readonly vector: { available: boolean; version: string | null; error: string | null };
+  private transactionDepth = 0;
 
   constructor(readonly path: string) {
     this.raw = new DatabaseSync(path, { allowExtension: true });
@@ -40,13 +41,22 @@ export class Database {
   }
 
   transaction<T>(work: () => T): T {
-    this.raw.exec("BEGIN IMMEDIATE");
+    const savepoint = `repomind_nested_${this.transactionDepth}`;
+    this.raw.exec(this.transactionDepth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
+    this.transactionDepth++;
     try {
       const result = work();
-      this.raw.exec("COMMIT");
+      this.transactionDepth--;
+      this.raw.exec(this.transactionDepth === 0 ? "COMMIT" : `RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {
-      this.raw.exec("ROLLBACK");
+      this.transactionDepth--;
+      if (this.transactionDepth === 0) {
+        this.raw.exec("ROLLBACK");
+      } else {
+        this.raw.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        this.raw.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      }
       throw error;
     }
   }

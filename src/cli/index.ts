@@ -25,6 +25,7 @@ import { profileAgentReport, writeAgentProfileReport } from "../eval/agent/profi
 import { runOpenCodeHost } from "../integrations/opencode/run.js";
 import { redactSecrets } from "../security/redaction.js";
 import { readCommitInput } from "./commit-input.js";
+import { readReviewInput } from "./review-input.js";
 import { stringifyCliJson } from "./json.js";
 import { applyBootstrapBundle, generateBootstrapBundle, loadBootstrapBundle, writeBootstrapBundle } from "../bootstrap.js";
 
@@ -36,6 +37,8 @@ Usage:
   repomind init [--repo <path>] [--new-id]
   repomind status [--repo <path>] [--json]
   repomind review [--kind all|stale|conflict|other] [--limit <1-200>] [--repo <path>] [--json]
+  repomind review-apply --input <decisions.json|-> [--repo <path>] [--json]
+  repomind review-history [--limit <1-200>] [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
   repomind start --task <text> [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
@@ -409,6 +412,8 @@ async function main(): Promise<void> {
         output(values.json ? queue : renderReviewQueue(queue));
         break;
       }
+      case "review-apply": output(core.applyReview(readReviewInput(required(values.input, "--input")))); break;
+      case "review-history": output(core.reviewHistory(values.limit ? Number(values.limit) : undefined)); break;
       case "start": output(await core.startSessionHybrid({ task: required(values.task, "--task"), clientName: "cli" })); break;
       case "commit": {
         if (values.input) {

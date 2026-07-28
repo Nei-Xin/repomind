@@ -99,6 +99,25 @@ export interface MemoryReviewQueue {
   items: MemoryReviewItem[];
 }
 
+export type MemoryReviewAction =
+  | { memoryId: string; action: "validate"; reason: string }
+  | { memoryId: string; action: "invalidate"; reason: string };
+
+export interface MemoryReviewBatchResult {
+  applied: number;
+  results: Array<ValidateMemoryResult | InvalidateMemoryResult>;
+  remaining: number;
+}
+
+export interface MemoryMaintenanceHistoryEntry {
+  memoryId: string;
+  type: MemoryType;
+  title: string;
+  action: string;
+  reason: string | null;
+  createdAt: number;
+}
+
 export interface ValidateMemoryInput {
   memoryId: string;
   reason: string;
