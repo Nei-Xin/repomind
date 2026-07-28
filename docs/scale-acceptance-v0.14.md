@@ -69,8 +69,10 @@ npm run bench:scale-10k -- `
 
 Only explicit smoke mode accepts `--count`, limited to 100-1,000 records.
 Smoke reports use a different report kind and set
-`formalScaleTargetEvaluated` to `false`; they cannot be cited as the
-10,000-L1 result.
+`formalScaleTargetEvaluated` to `false`. They enforce the 13 data integrity,
+recall, isolation, database, and Session checks, but only record latency; they
+do not apply the six machine-dependent performance gates and cannot be cited
+as the 10,000-L1 result.
 
 ## Interpretation
 
@@ -84,25 +86,41 @@ must retain its raw artifacts and environment metadata.
 CLI cold-start samples launch a new Node.js process every time. They do not
 flush operating-system file or database page caches between samples.
 
-## Development baseline
+## Formal release evidence
 
-The current v0.14 development run passed all 19 gates on 2026-07-28.
-It retained raw artifacts outside the repository at:
+The clean-commit v0.14 acceptance passed all 19 gates on 2026-07-28. The
+runner and target checkout were both fixed at commit
+`a66af50fa5e53d19a64eccc414fb104fa33424f9`, and the report recorded
+`repoMindWorktreeDirty: false`.
+
+The raw artifacts are retained outside the repository at:
 
 ```text
-D:\data\code\project\repomind-test\v0.14-scale-20260728-02
+D:\data\code\project\repomind-test\v0.14-scale-20260728-05
 ```
 
-The run wrote 10,000 L1 records at 368.208 records/second, built 10,000 cached
-embeddings in 3.770 seconds, and produced a 41,259,008-byte SQLite/WAL/SHM
-footprint. Observed process RSS reached 160,739,328 bytes. The latency P95
-values were 109.896 ms for FTS hits, 130.699 ms for empty FTS results, 295.528
-ms for cached hybrid search, 1.158 ms for Inspect, 626.812 ms for Session Start,
-and 380.662 ms for CLI process cold start.
+The JSON report SHA-256 is
+`f6641a246e34866e609bfc2c38cb93b8caa845b61e829c291544c85384d69ba4`;
+the Markdown report SHA-256 is
+`71b8a3e010a4830b9f2e976b3e1bc2414a045cd1ffbb6e29790b4c5d64f4e960`.
+The runner script SHA-256 recorded inside the report is
+`9b79dd0b33ecf6a63b7bafd3bf1cebb3e009138a6c92cf159bd6c0539d62cf73`.
 
-This was an honest development baseline: the target checkout was fixed at
-`01865c60c7b4bd8785f29a11cd65303a63596121`, while the runner itself was still
-an uncommitted worktree change. It therefore demonstrates the implementation's
-current behavior but is not the final clean-commit v0.14 release artifact. The
-formal release acceptance must be rerun after the implementation is committed
-so the runner checksum and RepoMind commit identify a clean, reproducible state.
+The run stored 10,000 L1 records at 276.511 records/second. All 10,000 were
+active, Evidence-backed, file-linked, audited, indexed by FTS, and represented
+in the cached vector index. The SQLite/WAL/SHM footprint was 41,271,296 bytes,
+and observed process RSS reached 200,626,176 bytes.
+
+| Operation | P95 ms | Gate | Result |
+| --- | ---: | ---: | --- |
+| FTS hit | 91.290 | less than 150 | passed |
+| FTS empty result | 135.530 | less than 150 | passed |
+| Cached hybrid search | 344.539 | less than 500 | passed |
+| Memory Inspect | 1.322 | less than 100 | passed |
+| Session Start | 790.598 | less than 1,000 | passed |
+| CLI cold start | 424.517 | less than 1,000 | passed |
+
+This evidence was produced on Windows 11 x64 with Node.js 22.20.0 and an AMD
+Ryzen 7 H 255 processor. It proves the stated local scale and integrity gates
+on that machine and deterministic dataset; the limitations listed above still
+apply.

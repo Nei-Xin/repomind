@@ -23,7 +23,7 @@ describe("10,000-L1 scale acceptance runner", () => {
       expect(report).toMatchObject({
         kind: "repomind-scale-runner-smoke",
         integrity: { passed: true },
-        configuration: { mode: "smoke", formalScaleTargetEvaluated: false, memories: 100 },
+        configuration: { mode: "smoke", formalScaleTargetEvaluated: false, memories: 100, targets: null },
         dataset: {
           finalCounts: {
             memories: 100,
@@ -33,6 +33,8 @@ describe("10,000-L1 scale acceptance runner", () => {
           },
         },
       });
+      expect(report.integrity.checks).toHaveLength(13);
+      expect(report.integrity.checks.some((check: { name: string }) => check.name.includes("P95"))).toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }

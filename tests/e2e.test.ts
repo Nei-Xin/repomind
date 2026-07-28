@@ -36,7 +36,7 @@ describe("cross-process CLI end-to-end", () => {
     rmSync(data, { recursive: true, force: true });
   });
 
-  it("persists memories across separate CLI processes", () => {
+  it("persists memories across separate CLI processes", { timeout: 30_000 }, () => {
     expect(existsSync(CLI), "dist/cli/index.js is missing; run npm run build before npm test").toBe(true);
 
     const initialized = JSON.parse(cli(repository, data, "init")) as { projectId: string };

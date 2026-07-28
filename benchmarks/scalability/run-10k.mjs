@@ -328,7 +328,7 @@ const database = databaseSizes(core.context.database.path);
 const finalStatus = core.status();
 memorySamples.push(memorySnapshot());
 
-const checks = [
+const integrityChecks = [
   { name: `exactly ${memoryCount.toLocaleString("en-US")} L1 memories stored`, passed: finalCounts.memories === memoryCount, measured: finalCounts.memories, target: memoryCount },
   { name: "every L1 is active", passed: finalCounts.activeMemories === memoryCount, measured: finalCounts.activeMemories, target: memoryCount },
   { name: "every L1 has Evidence", passed: finalCounts.evidenceBackedMemories === memoryCount, measured: finalCounts.evidenceBackedMemories, target: memoryCount },
@@ -342,6 +342,8 @@ const checks = [
   { name: "repository isolation has no cross-project recall", passed: isolationOwnResult.some((item) => item.id === sentinel.id) && primaryLeakResult.length === 0 && isolationLeakResult.length === 0, measured: `${primaryLeakResult.length}/${isolationLeakResult.length}`, target: "0/0" },
   { name: "SQLite integrity and foreign keys pass", passed: integrityCheck.integrity_check === "ok" && foreignKeyFailures.length === 0, measured: `${integrityCheck.integrity_check}/${foreignKeyFailures.length}`, target: "ok/0" },
   { name: "no open Sessions remain", passed: finalStatus.openSessions === 0, measured: finalStatus.openSessions, target: 0 },
+];
+const performanceChecks = [
   { name: "FTS P95 is below 150 ms", passed: timings.ftsSearch.p95Ms < TARGETS.ftsSearchP95Ms, measured: timings.ftsSearch.p95Ms, target: `<${TARGETS.ftsSearchP95Ms}` },
   { name: "FTS no-result P95 is below 150 ms", passed: timings.ftsNoResult.p95Ms < TARGETS.ftsSearchP95Ms, measured: timings.ftsNoResult.p95Ms, target: `<${TARGETS.ftsSearchP95Ms}` },
   { name: "cached hybrid P95 is below 500 ms", passed: timings.hybridSearchCached.p95Ms < TARGETS.hybridSearchP95Ms, measured: timings.hybridSearchCached.p95Ms, target: `<${TARGETS.hybridSearchP95Ms}` },
@@ -349,6 +351,7 @@ const checks = [
   { name: "Session Start P95 is below 1 second", passed: timings.sessionStart.p95Ms < TARGETS.sessionStartP95Ms, measured: timings.sessionStart.p95Ms, target: `<${TARGETS.sessionStartP95Ms}` },
   { name: "CLI cold start P95 is below 1 second", passed: timings.cliColdStart.p95Ms < TARGETS.cliColdStartP95Ms, measured: timings.cliColdStart.p95Ms, target: `<${TARGETS.cliColdStartP95Ms}` },
 ];
+const checks = mode === "formal" ? [...integrityChecks, ...performanceChecks] : integrityChecks;
 
 const scriptPath = new URL(import.meta.url);
 const report = {
@@ -373,7 +376,7 @@ const report = {
     repetitions,
     expensiveRepetitions,
     embedding: { provider: provider.id, model: provider.model, dimensions: provider.dimensions, remote: provider.remote },
-    targets: TARGETS,
+    targets: mode === "formal" ? TARGETS : null,
     trackedFiles: files,
     generatorSha256: sha256(JSON.stringify({ memoryCount, files, version: 1 })),
   },
