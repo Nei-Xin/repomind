@@ -126,7 +126,9 @@ repomind profile-inspect --json
 The profile is versioned, preserves its L1/L2 provenance, and becomes stale
 when an eligible source changes. Only a current profile is injected into
 Session Start; use `repomind start --no-profile` to opt out. See
-[`docs/repository-profile.md`](docs/repository-profile.md) for the contract.
+[`docs/repository-profile.md`](docs/repository-profile.md) for the contract and
+[`docs/l3-real-repository-acceptance-v0.12.md`](docs/l3-real-repository-acceptance-v0.12.md)
+for the fixed-commit real-repository result.
 
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use

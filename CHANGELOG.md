@@ -27,6 +27,9 @@ under **Changed** with its migration impact.
   `repo_profile_inspect`. Session Start supports explicit profile opt-out.
 - Migration 10 adds the L3 profile, live source-link, and version-history
   tables.
+- A rebuildable fixed-commit L3 acceptance runner verifies provenance,
+  confidence isolation, freshness, versioning, Session Start injection, and
+  P50/P95 latency on the real RepoMind repository.
 
 ### Changed
 
@@ -39,6 +42,9 @@ under **Changed** with its migration impact.
 - The development baseline passes 137 tests across 29 files, including L2/L3
   provenance, bounded rendering, incremental freshness, FTS recovery,
   cross-process CLI, MCP stdio purity, and upgrades from every prior Schema.
+- Real-repository L3 acceptance passed all 15 integrity and latency gates at
+  commit `051212d`; unchanged rebuild, get, and inspect P95 remained below
+  6 ms, and Session Start P95 was 210.615 ms on the recorded Windows host.
 
 ## [0.11.0] - 2026-07-28
 
