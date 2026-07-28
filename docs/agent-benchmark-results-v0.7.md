@@ -35,11 +35,14 @@ successful v0.7 outcome acceptance.
 | Manifest SHA-256 | `9799cf44f4ba0e4e59d48bd20b22a15f301fdec5c45bd4a1681db51e65ba15c1` |
 | Source report SHA-256 | `52195100fc16a0c10249a4a1670c7f844c20837fe2ea41c0d9fb697bf58447c1` |
 | Aggregate report SHA-256 | `49cdbfd690c8cdffa96c8c143251e7a81c841de60fa2256b41dac1fcb01905d5` |
+| Phase profile SHA-256 | `eb3cb487f92c53719aa32da5ebfe2c8aed6be239e3a602c90ebdd0ba20821883` |
 
 The source report is retained at
 `D:\data\code\project\repomind-test\results-v0.7\windows-opencode-gpt-5.6-terra-20260728\summary.json`.
 The independently generated aggregate is retained under
 `D:\data\code\project\repomind-test\agent-summary-v0.7-formal-20260728`.
+The offline phase profile is retained under
+`D:\data\code\project\repomind-test\agent-profile-v0.7-formal-20260728`.
 
 | Task | Base commit |
 | --- | --- |
@@ -160,7 +163,37 @@ evidence.
 - All 24 RepoMind runs retrieved exactly one seeded memory and committed their
   session; no session remained open or was abandoned.
 
-## Interpretation and next acceptance work
+## Phase diagnosis
+
+The offline phase analyzer reconstructed all 72 raw timelines and matched their
+turn, token, and tool totals to report v4. Profile integrity passed with no
+failures.
+
+| Phase | Direct MCP time | Tool-turn cycle | Following cycle | Tool-turn input/output | Following input/output |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Session start | 0.284 s | 2.366 s | 5.234 s | 797 / 118 | 818 / 95 |
+| Session commit | 0.448 s | 8.400 s | 4.980 s | 1,105 / 285 | 1,185 / 77 |
+
+Session start and commit directly spend only 0.731 seconds per RepoMind run in
+the MCP tools themselves, about 3.4% of the 21.401-second paired wall-time gap
+against full history. The paired gap separates into 20.297 seconds inside the
+observable Agent event stream and 1.104 seconds of process startup or shutdown
+overhead. The bottleneck is therefore not SQLite or MCP execution.
+
+RepoMind uses 2.833 more model turns, 2.708 more tool calls, 4,562 more input
+tokens, 496 more output tokens, and 25,067 more cache-read tokens than full
+history per paired run. The mandatory start and commit tool turns plus their
+following turns carry 3,905 input and 577 output tokens on average. Those
+windows are diagnostic rather than additive causal estimates because a
+baseline also needs ordinary work and final-response turns.
+
+Commit is the larger optimization target: its tool turn and following turn span
+13.380 seconds, compared with 7.600 seconds around start, and its tool turn
+generates more than twice the output tokens of start. This is consistent with
+the Agent constructing a detailed commit payload and then performing another
+model turn after the result.
+
+## Interpretation
 
 RepoMind delivered a clear quality benefit when compared with having no
 historical context. It did not improve quality over full history on this suite,
@@ -169,10 +202,15 @@ full-history mean was 53.890 seconds, so the configured 15% ceiling permits at
 most 61.974 seconds. RepoMind would need to reduce its current mean by about
 13.318 seconds to meet that gate on an otherwise comparable run.
 
-The next iteration should reduce the mandatory session protocol and prompt
-overhead, then rerun the unchanged manifest and acceptance thresholds in a new
-output directory. A replacement run must be reported alongside this result,
-not substituted for it.
+## Next acceptance work
+
+The next iteration should first reduce commit-payload generation and the extra
+post-commit model turn, then reduce start-result context and repeated context
+replay. Direct database optimization cannot close the measured gap by itself.
+After deterministic tests and a single-repeat engineering preflight, the
+unchanged manifest and acceptance thresholds should be rerun in a new output
+directory. A replacement run must be reported alongside this result, not
+substituted for it.
 
 ## Limits
 

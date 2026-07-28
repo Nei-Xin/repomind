@@ -153,6 +153,16 @@ Aggregate multiple report v4 files without losing their provenance:
 repomind eval --agent-summary --reports "results/**/summary.json" --output aggregate-results --strict --json
 ```
 
+Profile an existing Agent result without calling the model again:
+
+```bash
+repomind eval --agent-profile --report results/summary.json --output agent-profile --strict --json
+```
+
+The phase profile separates direct RepoMind MCP execution time from the model
+turns surrounding session start and commit, and computes paired wall-time,
+turn, and token overhead against both baselines.
+
 See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol,
 [`docs/agent-benchmark-results-v0.7.md`](docs/agent-benchmark-results-v0.7.md)
 for the formal v0.7 three-arm result (integrity passed, outcome acceptance

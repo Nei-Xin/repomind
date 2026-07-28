@@ -10,12 +10,31 @@ export interface AgentEventMetrics {
   retrievedMemories: number;
 }
 
-export function analyzeAgentEvents(jsonl: string): AgentEventMetrics {
+export interface ParsedAgentEvents {
+  events: Array<Record<string, unknown>>;
+  malformedLines: number;
+}
+
+export function parseAgentEvents(jsonl: string): ParsedAgentEvents {
   const events: Array<Record<string, unknown>> = [];
+  let malformedLines = 0;
   for (const line of jsonl.replace(/^\uFEFF/u, "").split(/\r?\n/u)) {
-    if (!line.trim().startsWith("{")) continue;
-    try { events.push(JSON.parse(line) as Record<string, unknown>); } catch { /* preserve raw logs; ignore malformed lines */ }
+    if (!line.trim()) continue;
+    if (!line.trim().startsWith("{")) {
+      malformedLines += 1;
+      continue;
+    }
+    try {
+      const value = JSON.parse(line) as unknown;
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) events.push(value as Record<string, unknown>);
+      else malformedLines += 1;
+    } catch { malformedLines += 1; }
   }
+  return { events, malformedLines };
+}
+
+export function analyzeAgentEvents(jsonl: string): AgentEventMetrics {
+  const { events } = parseAgentEvents(jsonl);
   const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
   const toolCalls = new Map<string, number>();
   const reads = new Map<string, number>();

@@ -53,7 +53,13 @@ function metricValue(run: AgentRunResult, key: PairedMetricKey): number {
   }
 }
 
-function loadReport(path: string): { report: AgentEvalReport; path: string; sha256: string } {
+export interface LoadedAgentReport {
+  report: AgentEvalReport;
+  path: string;
+  sha256: string;
+}
+
+export function loadAgentReport(path: string): LoadedAgentReport {
   const absolute = resolve(path);
   let bytes: Buffer;
   let value: unknown;
@@ -118,7 +124,7 @@ function summarize(values: Array<{ baseline: number; repoMind: number }>, key: P
 
 export function aggregateAgentReports(paths: string[]): AgentAggregateReport {
   if (!paths.length) throw new RepoMindError("INVALID_INPUT", "At least one agent report is required");
-  const loaded = paths.map(loadReport);
+  const loaded = paths.map(loadAgentReport);
   const reports = loaded.map((entry) => entry.report);
   const failedReports = loaded.filter((entry) => !entry.report.integrity.passed).map((entry) => entry.path);
   const hasFullHistory = reports.some((report) => report.runs.some((run) => run.arm === "full-history"));

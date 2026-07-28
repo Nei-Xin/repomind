@@ -115,6 +115,37 @@ win/tie/loss counts, and approximate 95% intervals from raw runs. `--strict`
 fails when any source report failed integrity. It does not reinterpret or
 override each experiment's acceptance result.
 
+## Offline phase profiles
+
+Attribute the runtime and token cost of an existing report-v4 run without
+calling the model again:
+
+```powershell
+repomind eval --agent-profile `
+  --report D:\results\summary.json `
+  --output D:\results\profile `
+  --strict `
+  --json
+```
+
+The command reads the source report and its sibling `raw/` directory by
+default. Use `--raw <dir>` if the JSONL files were moved. It writes
+`profile.json` and `profile.md`, hashes the source report, and validates every
+raw file against the report's turn, token, and tool counts.
+
+The profile reports three different boundaries:
+
+- direct RepoMind tool time from each MCP tool's own start/end timestamps;
+- the complete model cycle containing session start, session commit, or another
+  RepoMind tool, plus the immediately following model cycle;
+- paired end-to-end deltas in wall time, observed event time, process overhead,
+  turns, tool calls, and tokens against no-memory and full-history.
+
+Direct tool time is the storage/MCP execution cost. Surrounding cycles also
+contain model and host orchestration time, so they are diagnostic windows, not
+independent additive causal estimates. Paired end-to-end deltas remain the
+authoritative total cost.
+
 ## Rebuild the shipped suite
 
 The eight-task suite is stored as ordinary templates rather than nested Git

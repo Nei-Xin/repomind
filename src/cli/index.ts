@@ -21,6 +21,7 @@ import type { ArmKey } from "../eval/comparison/types.js";
 import { hashAgentManifest, loadAgentManifest } from "../eval/agent/manifest.js";
 import { runAgentEvaluation } from "../eval/agent/runner.js";
 import { aggregateAgentReports, writeAgentAggregateReport } from "../eval/agent/aggregate.js";
+import { profileAgentReport, writeAgentProfileReport } from "../eval/agent/profile.js";
 import { readCommitInput } from "./commit-input.js";
 import { stringifyCliJson } from "./json.js";
 
@@ -46,10 +47,11 @@ Usage:
   repomind vector-reindex [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
-  repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary) [--limit <n>] [--json]
+  repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
   repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
   repomind eval --agent-summary --reports <glob> [--output <dir>] [--strict] [--json]
+  repomind eval --agent-profile --report <summary.json> [--raw <dir>] [--output <dir>] [--strict] [--json]
   repomind mcp
 `;
 
@@ -79,7 +81,10 @@ const { values, positionals } = parseArgs({
     compare: { type: "boolean", default: false },
     agent: { type: "boolean", default: false },
     "agent-summary": { type: "boolean", default: false },
+    "agent-profile": { type: "boolean", default: false },
     reports: { type: "string" },
+    report: { type: "string" },
+    raw: { type: "string" },
     manifest: { type: "string" },
     runner: { type: "string" },
     model: { type: "string" },
@@ -138,8 +143,15 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "eval") {
-    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : "", values.agent ? "--agent" : "", values["agent-summary"] ? "--agent-summary" : ""].filter(Boolean);
+    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : "", values.agent ? "--agent" : "", values["agent-summary"] ? "--agent-summary" : "", values["agent-profile"] ? "--agent-profile" : ""].filter(Boolean);
     if (modes.length > 1) throw new RepoMindError("INVALID_INPUT", `${modes.join(" and ")} cannot be combined`);
+    if (values["agent-profile"]) {
+      const report = profileAgentReport(required(values.report, "--report"), values.raw);
+      writeAgentProfileReport(report, values.output ?? "agent-profile");
+      output(report);
+      if (values.strict && !report.integrity.passed) process.exitCode = 1;
+      return;
+    }
     if (values["agent-summary"]) {
       const paths = globSync(required(values.reports, "--reports")).sort();
       if (!paths.length) throw new RepoMindError("INVALID_INPUT", "No agent reports matched");

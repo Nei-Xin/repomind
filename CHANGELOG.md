@@ -7,6 +7,12 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- `repomind eval --agent-profile` for offline attribution of Agent wall time,
+  model turns, tokens, direct RepoMind MCP duration, and the model cycles around
+  session start and commit calls from an existing report-v4 result.
+
 ## [0.7.1] - 2026-07-28
 
 ### Fixed
