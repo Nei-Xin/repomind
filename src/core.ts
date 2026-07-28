@@ -47,7 +47,7 @@ import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
 import { ModuleNarrativeStore } from "./narratives/module-narratives.js";
 import { RepositoryProfileStore } from "./profiles/repository-profile.js";
-import { buildMatchExpression, searchTokens } from "./search/lexical.js";
+import { buildMatchExpression, searchTokens, shouldUseSubstringFallback } from "./search/lexical.js";
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
 
@@ -517,7 +517,7 @@ export class RepositoryMemoryCore {
         ORDER BY rank LIMIT ?
       `).all(match, ...params, limit) as Array<Record<string, unknown>>;
     }
-    if (rows.length < limit) {
+    if (rows.length < limit && shouldUseSubstringFallback(cleanQuery)) {
       const existing = new Set(rows.map((row) => String(row.id)));
       const fallback = db.prepare(`
         SELECT m.*, 100.0 AS rank FROM memories m

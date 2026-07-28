@@ -104,7 +104,8 @@ evidence no other memory references, leaving a content-free tombstone in
 
 Search is FTS5 over title, content, tags, and related files, with
 identifier-aware tokenization (camelCase, snake_case, and paths are split into
-extra search terms) and a substring fallback when FTS returns too little. It is
+extra search terms) and a substring fallback for ideographic or single-token
+queries when FTS returns too little. It is
 always scoped to one repository and filtered by status; `superseded` and
 `invalid` memories never enter an agent's context, and `uncertain` results
 carry their warning.

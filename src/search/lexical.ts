@@ -83,3 +83,13 @@ export function buildMatchExpression(query: string): string | null {
   if (!unique.length) return null;
   return unique.map((term) => `"${term}"`).join(" OR ");
 }
+
+/**
+ * A whole-query substring scan adds recall for ideographic text and partial
+ * single tokens. With multiple non-ideographic terms, an exact substring
+ * necessarily contains at least one FTS token, so a zero-hit FTS result proves
+ * that the full table scan cannot add a result.
+ */
+export function shouldUseSubstringFallback(query: string): boolean {
+  return containsCjk(query) || new Set(lexicalTerms(query)).size <= 1;
+}

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { initializeRepository } from "../src/repository.js";
-import { buildMatchExpression, cjkBigrams, lexicalTerms, searchTokens } from "../src/search/lexical.js";
+import { buildMatchExpression, cjkBigrams, lexicalTerms, searchTokens, shouldUseSubstringFallback } from "../src/search/lexical.js";
 import { createTestRepository } from "./helpers.js";
 
 describe("lexical helpers", () => {
@@ -27,6 +27,13 @@ describe("lexical helpers", () => {
     expect(buildMatchExpression("单元测试")).toBe('"单元" OR "元测" OR "测试"');
     // A mixed word keeps its latin remainder alongside the bigrams.
     expect(buildMatchExpression("SQLite扩展")).toBe('"扩展" OR "SQLite"');
+  });
+
+  it("limits substring scans to queries where they can add recall", () => {
+    expect(shouldUseSubstringFallback("gres")).toBe(true);
+    expect(shouldUseSubstringFallback("单元测试")).toBe(true);
+    expect(shouldUseSubstringFallback("flaky storage test")).toBe(false);
+    expect(shouldUseSubstringFallback("absent-scale-memory-0")).toBe(false);
   });
 
   it("returns null when no usable term survives", () => {
@@ -77,6 +84,13 @@ describe("ideographic search end to end", () => {
     const core = new RepositoryMemoryCore(repository);
     core.record({ type: "command", title: "运行单元测试", content: "使用 npm test 运行全部单元测试。" });
     expect(core.search("数据库迁移回滚")).toEqual([]);
+    core.close();
+  });
+
+  it("keeps single-token substring recall for Latin text", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const recorded = core.record({ type: "decision", title: "Database backend", content: "Use PostgreSQL for durable storage." });
+    expect(core.search("gres")[0]).toMatchObject({ id: recorded.id });
     core.close();
   });
 
