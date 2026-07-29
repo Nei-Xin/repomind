@@ -46,7 +46,8 @@
     "bench:portability-real": "npm run build --silent && node benchmarks/portability/run-real-recovery.mjs",
     "bench:scale-10k": "npm run build --silent && node benchmarks/scalability/run-10k.mjs",
     "bench:l4-real": "npm run build --silent && node benchmarks/skill-candidates/run-acceptance.mjs",
-    "bench:remote-extraction": "npm run build --silent && node benchmarks/remote-extraction/run-acceptance.mjs"
+    "bench:remote-extraction": "npm run build --silent && node benchmarks/remote-extraction/run-acceptance.mjs",
+    "bench:package-smoke": "npm run build --silent && node benchmarks/release/run-package-smoke.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

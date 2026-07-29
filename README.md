@@ -277,6 +277,21 @@ Embedding failures return FTS results and do not partially update the vector
 cache. See [`docs/vector-search.md`](docs/vector-search.md) for lifecycle and
 privacy details.
 
+## Packaged release verification
+
+RepoMind verifies the artifact users install, not only the source checkout.
+The acceptance packs the current build, installs that tarball into an isolated
+consumer, rejects forbidden package files, and exercises CLI, MCP, backup, and
+restore through the installed copy:
+
+```powershell
+npm run bench:package-smoke -- --workspace D:\data\code\project\repomind-test\package-smoke-<new-id>
+```
+
+The workspace must not exist. It receives JSON and Markdown reports plus the
+exact tarball and recovery artifacts. CI runs this acceptance on Ubuntu,
+Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readiness-v0.17.md).
+
 ## Scope
 
 RepoMind v0.16.0 includes deterministic L2 Module Narratives, an

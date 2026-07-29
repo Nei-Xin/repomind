@@ -7,6 +7,34 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- A rebuildable packaged-install acceptance runner that packs RepoMind, installs
+  the tarball into an isolated consumer, and exercises CLI, MCP, backup, and
+  restore through the installed artifact on every CI operating system.
+- A versioned release-to-Schema manifest with immutable Migration hashes and
+  upgrade fixtures covering every Schema shipped from v0.4.0 through v0.16.0.
+
+### Fixed
+
+- Database construction now closes its SQLite handle when setup or Migration
+  fails, allowing operators to move, replace, or recover the rejected file.
+
+### Documentation
+
+- Reconciled the final-product checklist with implementation and formal
+  evidence, leaving the external real-open-source cross-session case as the
+  remaining v1.0 proof gate.
+
+### Validation
+
+- All 169 tests across 38 files pass. Source coverage is 83.82% statements and
+  lines, 77.54% branches, and 95.04% functions.
+- The local packaged-install acceptance passed all 11 gates through the npm
+  tarball, including CLI persistence, MCP Start/Search/Inspect/Abandon, and
+  checksummed backup/restore. Cross-platform CI remains required on a clean
+  commit before release.
+
 ## [0.16.0] - 2026-07-29
 
 ### Added

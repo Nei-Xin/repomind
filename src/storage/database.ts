@@ -9,9 +9,14 @@ export class Database {
 
   constructor(readonly path: string) {
     this.raw = new DatabaseSync(path, { allowExtension: true });
-    this.raw.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-    this.vector = this.loadVectorExtension();
-    this.migrate();
+    try {
+      this.raw.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+      this.vector = this.loadVectorExtension();
+      this.migrate();
+    } catch (error) {
+      this.raw.close();
+      throw error;
+    }
   }
 
   private loadVectorExtension(): { available: boolean; version: string | null; error: string | null } {

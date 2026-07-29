@@ -22,6 +22,7 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run bench:agent-fixtures
+      - run: npm run bench:package-smoke -- --workspace "${{ runner.temp }}/repomind-package-smoke"
 
   coverage:
     runs-on: ubuntu-latest
