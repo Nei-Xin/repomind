@@ -146,9 +146,25 @@ describe("safe remote LLM extraction", () => {
     core.close();
   });
 
-  it("deduplicates a candidate and binds new valid Evidence on the second Session", async () => {
+  it("deduplicates conservative model wording/type drift and binds new Evidence", async () => {
     let currentEvidenceId = "";
-    const runner = new MockRunner(() => ({ output: { candidates: [candidate([currentEvidenceId])] } }));
+    let calls = 0;
+    const runner = new MockRunner(() => {
+      calls++;
+      return { output: { candidates: [candidate([currentEvidenceId], calls === 1 ? {
+        type: "decision",
+        title: "Cap remote extraction confidence at 0.9",
+        content: "Model-derived L1 confidence must be capped at 0.9 so remotely generated knowledge cannot claim manually verified certainty.",
+        scopeType: "repository",
+        scopeValue: null,
+      } : {
+        type: "requirement",
+        title: "Cap remote extraction confidence at 0.9",
+        content: "Model-derived L1 confidence is capped at 0.9 so remotely generated knowledge never claims manually verified certainty.",
+        scopeType: "repository",
+        scopeValue: null,
+      })] } };
+    });
     const core = new RepositoryMemoryCore(repository, { extractionRunner: runner });
     const firstSession = completedSession(core, "First implementation pass.");
     currentEvidenceId = evidenceIds(core, firstSession)[0]!;

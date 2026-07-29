@@ -52,6 +52,7 @@ import type {
 import { embeddingProviderFromEnvironment } from "./embedding/config.js";
 import type { EmbeddingProvider } from "./embedding/provider.js";
 import { extractionRunnerFromEnvironment } from "./extraction/config.js";
+import { equivalentExtractionContent } from "./extraction/dedup.js";
 import { buildExtractionMessages, type ExtractionEvidenceInput } from "./extraction/prompt.js";
 import type { LlmRunner } from "./extraction/runner.js";
 import { EXTRACTION_JSON_SCHEMA, validateExtractionOutput } from "./extraction/schema.js";
@@ -355,7 +356,7 @@ export class RepositoryMemoryCore {
     const ids: string[] = [];
     this.context.database.transaction(() => {
       for (const candidate of validated.candidates) {
-        const outcome = this.storeMemory({
+        const memoryInput: RecordMemoryInput = {
           type: candidate.type,
           title: candidate.title,
           content: candidate.content,
@@ -364,12 +365,19 @@ export class RepositoryMemoryCore {
           ...(candidate.scopeValue === null ? {} : { scopeValue: candidate.scopeValue }),
           tags: candidate.tags,
           relatedFiles: candidate.relatedFiles,
-        }, "extracted", candidate.evidenceIds, {
+        };
+        const audit = {
+          extractionMode: "remote-llm",
+          provider: runner.id,
+          model: runner.model,
+          sessionId: input.sessionId,
+        };
+        const equivalent = this.findEquivalentExtractedMemory(memoryInput);
+        const outcome = equivalent
+          ? this.linkExtractedEvidence(equivalent, candidate.evidenceIds, audit)
+          : this.storeMemory(memoryInput, "extracted", candidate.evidenceIds, {
           audit: {
-            extractionMode: "remote-llm",
-            provider: runner.id,
-            model: runner.model,
-            sessionId: input.sessionId,
+            ...audit,
           },
           auditReason: "validated remote LLM memory created",
         });
@@ -1404,6 +1412,45 @@ export class RepositoryMemoryCore {
       );
     if (conflicting.length) this.markConflicts(id, conflicting);
     return { id, stored: true, reactivated: false, conflicts: conflicting.map((row) => row.id) };
+  }
+
+  private findEquivalentExtractedMemory(input: RecordMemoryInput): { id: string; status: string } | null {
+    const scopeType = input.scopeType ?? "repository";
+    const scopeValue = input.scopeValue ?? null;
+    const title = redactSecrets(input.title).content.trim().toLowerCase();
+    const rows = this.context.database.raw.prepare(`
+      SELECT id, status, content FROM memories
+      WHERE repository_id=? AND source='extracted' AND status IN ('active','uncertain')
+        AND scope_type=? AND scope_value IS ? AND lower(trim(title))=?
+      ORDER BY created_at, id
+    `).all(this.context.marker.projectId, scopeType, scopeValue, title) as Array<{ id: string; status: string; content: string }>;
+    const equivalent = rows.find((row) => equivalentExtractionContent(row.content, input.content));
+    return equivalent ? { id: equivalent.id, status: equivalent.status } : null;
+  }
+
+  private linkExtractedEvidence(
+    memory: { id: string; status: string },
+    evidenceIds: string[],
+    audit: Record<string, unknown>,
+  ): StoreMemoryResult {
+    const db = this.context.database.raw;
+    let evidenceAdded = 0;
+    for (const evidenceId of evidenceIds) {
+      evidenceAdded += Number(db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(memory.id, evidenceId).changes);
+    }
+    if (evidenceAdded) {
+      db.prepare(`
+        INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at)
+        VALUES (?, ?, 'memory_evidence_linked', ?, ?, ?)
+      `).run(
+        `aud_${randomUUID()}`,
+        memory.id,
+        JSON.stringify({ status: memory.status, source: "extracted", ...audit, evidenceIds }),
+        "Validated remote extraction linked equivalent candidate Evidence to an existing memory",
+        Date.now(),
+      );
+    }
+    return { id: memory.id, stored: false, reactivated: false, conflicts: [] };
   }
 
   private markConflicts(newMemoryId: string, conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>): void {

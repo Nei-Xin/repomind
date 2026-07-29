@@ -33,6 +33,13 @@ under **Changed** with its migration impact.
 - Remote extraction is disabled by default, uses already-redacted and bounded
   Session Evidence, and never runs implicitly during Session Start or Commit.
 
+### Fixed
+
+- Remote candidates with the same title/scope and conservatively equivalent
+  content now deduplicate across model type and wording drift. Numeric changes
+  or opposite negation remain distinct so contradictory facts are not silently
+  merged.
+
 ## [0.15.0] - 2026-07-29
 
 ### Added

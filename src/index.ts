@@ -9,6 +9,7 @@ export * from "./extraction/schema.js";
 export * from "./extraction/prompt.js";
 export * from "./extraction/openai-compatible.js";
 export * from "./extraction/config.js";
+export * from "./extraction/dedup.js";
 export * from "./search/vector-index.js";
 export * from "./repository.js";
 export * from "./integrations/opencode/lifecycle.js";

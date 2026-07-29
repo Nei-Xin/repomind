@@ -63,6 +63,10 @@ transaction and the existing fingerprint deduplication, Evidence linking,
 conflict detection, file hashing, redaction, FTS indexing, and audit path. The
 audit stores the extraction mode, provider, model, and source Session ID (never
 the API key); a deduplicated candidate that adds new Evidence is audited too.
+Cross-run model wording/type drift is deduplicated only when title and scope
+match exactly, normalized content similarity is high, and numeric values and
+negation agree. This keeps changed limits and opposite claims in the normal
+conflict/governance path.
 
 ## What this does not do
 
