@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-29
+
 ### Added
 
 - Deterministic L4 Skill Candidate generation from at least three independent
@@ -29,15 +31,20 @@ under **Changed** with its migration impact.
 
 ### Validation
 
-- The development regression and coverage suites pass 156 tests across 34
+- The release regression and coverage suites pass 153 tests across 34
   files. Coverage remains above every project floor at 83.48% statements and
   lines, 77.55% branches, and 94.82% functions; L4 candidate code has 95.96%
   line, 82.70% branch, and 100% function coverage.
-- The rebuildable L4 development acceptance passed all 20 gates with four
+- The clean-commit L4 acceptance passed all 20 gates with four
   successful source Sessions, four excluded Sessions, and 28 Evidence links.
-  Candidate rebuild/list/inspect P95 was 0.780/0.093/0.300 ms over 20 samples.
-  This was intentionally recorded as dirty-worktree development evidence; a
-  clean-commit run is still required before release.
+  Candidate rebuild/list/inspect P95 was 0.585/0.113/0.332 ms over 20 samples.
+- A real OpenCode-to-Claude Code run passed all 17 lifecycle checks: OpenCode
+  produced repeated Host-managed sources, Claude reviewed and exported the
+  candidate through MCP, and a later matching source reset approval to
+  `pending` with complete provenance and audit history.
+- GitHub Actions run `30421126920` passed Ubuntu, macOS, coverage, comparison,
+  and Windows jobs. The first Windows attempt timed out without an assertion
+  failure; rerunning only that job passed.
 
 ## [0.14.0] - 2026-07-29
 

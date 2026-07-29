@@ -1,6 +1,6 @@
 # L4 Skill Candidates
 
-RepoMind v0.15 development adds the final memory layer from the product model:
+RepoMind v0.15 adds the final memory layer from the product model:
 reviewable workflow candidates derived from repeated successful repository
 work. A candidate is evidence-backed knowledge, not executable automation.
 

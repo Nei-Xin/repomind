@@ -258,25 +258,26 @@ privacy details.
 
 ## Scope
 
-RepoMind v0.14.0 includes deterministic L2 Module Narratives, an
+RepoMind v0.15.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
-10,000-L1 scale acceptance runner with formal integrity and latency gates. It
-does not include
-remote LLM extraction or automatic host-tool observation. The v0.15 development
-line adds deterministic, review-required L4 Skill Candidate generation and
-safe export without automatic installation or execution. Merge import and
-encrypted archives remain open. Source-only V8
-coverage reporting, regression floors, an actual
-successful macOS CI run, and OpenCode-to-Claude Code MCP interoperability are
-included in v0.14.0. See
+10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
+Candidate generation with safe export. It does not include remote LLM
+extraction, automatic host-tool observation, Skill installation, or Skill
+execution. Merge import and encrypted archives remain open. Source-only V8
+coverage reporting, regression floors, successful macOS CI, and real
+OpenCode-to-Claude Code interoperability are included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
-The v0.14.0 formal scale report passes all 19 gates on a clean fixed commit. It
-measures final-product latency targets and data-integrity gates without
-claiming that synthetic scale records demonstrate extraction quality or Coding
-Agent task-success improvement. See
+The v0.15.0 formal L4 report passes all 20 gates on a clean fixed commit, and
+the real cross-Agent report passes all 17 checks across OpenCode and Claude
+Code. GitHub CI validates Ubuntu, Windows, macOS, coverage, and the comparison
+benchmark. See
+[`docs/skill-candidate-acceptance-v0.15.md`](docs/skill-candidate-acceptance-v0.15.md)
+and
+[`docs/l4-cross-agent-acceptance-v0.15.md`](docs/l4-cross-agent-acceptance-v0.15.md).
+The earlier 10,000-L1 result remains documented in
 [`docs/scale-acceptance-v0.14.md`](docs/scale-acceptance-v0.14.md).
 
 ## Development

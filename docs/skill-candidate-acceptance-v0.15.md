@@ -44,29 +44,37 @@ The run fails unless all of these boundaries hold:
 
 This is a deterministic, fixed-commit product acceptance. It uses the same
 public Session, candidate, review, export, and portability APIs as an Agent
-workflow, but it does not substitute for a later live second-Agent usability
-run. Exact normalized successful command and test signatures deliberately
-favor candidate precision over fuzzy recall.
+workflow. The separate live OpenCode/Claude acceptance covers real cross-Agent
+use without changing these deterministic gates. Exact normalized successful
+command and test signatures deliberately favor candidate precision over fuzzy
+recall.
 
-## Development evidence
+## Formal release evidence
 
-The initial Windows development run on 2026-07-29 passed all 20 gates with
-four successful source Sessions, four deliberately excluded Sessions, one
-candidate, and 28 retained Evidence links. Across 20 samples, P95 latency was
-0.780 ms for rebuild, 0.093 ms for list, and 0.300 ms for inspect.
+The clean-commit Windows run on 2026-07-29 passed all 20 gates with four
+successful source Sessions, four deliberately excluded Sessions, one
+candidate, and 28 retained Evidence links. The runner and target checkout were
+fixed at commit `a45a356125fdd1bb36570b7058d9eca76eccd2db`; the report records
+`sourceWorktreeDirty: false`.
 
 Artifacts are retained at:
 
 ```text
-D:\data\code\project\repomind-test\v0.15-l4-20260729-02
+D:\data\code\project\repomind-test\v0.15-l4-20260729-03
 ```
 
 The JSON report SHA-256 is
-`b5233d7944be2120247f4422e1854deb42af68f38d34262c16af3d00117a0043`;
+`51ae9eebd16ad293b14a3517ba2cb0c20d127c4853d95299a41e1dcc21aaf843`;
 the Markdown report SHA-256 is
-`6fb0aabd0b4a628ebfe5cc1d1f0c823b3bc4de694dc548a2d76453cd7bd0e48f`.
+`bea5d008cd2680ff67974ca667a3daec8b71194cc0cf86c64601810939ed3743`.
 
-This run targeted `efd984fcc6db826708fb67ee49fe3eb07ebc130e`, but the report
-correctly records `sourceWorktreeDirty: true`: the v0.15 implementation and
-runner were not committed yet. It is development evidence, not the clean-
-commit release evidence required before v0.15.0.
+| Operation | Samples | P50 ms | P95 ms | Max ms |
+| --- | ---: | ---: | ---: | ---: |
+| Candidate rebuild | 20 | 0.478 | 0.585 | 1.061 |
+| Candidate list | 20 | 0.030 | 0.113 | 0.137 |
+| Candidate inspect | 20 | 0.200 | 0.332 | 0.367 |
+
+This deterministic run proves the L4 product boundary and measured local
+latency. The separate
+[`l4-cross-agent-acceptance-v0.15.md`](l4-cross-agent-acceptance-v0.15.md)
+records the real OpenCode/Claude lifecycle and cross-platform CI evidence.
