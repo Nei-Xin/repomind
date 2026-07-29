@@ -58,21 +58,26 @@ paths.
 
 ## Cross-platform CI
 
-[GitHub Actions CI #57](https://github.com/Nei-Xin/repomind/actions/runs/30421126920)
-completed successfully for the same implementation commit. Ubuntu, macOS,
-coverage, comparison benchmark, and Windows jobs passed. The final workflow
-attempt completed in 6 minutes 48 seconds.
+[GitHub Actions CI #61](https://github.com/Nei-Xin/repomind/actions/runs/30424663099)
+completed successfully on release-closure commit
+`e9b1caf9638fcffd88dab048b421bbf782367e74`. Ubuntu, Windows, macOS,
+coverage, and comparison benchmark jobs all passed on the first attempt. The
+workflow completed in 5 minutes 54 seconds.
 
-The first Windows attempt had dispersed test and hook timeouts with no
-assertion failure. Only the failed Windows job was rerun; it passed in 6
-minutes 44 seconds. The retry is part of the formal evidence and is not
-represented as a first-attempt pass.
+Earlier implementation [CI #57](https://github.com/Nei-Xin/repomind/actions/runs/30421126920)
+passed all five jobs after rerunning a Windows attempt that had dispersed test
+and hook timeouts with no assertion failure. Release CI then exposed a
+same-millisecond L4 audit ordering defect on macOS and another slow Windows
+timeout. Commits `297a9eb` and `e9b1caf` fixed the ordering tie-breaker and
+gave regular SQLite and child-process tests a 30-second runner allowance.
+Product performance gates were not changed. CI #61 is the clean first-attempt
+confirmation of both fixes.
 
 Coverage artifact SHA-256:
-`37ee909043b8f6f2dc5e0625018670e467b489e63f01f0c7a804c9c77bf10776`
+`9afc026660ab2c6c38ecd9f1f132b4f5c2f9c72fd6b5a8af1a126f77e919d9d9`
 
 Comparison artifact SHA-256:
-`9c187d00ae570a2a651567a89e29fb6ee2fb2fba442ee99317769abbc093e1b0`
+`58ba7e784d522022c66a4b9d77261b8c1164837905eb9e0bc0d6d333c7b78114`
 
 The local release baseline passed 153 tests across 34 files. Source coverage
 was 83.48% statements/lines, 77.55% branches, and 94.82% functions. The L4
@@ -91,5 +96,5 @@ functions.
   from this candidate.
 - RepoMind exports a reviewable `SKILL.md`; it never installs, registers, or
   executes the Skill.
-- The initial launcher failure and the Windows CI retry remain visible parts
-  of the evidence.
+- The initial launcher failure and earlier CI failures and retry remain
+  visible parts of the evidence; CI #61 is the final first-attempt pass.

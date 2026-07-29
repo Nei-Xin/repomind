@@ -51,28 +51,28 @@ recall.
 
 ## Formal release evidence
 
-The clean-commit Windows run on 2026-07-29 passed all 20 gates with four
+The final clean-commit Windows run on 2026-07-29 passed all 20 gates with four
 successful source Sessions, four deliberately excluded Sessions, one
 candidate, and 28 retained Evidence links. The runner and target checkout were
-fixed at commit `a45a356125fdd1bb36570b7058d9eca76eccd2db`; the report records
+fixed at commit `e9b1caf9638fcffd88dab048b421bbf782367e74`; the report records
 `sourceWorktreeDirty: false`.
 
 Artifacts are retained at:
 
 ```text
-D:\data\code\project\repomind-test\v0.15-l4-20260729-03
+D:\data\code\project\repomind-test\v0.15-l4-20260729-04
 ```
 
 The JSON report SHA-256 is
-`51ae9eebd16ad293b14a3517ba2cb0c20d127c4853d95299a41e1dcc21aaf843`;
+`a7448322b3ac41a406a19ba4d0c0eb4479ee42ae866843fd6c50cfca96151858`;
 the Markdown report SHA-256 is
-`bea5d008cd2680ff67974ca667a3daec8b71194cc0cf86c64601810939ed3743`.
+`bb72b54fa720e9f008e61e802edc6066d82d1ba6eab67bb78cbfc01737230130`.
 
 | Operation | Samples | P50 ms | P95 ms | Max ms |
 | --- | ---: | ---: | ---: | ---: |
-| Candidate rebuild | 20 | 0.478 | 0.585 | 1.061 |
-| Candidate list | 20 | 0.030 | 0.113 | 0.137 |
-| Candidate inspect | 20 | 0.200 | 0.332 | 0.367 |
+| Candidate rebuild | 20 | 0.429 | 0.596 | 1.040 |
+| Candidate list | 20 | 0.035 | 0.115 | 0.141 |
+| Candidate inspect | 20 | 0.174 | 0.201 | 0.243 |
 
 This deterministic run proves the L4 product boundary and measured local
 latency. The separate

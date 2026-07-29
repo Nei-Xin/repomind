@@ -46,14 +46,15 @@ under **Changed** with its migration impact.
   line, 82.70% branch, and 100% function coverage.
 - The clean-commit L4 acceptance passed all 20 gates with four
   successful source Sessions, four excluded Sessions, and 28 Evidence links.
-  Candidate rebuild/list/inspect P95 was 0.585/0.113/0.332 ms over 20 samples.
+  On final release-closure commit `e9b1caf`, candidate rebuild/list/inspect P95
+  was 0.596/0.115/0.201 ms over 20 samples.
 - A real OpenCode-to-Claude Code run passed all 17 lifecycle checks: OpenCode
   produced repeated Host-managed sources, Claude reviewed and exported the
   candidate through MCP, and a later matching source reset approval to
   `pending` with complete provenance and audit history.
-- GitHub Actions run `30421126920` passed Ubuntu, macOS, coverage, comparison,
-  and Windows jobs. The first Windows attempt timed out without an assertion
-  failure; rerunning only that job passed.
+- GitHub Actions run `30424663099` passed Ubuntu, Windows, macOS, coverage, and
+  comparison jobs on the first attempt after fixing same-millisecond L4 audit
+  ordering and increasing test-runner allowances for slow hosted Windows I/O.
 
 ## [0.14.0] - 2026-07-29
 
