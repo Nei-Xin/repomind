@@ -1,11 +1,37 @@
 # Changelog
 
 All notable changes to this project are documented here. This project follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the major
-version is `0`, minor releases may change behavior; every such change is listed
-under **Changed** with its migration impact.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases before
+v1.0 may change behavior in a minor release. Starting with v1.0, incompatible
+public-contract changes require a major version or a documented compatibility
+period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
+
+## [1.0.0-rc.1] - 2026-07-30
+
+### Release candidate
+
+- Freezes the local single-user v1.0 feature scope after all 28 final-product
+  criteria gained retained implementation and acceptance evidence.
+- Adds the v1.0 release-readiness contract, promotion gates, stability-period
+  rules, and explicit post-v1.0 boundaries without changing product behavior.
+
+### Compatibility
+
+- Retains database Schema 11, logical export format 2, backup format 1, and
+  encrypted envelope format 1. All published Schema and Migration hash locks
+  remain unchanged.
+- Keeps deterministic extraction and plaintext archives as defaults. Remote
+  extraction, vector providers, and archive encryption remain explicit opt-ins.
+
+### Validation
+
+- The v0.18.0 annotated-tag GitHub Actions run `30468234422` passed Ubuntu,
+  Windows, macOS, source coverage, and comparison in 7 minutes 17 seconds.
+- Local RC preparation passed typecheck, build, all 174 tests across 39 files,
+  the eight-task fixture validator, and all 14 installed-tarball checks. The
+  clean commit still requires independent main-branch and annotated-tag CI.
 
 ## [0.18.0] - 2026-07-29
 

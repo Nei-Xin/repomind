@@ -1,8 +1,8 @@
 # RepoMind 项目设计与执行文档
 
-> 状态：Living v0.18（随实现持续更新）
+> 状态：v1.0.0-rc.1（功能冻结与稳定性验收）
 > 目标读者：项目开发者、贡献者、面试官  
-> 项目阶段：v0.18.0 发布候选已完成，M0-M8、外部真实开源仓库收益、加密导出与备份恢复、远程提炼、跨 Agent 与跨平台 CI 均已验收；确定性提炼和明文归档仍为默认
+> 项目阶段：最终规格 28 项已全部完成并保留证据，v0.18.0 加密可移植性与标签 CI 已验收；v1.0 RC 只处理发布阻断问题，不再扩展功能；确定性提炼和明文归档仍为默认
 > 本文用途：作为产品定义、架构设计、开发计划、验收标准和后续迭代的统一依据
 
 ---
@@ -1691,7 +1691,7 @@ v0.16 验收进度：
 - [x] 质量、Evidence、Audit、去重、Prompt Injection 和原子失败门槛。
 - [x] 固定提交、数据集/脚本 Hash、延迟和 Token provenance 报告。
 - [x] 在干净提交上完成真实供应商验收并人工复核候选质量。
-- [ ] 完成 Claude Code/OpenCode 的真实连续任务验收。
+- [x] 完成 Claude Code/OpenCode 的真实连续任务验收。
 
 ### M5：冲突、过期与纠错
 
@@ -1758,9 +1758,9 @@ v0.16 验收进度：
 - [x] 锁定正式版本到 Schema 版本的映射与历史 Migration 哈希。
 - [x] 验证所有已发布 Schema 升级后的 L1-L4、Evidence 和 Audit 数据保留。
 - [x] 验证 Migration 失败事务回滚且拒绝的数据库句柄被关闭。
-- [ ] 在外部真实开源仓库完成跨会话收益验收。
+- [x] 在外部真实开源仓库完成跨会话收益验收。
 
-边界：逻辑 Merge Import、自动 Skill 安装/执行和通用 Agent 能力不进入本里程碑。加密归档作为后续独立安全迭代评估。
+边界：逻辑 Merge Import、自动 Skill 安装/执行和通用 Agent 能力不进入 v1.0。加密归档已在 v0.18.0 作为独立安全迭代完成。
 
 ---
 
@@ -1953,7 +1953,7 @@ MVP 必须同时满足：
 
 - [x] 可以在 Git 仓库执行 `repomind init`。
 - [x] 可以通过 stdio 启动 MCP Server。
-- [x] MCP Client 能调用四个核心 Tool。（当前共九个 Tool）
+- [x] MCP Client 能调用四个核心 Tool。（当前共 24 个 Tool）
 - [x] Session Start 保存 Git 基线并返回相关记忆。
 - [x] Session Commit 保存最终 Git Evidence。
 - [x] 至少能生成或手工保存 L1 记忆。
@@ -1961,9 +1961,9 @@ MVP 必须同时满足：
 - [x] Inspect 能展示 Evidence 来源。
 - [x] 不同 Repository 的搜索完全隔离。
 - [x] 重复 Commit 不产生重复记忆。
-- [ ] LLM 失败不会产生部分脏数据。（LLM 提炼未实施，暂不适用）
+- [x] LLM 失败不会产生部分脏数据。（远程提炼候选整批校验并在单事务写入）
 - [x] stdout 不包含 MCP 协议以外内容。（tests/mcp-stdio.test.ts 逐行验证真实 stdio 进程，含错误路径）
-- [ ] Windows 和 Linux CI 通过。（CI 已配置，待远端验证）
+- [x] Windows、Linux 和 macOS CI 通过。
 - [x] 至少有一个跨会话 E2E。
 - [x] 至少有一个过期记忆测试。
 - [x] README 包含五分钟演示步骤。

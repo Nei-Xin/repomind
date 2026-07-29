@@ -117,6 +117,17 @@ then independently passed the same five jobs against clean evidence commit
 `7b55572b3fd54b39cbcf4668e4247b5702749ad4` in 6 minutes 39 seconds. This
 closes the clean-evidence release gate before the version-only release commit.
 
+## Formal release and tag result
+
+Release commit `60c8a29ecd5ec8076c30e8669e27f803ac78d9ba` updated the package
+version, Changelog, release wording, and released-Schema manifest. Annotated
+tag `v0.18.0` points to that commit.
+
+[GitHub Actions tag run 30468234422](https://github.com/Nei-Xin/repomind/actions/runs/30468234422)
+completed successfully in 7 minutes 17 seconds. Ubuntu, Windows, macOS,
+coverage, and comparison all passed against the tagged commit, independently
+of successful main-branch release run `30467505192`.
+
 ## Remaining boundary
 
 This release does not add Merge Import, automatic schedules, remote upload,

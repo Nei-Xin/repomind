@@ -229,11 +229,12 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes twenty-three tools:
+The MCP server exposes twenty-four tools:
 
 - `repo_session_start`
 - `repo_memory_search`
 - `repo_session_commit`
+- `repo_memory_extract`
 - `repo_session_abandon`
 - `repo_memory_inspect`
 - `repo_memory_review`
@@ -309,7 +310,8 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v0.18.0 includes deterministic L2 Module Narratives, an
+RepoMind v1.0.0-rc.1 is the feature-frozen release candidate for the local
+single-user v1.0 product. It includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
@@ -318,18 +320,23 @@ remote LLM extraction introduced in v0.16.0 while keeping deterministic
 extraction as the default. v0.17.0 adds installed-tarball verification on all
 three CI operating systems and locks every published Schema upgrade path. It does
 not include automatic host-tool observation, Skill installation, or Skill
-execution. v0.18.0 adds opt-in encrypted logical exports and physical backups
+execution. v0.18.0 added opt-in encrypted logical exports and physical backups
 with environment-only passphrases and authenticated zero-write rejection.
-Merge import remains open. Source-only V8
+Logical Merge Import remains deferred beyond v1.0. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
 OpenCode/Claude Code interoperability in both tested lifecycle directions are
 included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
+The RC freezes database Schema 11, logical export format 2, physical backup
+format 1, and encrypted envelope format 1. Promotion to v1.0.0 requires clean
+main-branch and annotated-tag CI plus the documented stability period. See
+[`docs/release-readiness-v1.0.md`](docs/release-readiness-v1.0.md).
+
 The v0.18.0 encrypted-portability acceptance passes all 29 gates on a clean
-fixed commit, and GitHub Actions run `30465296786` passes Ubuntu, Windows,
-macOS, coverage, and comparison against the evidence commit. See
+fixed commit. GitHub Actions tag run `30468234422` passes Ubuntu, Windows,
+macOS, coverage, and comparison against the released tag. See
 [`docs/encrypted-portability-v0.18.md`](docs/encrypted-portability-v0.18.md).
 
 The v0.17 distribution acceptance passes all 11 local package gates and the

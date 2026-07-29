@@ -1,6 +1,6 @@
 {
   "name": "repomind",
-  "version": "0.18.0",
+  "version": "1.0.0-rc.1",
   "description": "Evidence-backed repository memory for coding agents",
   "repository": {
     "type": "git",
