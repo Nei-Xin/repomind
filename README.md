@@ -279,16 +279,17 @@ privacy details.
 
 ## Scope
 
-RepoMind v0.15.0 includes deterministic L2 Module Narratives, an
+RepoMind v0.16.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
-Candidate generation with safe export. The unreleased v0.16 work adds explicit,
-validated remote LLM extraction while keeping deterministic extraction as the
-default. It does not include automatic host-tool observation, Skill
-installation, or Skill execution. Merge import and encrypted archives remain open. Source-only V8
+Candidate generation with safe export. v0.16.0 adds explicit, validated remote
+LLM extraction while keeping deterministic extraction as the default. It does
+not include automatic host-tool observation, Skill installation, or Skill
+execution. Merge import and encrypted archives remain open. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
-OpenCode-to-Claude Code interoperability are included. See
+OpenCode/Claude Code interoperability in both tested lifecycle directions are
+included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 

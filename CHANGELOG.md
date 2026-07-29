@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-29
+
 ### Added
 
 - An injectable LLM Runner boundary and an opt-in OpenAI-compatible structured-
@@ -42,6 +44,10 @@ under **Changed** with its migration impact.
 
 ### Validation
 
+- The release regression and coverage suites pass 167 tests across 38 files.
+  Source coverage is 83.81% statements and lines, 77.52% branches, and 95.04%
+  functions; the remote-extraction implementation has 96.00% line/statement,
+  79.06% branch, and 100% function coverage.
 - The clean-commit live `gpt-5.6-terra` run passed all 13 remote-extraction
   gates across nine scenarios: recall, precision, empty/injection behavior,
   Evidence and Audit binding, deduplication, atomic failures, latency, token
@@ -49,6 +55,14 @@ under **Changed** with its migration impact.
 - Recall, precision, empty accuracy, Evidence binding, and Audit binding were
   all 1.000. P50/P95 remote latency was 9.565/12.669 seconds and the provider
   reported 7,584 input plus 1,083 output tokens.
+- A real Claude Code to OpenCode continuous task passed all 17 cross-Agent
+  gates. Claude created and committed the source Session through MCP, explicitly
+  extracted and inspected the remote memory, and OpenCode retrieved that Memory
+  first through the Host-managed daily entry point before applying the retained
+  `${warehouseId}:${requestId}` convention. All nine target tests and the
+  external hidden check passed with zero open Sessions or running Host Runs.
+- GitHub Actions run `30436034305` passed Ubuntu, Windows, macOS, coverage, and
+  comparison jobs on the first attempt against evidence commit `37718df`.
 
 ## [0.15.0] - 2026-07-29
 
