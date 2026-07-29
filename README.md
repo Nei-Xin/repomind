@@ -309,7 +309,7 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v0.18 development includes deterministic L2 Module Narratives, an
+RepoMind v0.18.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
@@ -318,7 +318,7 @@ remote LLM extraction introduced in v0.16.0 while keeping deterministic
 extraction as the default. v0.17.0 adds installed-tarball verification on all
 three CI operating systems and locks every published Schema upgrade path. It does
 not include automatic host-tool observation, Skill installation, or Skill
-execution. v0.18 adds opt-in encrypted logical exports and physical backups
+execution. v0.18.0 adds opt-in encrypted logical exports and physical backups
 with environment-only passphrases and authenticated zero-write rejection.
 Merge import remains open. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
@@ -326,6 +326,11 @@ OpenCode/Claude Code interoperability in both tested lifecycle directions are
 included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
+
+The v0.18.0 encrypted-portability acceptance passes all 29 gates on a clean
+fixed commit, and GitHub Actions run `30465296786` passes Ubuntu, Windows,
+macOS, coverage, and comparison against the evidence commit. See
+[`docs/encrypted-portability-v0.18.md`](docs/encrypted-portability-v0.18.md).
 
 The v0.17 distribution acceptance passes all 11 local package gates and the
 clean-commit and release-tag GitHub matrices pass installed-tarball verification

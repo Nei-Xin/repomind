@@ -1,8 +1,8 @@
-# RepoMind v0.18 encrypted portability
+# RepoMind v0.18.0 encrypted portability
 
 ## Goal
 
-v0.18 protects logical exports and physical backup files when they leave the
+v0.18.0 protects logical exports and physical backup files when they leave the
 normal RepoMind data directory. It extends the existing replace-import and
 same-Project-ID restore contracts; it does not change them or introduce Merge
 Import.
@@ -112,9 +112,14 @@ The five Actions warnings are upstream Node.js 20 deprecation notices for
 GitHub-maintained actions that GitHub forced onto Node.js 24. They did not
 represent a RepoMind test, package, or runtime failure.
 
+[GitHub Actions run 30465296786](https://github.com/Nei-Xin/repomind/actions/runs/30465296786)
+then independently passed the same five jobs against clean evidence commit
+`7b55572b3fd54b39cbcf4668e4247b5702749ad4` in 6 minutes 39 seconds. This
+closes the clean-evidence release gate before the version-only release commit.
+
 ## Remaining boundary
 
-This iteration does not add Merge Import, automatic schedules, remote upload,
+This release does not add Merge Import, automatic schedules, remote upload,
 cloud synchronization, hardware-backed keys, key rotation, key escrow, MCP
 restore tools, or encryption of the live local database. Those require
 separate policies and threat models.

@@ -7,6 +7,8 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-29
+
 ### Added
 
 - Opt-in AES-256-GCM encrypted logical exports and physical backup archives,
@@ -34,6 +36,8 @@ under **Changed** with its migration impact.
 - GitHub Actions run `30464400835` passed Ubuntu, Windows, macOS, source
   coverage, and comparison against implementation commit `bcf8822`; every
   platform also passed the 14-gate installed-tarball smoke.
+- GitHub Actions run `30465296786` independently passed the same five jobs
+  against evidence commit `7b55572`, closing the clean-evidence release gate.
 - The remaining final-spec proof gate passed on the external MIT-licensed
   `sindresorhus/p-limit` repository. A Claude Code source task produced
   Evidence-backed Memory, and three paired fresh-context OpenCode comparisons
