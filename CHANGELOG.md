@@ -34,6 +34,9 @@ under **Changed** with its migration impact.
 - L4 audit inspection and logical export preserve event insertion order when
   multiple lifecycle actions share the same millisecond timestamp, instead of
   using random audit UUIDs as the tie-breaker.
+- Vitest allows 30 seconds for regular tests and hooks so SQLite migrations and
+  child-process tests remain deterministic on intermittently slow Windows CI
+  runners without changing product performance gates.
 
 ### Validation
 
