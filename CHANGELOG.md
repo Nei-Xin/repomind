@@ -16,6 +16,10 @@ under **Changed** with its migration impact.
 - Fixed-fixture tests for valid and empty batches, malformed output, fabricated
   Evidence, all-or-nothing validation, deduplication, prompt injection,
   cancellation, provider configuration, and HTTP adapter behavior.
+- A rebuildable nine-scenario remote-extraction acceptance runner with mock and
+  live modes, fixed-commit provenance, quality/Evidence/audit gates, latency and
+  token measurements, atomic-failure probes, and credential-safe JSON/Markdown
+  reports.
 
 ### Security
 

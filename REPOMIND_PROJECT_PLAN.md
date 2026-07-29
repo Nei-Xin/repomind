@@ -1685,6 +1685,14 @@ Total Completion Time
 - LLM 非法输出不会污染数据库。
 - 每条自动记忆至少有一个有效 Evidence。
 
+v0.16 验收进度：
+
+- [x] 九场景固定数据集和可重建 mock/live Runner。
+- [x] 质量、Evidence、Audit、去重、Prompt Injection 和原子失败门槛。
+- [x] 固定提交、数据集/脚本 Hash、延迟和 Token provenance 报告。
+- [ ] 在干净提交上完成真实供应商验收并人工复核候选质量。
+- [ ] 完成 Claude Code/OpenCode 的真实连续任务验收。
+
 ### M5：冲突、过期与纠错
 
 目标：记忆可以随仓库变化，而不是只增不减。

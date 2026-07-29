@@ -318,6 +318,18 @@ repomind eval --scenarios --json
 repomind eval --compare --markdown
 ```
 
+Rebuild the v0.16 remote-extraction harness with deterministic fixtures, or run
+it against an explicitly configured provider:
+
+```bash
+npm run bench:remote-extraction -- --repo . --workspace <new-directory> --commit HEAD --mock
+npm run bench:remote-extraction -- --repo . --workspace <new-directory> --commit HEAD
+```
+
+The live run requires `REPOMIND_EXTRACTION_*` only in the invoking process and
+refuses to write a report containing the credential. See
+[`docs/remote-extraction-acceptance.md`](docs/remote-extraction-acceptance.md).
+
 The comparison benchmark scores the context bundle each memory strategy delivers under a fixed token budget, including no-memory, full-history, lexical, vector, and hybrid arms. It measures context quality, not agent task success — see [`docs/benchmark-comparison.md`](docs/benchmark-comparison.md) for what it deliberately does not prove.
 
 Run a controlled OpenCode three-arm task benchmark:
