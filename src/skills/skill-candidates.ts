@@ -329,7 +329,7 @@ export class SkillCandidateStore {
     }));
     const audits = db.prepare(`
       SELECT action, previous_status, next_status, reason, metadata_json, created_at
-      FROM skill_candidate_audit_log WHERE candidate_id=? ORDER BY created_at, id
+      FROM skill_candidate_audit_log WHERE candidate_id=? ORDER BY created_at, rowid
     `).all(id) as Array<{
       action: SkillCandidateAuditEntry["action"];
       previous_status: SkillCandidateStatus | null;

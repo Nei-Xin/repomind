@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import type { CommitSessionInput } from "../src/domain/types.js";
@@ -104,6 +105,17 @@ describe("L4 Skill Candidates", () => {
       unchanged: 0,
       candidates: [expect.objectContaining({ id: candidate.id, status: "pending", sourceSessionCount: 4, reviewedAt: null })],
     });
+    const project = JSON.parse(readFileSync(join(repository, ".repomind", "project.json"), "utf8")) as { projectId: string };
+    const database = new DatabaseSync(join(data, "repositories", project.projectId, "repomind.db"));
+    database.prepare(`
+      UPDATE skill_candidate_audit_log SET created_at=1, id=CASE action
+        WHEN 'generated' THEN 'aud_d'
+        WHEN 'approved' THEN 'aud_c'
+        WHEN 'exported' THEN 'aud_b'
+        WHEN 'sources_changed' THEN 'aud_a'
+      END WHERE candidate_id=?
+    `).run(candidate.id);
+    database.close();
     expect(core.inspectSkillCandidate(candidate.id).audit.map((entry) => entry.action)).toEqual([
       "generated", "approved", "exported", "sources_changed",
     ]);

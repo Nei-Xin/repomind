@@ -124,7 +124,7 @@ const TABLES = {
   },
   skill_candidate_audit_log: {
     columns: ["id", "candidate_id", "action", "previous_status", "next_status", "reason", "metadata_json", "created_at"],
-    select: "SELECT a.* FROM skill_candidate_audit_log a JOIN skill_candidates c ON c.id=a.candidate_id WHERE c.repository_id=? ORDER BY a.created_at, a.id",
+    select: "SELECT a.* FROM skill_candidate_audit_log a JOIN skill_candidates c ON c.id=a.candidate_id WHERE c.repository_id=? ORDER BY a.created_at, a.rowid",
   },
 } as const satisfies Record<string, TableDefinition>;
 

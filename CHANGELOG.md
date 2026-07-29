@@ -29,6 +29,12 @@ under **Changed** with its migration impact.
   unapproved candidates and existing files, redacts secrets and absolute
   paths, and records a checksummed audit event.
 
+### Fixed
+
+- L4 audit inspection and logical export preserve event insertion order when
+  multiple lifecycle actions share the same millisecond timestamp, instead of
+  using random audit UUIDs as the tie-breaker.
+
 ### Validation
 
 - The release regression and coverage suites pass 153 tests across 34
