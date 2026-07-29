@@ -7,11 +7,40 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-29
+
 ### Added
 
 - A rebuildable fixed-commit 10,000-L1 scale acceptance runner with hard gates
   for FTS, cached hybrid retrieval, Memory Inspect, Session Start, CLI cold
   start, Evidence coverage, repository isolation, and SQLite integrity.
+
+### Changed
+
+- Repository-wide stale checks now validate each distinct file fingerprint
+  before materializing memory-file rows, avoiding repeated work when thousands
+  of memories refer to the same unchanged files.
+- Lexical search skips a redundant full-table substring scan when a multi-term
+  non-ideographic FTS query has already proved that no exact substring can
+  match. CJK and single-token substring recall remain available.
+- Scale-runner smoke mode enforces portable integrity, recall, isolation,
+  database, and Session checks while recording, but not gating on,
+  machine-dependent latency. Formal 10,000-L1 mode retains all six performance
+  gates unchanged.
+
+### Validation
+
+- The clean-commit formal run at `01d79f2` passed all 19 gates with exactly
+  10,000 active, Evidence-backed, file-linked, audited, FTS-indexed, and
+  vector-indexed L1 memories.
+- Measured P95 latency was 80.363 ms for FTS hits, 76.431 ms for empty FTS
+  results, 302.774 ms for cached hybrid search, 0.891 ms for Memory Inspect,
+  621.154 ms for Session Start, and 374.829 ms for CLI cold start.
+- The regression suite passes 148 tests across 32 files, and the rebuildable
+  eight-task Agent fixture suite remains valid.
+- GitHub Actions run `30376367751` passed Ubuntu, Windows, macOS, coverage, and
+  comparison jobs on the formally accepted commit. Run `30376863051` also
+  passed all five jobs after the evidence-only documentation commit.
 
 ## [0.13.0] - 2026-07-28
 

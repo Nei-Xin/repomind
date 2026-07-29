@@ -88,7 +88,7 @@ flush operating-system file or database page caches between samples.
 
 ## Formal release evidence
 
-The clean-commit v0.14 acceptance passed all 19 gates on 2026-07-28. The
+The clean-commit v0.14 acceptance passed all 19 gates on 2026-07-29. The
 runner and target checkout were both fixed at commit
 `01d79f26b572a8caf9d2e1c4376991c24f2209fd`, and the report recorded
 `repoMindWorktreeDirty: false`.

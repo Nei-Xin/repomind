@@ -234,21 +234,24 @@ privacy details.
 
 ## Scope
 
-RepoMind v0.13.0 includes deterministic L2 Module Narratives, an
+RepoMind v0.14.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
-replace-import, backup, and restore loop. It does not include
+replace-import, backup, and restore loop. It also includes a rebuildable
+10,000-L1 scale acceptance runner with formal integrity and latency gates. It
+does not include
 remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
-generation. The 10,000-L1 scale proof, merge import, and encrypted archives
-remain open. Source-only V8 coverage reporting, regression floors, an actual
+generation. Merge import and encrypted archives remain open. Source-only V8
+coverage reporting, regression floors, an actual
 successful macOS CI run, and OpenCode-to-Claude Code MCP interoperability are
-included in v0.13.0. See
+included in v0.14.0. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
-The v0.14 development cycle adds a rebuildable 10,000-L1 scale acceptance
-runner. It measures the final-product latency targets and data-integrity gates
-without claiming that synthetic scale records demonstrate extraction quality
-or Coding Agent task-success improvement.
+The v0.14.0 formal scale report passes all 19 gates on a clean fixed commit. It
+measures final-product latency targets and data-integrity gates without
+claiming that synthetic scale records demonstrate extraction quality or Coding
+Agent task-success improvement. See
+[`docs/scale-acceptance-v0.14.md`](docs/scale-acceptance-v0.14.md).
 
 ## Development
 
