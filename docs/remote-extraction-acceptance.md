@@ -79,4 +79,6 @@ report is a concise review artifact derived from the same run.
 Passing proves that one named model and endpoint met these gates on this fixed
 controlled dataset. It does not establish provider confidentiality, universal
 model quality, pricing, or cross-Agent usability. Human review and a separate
-Claude Code/OpenCode acceptance remain release requirements.
+Claude Code/OpenCode acceptance remain release requirements. The formal v0.16
+result records both the live harness and the completed cross-Agent acceptance in
+[`remote-extraction-acceptance-v0.16.md`](remote-extraction-acceptance-v0.16.md).

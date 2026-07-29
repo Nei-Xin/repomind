@@ -89,11 +89,70 @@ The passing run used Node.js 22.20.0 on Windows 10.0.26200 with an AMD Ryzen 7
 H 255 processor. It completed nine remote calls in 101.6 seconds including
 build, clone, Session setup, local probes, and reporting.
 
+## Cross-Agent continuous task
+
+The separate real-Agent acceptance passed all 17 gates on 2026-07-29 against
+the pushed clean commit
+`d00adf10d7444ea27aa6ebce9a21cb61d52b5e9e`. Claude Code 2.1.220 used its
+configured `gpt-5.6-luna` model through an isolated RepoMind MCP configuration.
+It implemented and externally verified a warehouse-scoped idempotent inventory
+reservation, then committed Session
+`ses_fd70d0d6-c38e-4d1d-9e8b-810f8268a489`. A second MCP-only Claude process
+explicitly called remote extraction, search, and inspect.
+
+The live `gpt-5.6-terra` extraction call completed in 17,814 ms, used 2,503
+input and 569 output tokens, and stored three validated L1 memories. Inspected
+Memory `mem_0ef3d816-cb1b-4dd9-a7e7-3d22441711ec` retained `git_diff` and
+successful `test_result` Evidence from the Claude Session. Its Audit recorded
+`remote-llm`, provider `openai-compatible`, model `gpt-5.6-terra`, and the
+source Session ID.
+
+OpenCode 1.18.7 then ran a related release task through the Host-managed
+`repomind run` daily entry point with `cliproxyapi/gpt-5.6-terra` and a fresh
+model context. RepoMind retrieved five memories before Agent execution; the
+inspected remote Memory ranked first. The task deliberately omitted the
+idempotency scope, but OpenCode applied the remembered
+`${warehouseId}:${requestId}` convention. It made zero Agent-side RepoMind
+calls, exited normally, and the Host committed the Session. All nine repository
+tests and an external hidden release check passed. Final state contained two
+closed Sessions, 16 Evidence records, eight Memories, one completed Host Run,
+zero open Sessions, and zero running Host Runs.
+
+Artifacts are retained outside the repository at:
+
+```text
+D:\data\code\project\repomind-test\v016-cross-agent-d00adf1-02
+```
+
+- JSON report SHA-256:
+  `471cc6aa653960ad585712783357837f03a6d589761edbb7dc8ec6d933bb08e6`
+- Markdown report SHA-256:
+  `5a136b9e8f85ffc9c65278124a884effee58e7f5edb359ef9cee4ffdfabe0cab`
+
+The first cross-Agent attempt is retained separately at
+`D:\data\code\project\repomind-test\v016-cross-agent-d00adf1` and is not
+counted. Its PowerShell launcher passed only the first word of the multiline
+Claude prompt, so Claude did not receive the fixed task, never called remote
+extraction, and OpenCode was not started. Attempt 02 passed prompts through
+stdin and retained the corrected prompt and event hashes in its JSON report.
+
+## Cross-platform CI
+
+[GitHub Actions run 30431838774](https://github.com/Nei-Xin/repomind/actions/runs/30431838774)
+completed successfully against the same `d00adf1` commit. Ubuntu, Windows,
+macOS, coverage, and the complete comparison benchmark jobs all passed on the
+first attempt. The workflow completed in 5 minutes 15 seconds.
+
+The temporary extraction credential was removed after the live phase. A
+structured scan of both cross-Agent attempt directories found zero
+credential-like values outside opaque encrypted Agent signature fields. No
+credential value is retained in the repository or formal reports.
+
 ## Limits
 
 This proves the stated quality and safety gates for one model, endpoint,
-controlled dataset, machine, and run. It does not prove provider
-confidentiality or universal repository quality. The endpoint reported token
-usage but no price schedule was supplied, so this result does not claim a
-currency cost. A real Claude Code/OpenCode continuous-task acceptance and
-cross-platform CI remain required before v0.16.0 release.
+controlled dataset, machine, and run, plus one controlled Claude Code to
+OpenCode continuous task on Windows. It does not compare Agent or model
+quality, prove provider confidentiality, or establish universal repository
+quality. The endpoint reported token usage but no price schedule was supplied,
+so this result does not claim a currency cost.

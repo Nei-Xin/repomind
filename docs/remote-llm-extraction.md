@@ -73,5 +73,7 @@ conflict/governance path.
 Remote extraction does not automatically observe host tools, replace the
 deterministic extractor, install or execute L4 Skills, or make model output
 trusted. It creates governed L1 candidates backed by existing Session Evidence.
-A real-provider quality and cost report is still required before v0.16.0 is
-released.
+The v0.16 real-provider quality, token, cross-Agent, and CI evidence is recorded
+in [`remote-extraction-acceptance-v0.16.md`](remote-extraction-acceptance-v0.16.md).
+The provider supplied token counts but no price schedule, so the report does not
+claim a currency cost for remote extraction.
