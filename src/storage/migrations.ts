@@ -284,4 +284,53 @@ CREATE INDEX repository_profile_memory_source ON repository_profile_memory_sourc
 CREATE INDEX repository_profile_module_source ON repository_profile_module_sources(narrative_id);
 `,
   },
+  {
+    version: 11,
+    sql: `
+CREATE TABLE skill_candidates (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  workflow_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  trigger_text TEXT NOT NULL,
+  inputs_json TEXT NOT NULL,
+  steps_json TEXT NOT NULL,
+  verification_json TEXT NOT NULL,
+  risks_json TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  source_session_count INTEGER NOT NULL CHECK(source_session_count >= 3),
+  status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),
+  review_reason TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  reviewed_at INTEGER,
+  UNIQUE(repository_id, workflow_key)
+);
+CREATE TABLE skill_candidate_sessions (
+  candidate_id TEXT NOT NULL REFERENCES skill_candidates(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY(candidate_id, session_id)
+);
+CREATE TABLE skill_candidate_evidence (
+  candidate_id TEXT NOT NULL REFERENCES skill_candidates(id) ON DELETE CASCADE,
+  evidence_id TEXT NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+  PRIMARY KEY(candidate_id, evidence_id)
+);
+CREATE TABLE skill_candidate_audit_log (
+  id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL REFERENCES skill_candidates(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK(action IN ('generated','sources_changed','approved','rejected','exported')),
+  previous_status TEXT CHECK(previous_status IS NULL OR previous_status IN ('pending','approved','rejected')),
+  next_status TEXT NOT NULL CHECK(next_status IN ('pending','approved','rejected')),
+  reason TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX skill_candidates_repository_status ON skill_candidates(repository_id, status, updated_at DESC);
+CREATE INDEX skill_candidate_sessions_session ON skill_candidate_sessions(session_id);
+CREATE INDEX skill_candidate_evidence_evidence ON skill_candidate_evidence(evidence_id);
+CREATE INDEX skill_candidate_audit_candidate ON skill_candidate_audit_log(candidate_id, created_at);
+`,
+  },
 ] as const;

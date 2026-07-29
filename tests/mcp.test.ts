@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -53,6 +53,11 @@ describe("MCP server", () => {
         "repo_session_abandon",
         "repo_session_commit",
         "repo_session_start",
+        "repo_skill_candidate_export",
+        "repo_skill_candidate_inspect",
+        "repo_skill_candidate_list",
+        "repo_skill_candidate_rebuild",
+        "repo_skill_candidate_review",
       ]);
       const recordResponse = await client.callTool({
         name: "repo_memory_record",
@@ -74,6 +79,70 @@ describe("MCP server", () => {
       expect(response.content[0]).toMatchObject({ type: "text" });
       const text = response.content[0]?.type === "text" ? response.content[0].text : "{}";
       expect(JSON.parse(text)).toMatchObject({ repositoryId: expect.any(String), sessionId: expect.stringMatching(/^ses_/) });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("rebuilds, reviews, inspects, and exports an L4 candidate through MCP", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    for (let index = 1; index <= 3; index++) {
+      const started = core.startSession({ task: `Release v0.${index}.0` });
+      core.commitSession({
+        sessionId: started.sessionId,
+        idempotencyKey: `release-${index}`,
+        status: "success",
+        summary: `Released v0.${index}.0 after verification.`,
+        commands: [{ command: "npm run build", exitCode: 0, summary: "Build passed." }],
+        tests: [{ command: "npm test", exitCode: 0, summary: "Tests passed." }],
+      });
+    }
+    core.close();
+
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const rebuilt = await client.callTool({
+        name: "repo_skill_candidate_rebuild",
+        arguments: { repo_path: repository },
+      });
+      const rebuiltText = rebuilt.content[0]?.type === "text" ? rebuilt.content[0].text : "{}";
+      const candidate = (JSON.parse(rebuiltText) as { candidates: Array<{ id: string }> }).candidates[0]!;
+      expect(candidate.id).toMatch(/^l4_/u);
+
+      const inspected = await client.callTool({
+        name: "repo_skill_candidate_inspect",
+        arguments: { candidate_id: candidate.id },
+      });
+      const inspectedText = inspected.content[0]?.type === "text" ? inspected.content[0].text : "{}";
+      expect(JSON.parse(inspectedText)).toMatchObject({
+        id: candidate.id,
+        status: "pending",
+        sources: [
+          { evidenceIds: [expect.stringMatching(/^evd_/), expect.any(String), expect.any(String), expect.any(String), expect.any(String), expect.any(String)] },
+          expect.any(Object),
+          expect.any(Object),
+        ],
+      });
+
+      const reviewed = await client.callTool({
+        name: "repo_skill_candidate_review",
+        arguments: { candidate_id: candidate.id, action: "approve", reason: "Human reviewed the commands and evidence." },
+      });
+      const reviewedText = reviewed.content[0]?.type === "text" ? reviewed.content[0].text : "{}";
+      expect(JSON.parse(reviewedText)).toMatchObject({ id: candidate.id, status: "approved" });
+
+      const output = join(data, "MCP-SKILL.md");
+      const exported = await client.callTool({
+        name: "repo_skill_candidate_export",
+        arguments: { candidate_id: candidate.id, output_path: output },
+      });
+      expect(exported.isError).not.toBe(true);
+      expect(existsSync(output)).toBe(true);
     } finally {
       await client.close();
       await server.close();

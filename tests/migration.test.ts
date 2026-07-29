@@ -41,6 +41,10 @@ describe("database migrations", () => {
         expect(table("module_narrative_sources")).toEqual({ name: "module_narrative_sources" });
         expect(table("repository_profiles")).toEqual({ name: "repository_profiles" });
         expect(table("repository_profile_versions")).toEqual({ name: "repository_profile_versions" });
+        expect(table("skill_candidates")).toEqual({ name: "skill_candidates" });
+        expect(table("skill_candidate_sessions")).toEqual({ name: "skill_candidate_sessions" });
+        expect(table("skill_candidate_evidence")).toEqual({ name: "skill_candidate_evidence" });
+        expect(table("skill_candidate_audit_log")).toEqual({ name: "skill_candidate_audit_log" });
         expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
       } finally {
         upgraded.close();

@@ -1732,8 +1732,8 @@ Total Completion Time
 - [x] 实现 Module Narrative。（v0.12 开发版：独立存储、L1/Evidence 来源链、FTS 召回）
 - [x] 实现 Repository Profile。（v0.12 开发版：独立存储、L1/L2 来源链、版本历史、长度与置信度门槛、Session Start 注入）
 - [x] 实现增量更新和长度控制。（来源指纹、模块级重建、硬字符预算）
-- [ ] 实现 Skill Candidate 生成。
-- [ ] 实现人工审核与导出。
+- [x] 实现 Skill Candidate 生成。（v0.15 开发版：至少三个成功 Session、确定性命令/测试签名、Session/Evidence 来源链）
+- [x] 实现人工审核与导出。（pending/approved/rejected、来源变化重新审核、安全 SKILL.md 导出、CLI/MCP）
 
 该里程碑不是找实习前 MVP 的必要条件。
 

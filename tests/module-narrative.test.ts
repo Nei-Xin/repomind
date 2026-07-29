@@ -76,7 +76,7 @@ describe("L2 module narratives", () => {
     expect(updated.narratives[0]).toMatchObject({ current: true, version: 2, sourceCount: 3 });
     expect(core.status()).toMatchObject({
       moduleNarratives: 1,
-      capabilities: { layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: false } },
+      capabilities: { layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: true } },
     });
 
     core.context.database.raw.prepare("DELETE FROM module_narrative_fts WHERE repository_id=?")

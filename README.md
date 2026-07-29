@@ -130,6 +130,25 @@ Session Start; use `repomind start --no-profile` to opt out. See
 [`docs/l3-real-repository-acceptance-v0.12.md`](docs/l3-real-repository-acceptance-v0.12.md)
 for the fixed-commit real-repository result.
 
+Build review-required L4 Skill Candidates from workflows observed in at least
+three successful Sessions:
+
+```bash
+repomind skill-rebuild --json
+repomind skills --status pending --json
+repomind skill-inspect l4_... --json
+repomind skill-review l4_... --action approve --reason "Commands and risks reviewed" --json
+repomind skill-export l4_... --output ./review/SKILL.md --json
+```
+
+The deterministic v0.15 generator groups committed Sessions only when their
+successful command and test sets match. Every candidate retains Session and
+Evidence provenance. Failed, partial, abandoned, command-free, and one-off
+tasks cannot qualify. A changed source set resets approval to `pending`.
+Export requires explicit approval, never overwrites a file, redacts secrets
+and absolute paths, and never installs or executes the result. See
+[`docs/skill-candidates.md`](docs/skill-candidates.md).
+
 Create a portable logical export, preview an atomic replacement import, or
 create and restore a physical same-project backup:
 
@@ -174,7 +193,7 @@ repomind record --type convention --title "Public API types" --content "Public A
 }
 ```
 
-The MCP server exposes eighteen tools:
+The MCP server exposes twenty-three tools:
 
 - `repo_session_start`
 - `repo_memory_search`
@@ -189,6 +208,11 @@ The MCP server exposes eighteen tools:
 - `repo_profile_rebuild`
 - `repo_profile_get`
 - `repo_profile_inspect`
+- `repo_skill_candidate_rebuild`
+- `repo_skill_candidate_list`
+- `repo_skill_candidate_inspect`
+- `repo_skill_candidate_review`
+- `repo_skill_candidate_export`
 - `repo_memory_record`
 - `repo_memory_validate`
 - `repo_memory_correct`
@@ -199,7 +223,7 @@ See [`docs/mcp-integration.md`](docs/mcp-integration.md), [`docs/opencode-integr
 
 See [`docs/stale-detection.md`](docs/stale-detection.md) for the `active` to `uncertain` behavior and a reproducible validation flow.
 
-See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history, [`docs/module-narratives.md`](docs/module-narratives.md) for the L2 derivation contract, and [`docs/repository-profile.md`](docs/repository-profile.md) for L3 freshness and provenance.
+See [`docs/memory-governance.md`](docs/memory-governance.md) for the `validate`, `correct`, and `invalidate` state transitions, [`docs/memory-maintenance.md`](docs/memory-maintenance.md) for review batches and maintenance history, [`docs/module-narratives.md`](docs/module-narratives.md) for the L2 derivation contract, [`docs/repository-profile.md`](docs/repository-profile.md) for L3 freshness and provenance, and [`docs/skill-candidates.md`](docs/skill-candidates.md) for the L4 review boundary.
 
 For commit and inspect calls, pass `repo_path` when a request is made after the MCP server has restarted.
 
@@ -239,8 +263,10 @@ evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner with formal integrity and latency gates. It
 does not include
-remote LLM extraction, automatic host-tool observation, or L4 Skill Candidate
-generation. Merge import and encrypted archives remain open. Source-only V8
+remote LLM extraction or automatic host-tool observation. The v0.15 development
+line adds deterministic, review-required L4 Skill Candidate generation and
+safe export without automatic installation or execution. Merge import and
+encrypted archives remain open. Source-only V8
 coverage reporting, regression floors, an actual
 successful macOS CI run, and OpenCode-to-Claude Code MCP interoperability are
 included in v0.14.0. See

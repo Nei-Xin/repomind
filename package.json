@@ -44,7 +44,8 @@
     "bench:l2-real": "npm run build --silent && node benchmarks/layered-memory/run-l2-real.mjs",
     "bench:l3-real": "npm run build --silent && node benchmarks/layered-memory/run-l3-real.mjs",
     "bench:portability-real": "npm run build --silent && node benchmarks/portability/run-real-recovery.mjs",
-    "bench:scale-10k": "npm run build --silent && node benchmarks/scalability/run-10k.mjs"
+    "bench:scale-10k": "npm run build --silent && node benchmarks/scalability/run-10k.mjs",
+    "bench:l4-real": "npm run build --silent && node benchmarks/skill-candidates/run-acceptance.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

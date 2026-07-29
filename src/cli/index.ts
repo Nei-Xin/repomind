@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { RepositoryMemoryCore } from "../core.js";
-import type { HostRunStatus, MemoryReviewKind, MemoryReviewQueue, MemoryType } from "../domain/types.js";
+import type { HostRunStatus, MemoryReviewKind, MemoryReviewQueue, MemoryType, SkillCandidateStatus } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
 import { locateGitRoot } from "../git/git-inspector.js";
 import { initializeRepository } from "../repository.js";
@@ -46,6 +46,11 @@ Usage:
   repomind profile-rebuild [--budget <1000-30000>] [--min-confidence <0.5-1>] [--repo <path>] [--json]
   repomind profile [--repo <path>] [--json]
   repomind profile-inspect [--repo <path>] [--json]
+  repomind skill-rebuild [--min-sessions <3-20>] [--repo <path>] [--json]
+  repomind skills [--status pending|approved|rejected] [--repo <path>] [--json]
+  repomind skill-inspect <l4-id> [--repo <path>] [--json]
+  repomind skill-review <l4-id> --action approve|reject --reason <text> [--repo <path>] [--json]
+  repomind skill-export <l4-id> --output <new-SKILL.md> [--repo <path>] [--json]
   repomind doctor [--repo <path>] [--json]
   repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
@@ -95,6 +100,8 @@ const { values, positionals } = parseArgs({
     module: { type: "string" },
     budget: { type: "string" },
     "min-confidence": { type: "string" },
+    "min-sessions": { type: "string" },
+    action: { type: "string" },
     "no-profile": { type: "boolean", default: false },
     limit: { type: "string" },
     type: { type: "string" },
@@ -461,6 +468,32 @@ async function main(): Promise<void> {
       })); break;
       case "profile": output(core.getRepositoryProfile()); break;
       case "profile-inspect": output(core.inspectRepositoryProfile()); break;
+      case "skill-rebuild": output(core.rebuildSkillCandidates({
+        ...(values["min-sessions"] ? { minSessions: Number(values["min-sessions"]) } : {}),
+      })); break;
+      case "skills": {
+        const status = values.status as SkillCandidateStatus | undefined;
+        if (status && !(["pending", "approved", "rejected"] as string[]).includes(status)) {
+          throw new RepoMindError("INVALID_INPUT", `Invalid --status ${status}`);
+        }
+        output(core.listSkillCandidates(status));
+        break;
+      }
+      case "skill-inspect": output(core.inspectSkillCandidate(required(positionals[1], "l4-id"))); break;
+      case "skill-review": {
+        const action = required(values.action, "--action");
+        if (action !== "approve" && action !== "reject") throw new RepoMindError("INVALID_INPUT", `Invalid --action ${action}`);
+        output(core.reviewSkillCandidate({
+          candidateId: required(positionals[1], "l4-id"),
+          action,
+          reason: required(values.reason, "--reason"),
+        }));
+        break;
+      }
+      case "skill-export": output(core.exportSkillCandidate(
+        required(positionals[1], "l4-id"),
+        required(values.output, "--output"),
+      )); break;
       case "export": output(exportRepository(core.context, required(values.output, "--output"), {
         allowSensitive: values["allow-sensitive"],
       })); break;

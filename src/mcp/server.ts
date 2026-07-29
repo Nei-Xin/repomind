@@ -22,6 +22,7 @@ export function createMcpServer(): McpServer {
   const sessionRepositories = new Map<string, string>();
   const memoryRepositories = new Map<string, string>();
   const narrativeRepositories = new Map<string, string>();
+  const candidateRepositories = new Map<string, string>();
   const coreFor = (repoPath: string): RepositoryMemoryCore => {
     let core = cores.get(repoPath);
     if (!core) {
@@ -226,6 +227,109 @@ export function createMcpServer(): McpServer {
     async (input) => {
       try {
         return result(coreFor(input.repo_path).inspectRepositoryProfile());
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_skill_candidate_rebuild",
+    "Build L4 Skill Candidates only from repeated successful repository workflows. Candidates always require human review.",
+    {
+      repo_path: z.string().min(1),
+      min_sessions: z.number().int().min(3).max(20).optional(),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).rebuildSkillCandidates({
+          ...(input.min_sessions ? { minSessions: input.min_sessions } : {}),
+        });
+        for (const candidate of value.candidates) candidateRepositories.set(candidate.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_skill_candidate_list",
+    "List repository-scoped L4 Skill Candidates and their human-review status.",
+    {
+      repo_path: z.string().min(1),
+      status: z.enum(["pending", "approved", "rejected"]).optional(),
+    },
+    async (input) => {
+      try {
+        const value = coreFor(input.repo_path).listSkillCandidates(input.status);
+        for (const candidate of value) candidateRepositories.set(candidate.id, input.repo_path);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_skill_candidate_inspect",
+    "Inspect an L4 Skill Candidate, its successful source sessions, Evidence ids, and audit history.",
+    {
+      candidate_id: z.string().min(1),
+      repo_path: z.string().optional(),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? candidateRepositories.get(input.candidate_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the candidate was not returned by this server process");
+        const value = coreFor(repoPath).inspectSkillCandidate(input.candidate_id);
+        candidateRepositories.set(input.candidate_id, repoPath);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_skill_candidate_review",
+    "Approve or reject a pending L4 Skill Candidate after explicit human review.",
+    {
+      candidate_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      action: z.enum(["approve", "reject"]),
+      reason: z.string().min(1),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? candidateRepositories.get(input.candidate_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the candidate was not returned by this server process");
+        const value = coreFor(repoPath).reviewSkillCandidate({
+          candidateId: input.candidate_id,
+          action: input.action,
+          reason: input.reason,
+        });
+        candidateRepositories.set(input.candidate_id, repoPath);
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_skill_candidate_export",
+    "Export an approved L4 Skill Candidate as a new reviewable SKILL.md file without installing or executing it.",
+    {
+      candidate_id: z.string().min(1),
+      repo_path: z.string().optional(),
+      output_path: z.string().min(1),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? candidateRepositories.get(input.candidate_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required when the candidate was not returned by this server process");
+        return result(coreFor(repoPath).exportSkillCandidate(input.candidate_id, input.output_path));
       } catch (error) {
         return failure(error);
       }

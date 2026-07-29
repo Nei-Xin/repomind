@@ -199,4 +199,38 @@ describe("cross-process CLI end-to-end", () => {
     expect(JSON.parse(cli(repository, data, "start", "--task", "Review repository architecture", "--no-profile")))
       .not.toHaveProperty("repositoryProfile");
   });
+
+  it("runs the complete L4 review and export workflow across CLI processes", { timeout: 30_000 }, () => {
+    JSON.parse(cli(repository, data, "init"));
+    for (let index = 1; index <= 3; index++) {
+      const started = JSON.parse(cli(repository, data, "start", "--task", `Release v0.${index}.0`)) as { sessionId: string };
+      const input = join(data, `release-${index}.json`);
+      writeFileSync(input, JSON.stringify({
+        sessionId: started.sessionId,
+        idempotencyKey: `release-${index}`,
+        status: "success",
+        summary: `Release v0.${index}.0 completed after all checks.`,
+        commands: [{ command: "npm run build", exitCode: 0, summary: "Build passed." }],
+        tests: [{ command: "npm test", exitCode: 0, summary: "Tests passed." }],
+      }), "utf8");
+      expect(JSON.parse(cli(repository, data, "commit", "--input", input))).toMatchObject({ status: "committed" });
+    }
+
+    const rebuilt = JSON.parse(cli(repository, data, "skill-rebuild")) as { candidates: Array<{ id: string }> };
+    const candidateId = rebuilt.candidates[0]!.id;
+    expect(JSON.parse(cli(repository, data, "skills", "--status", "pending"))).toEqual([
+      expect.objectContaining({ id: candidateId, sourceSessionCount: 3, status: "pending" }),
+    ]);
+    expect(JSON.parse(cli(repository, data, "skill-inspect", candidateId))).toMatchObject({
+      sources: [expect.any(Object), expect.any(Object), expect.any(Object)],
+      audit: [expect.objectContaining({ action: "generated" })],
+    });
+    expect(JSON.parse(cli(
+      repository, data, "skill-review", candidateId, "--action", "approve", "--reason", "Commands reviewed.",
+    ))).toMatchObject({ id: candidateId, status: "approved" });
+    const output = join(data, "EXPORTED-SKILL.md");
+    expect(JSON.parse(cli(repository, data, "skill-export", candidateId, "--output", output)))
+      .toMatchObject({ candidateId, path: output });
+    expect(existsSync(output)).toBe(true);
+  });
 });

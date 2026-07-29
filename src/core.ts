@@ -32,8 +32,15 @@ import type {
   RebuildModuleNarrativesResult,
   RebuildRepositoryProfileInput,
   RebuildRepositoryProfileResult,
+  RebuildSkillCandidatesInput,
+  RebuildSkillCandidatesResult,
+  ReviewSkillCandidateInput,
   RepositoryProfileDetails,
   RepositoryProfileSummary,
+  SkillCandidateDetails,
+  SkillCandidateStatus,
+  SkillCandidateSummary,
+  ExportSkillCandidateResult,
   StaleReason,
   StartSessionInput,
   StartSessionResult,
@@ -47,6 +54,7 @@ import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
 import { ModuleNarrativeStore } from "./narratives/module-narratives.js";
 import { RepositoryProfileStore } from "./profiles/repository-profile.js";
+import { SkillCandidateStore } from "./skills/skill-candidates.js";
 import { buildMatchExpression, searchTokens, shouldUseSubstringFallback } from "./search/lexical.js";
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
@@ -770,6 +778,26 @@ export class RepositoryMemoryCore {
     return new RepositoryProfileStore(this.context).inspect();
   }
 
+  rebuildSkillCandidates(input: RebuildSkillCandidatesInput = {}): RebuildSkillCandidatesResult {
+    return new SkillCandidateStore(this.context).rebuild(input);
+  }
+
+  listSkillCandidates(status?: SkillCandidateStatus): SkillCandidateSummary[] {
+    return new SkillCandidateStore(this.context).list(status);
+  }
+
+  inspectSkillCandidate(id: string): SkillCandidateDetails {
+    return new SkillCandidateStore(this.context).inspect(id);
+  }
+
+  reviewSkillCandidate(input: ReviewSkillCandidateInput): SkillCandidateSummary {
+    return new SkillCandidateStore(this.context).review(input);
+  }
+
+  exportSkillCandidate(id: string, outputPath: string): ExportSkillCandidateResult {
+    return new SkillCandidateStore(this.context).export(id, outputPath);
+  }
+
   status(): Record<string, unknown> {
     const db = this.context.database.raw;
     const count = (table: string): number => Number((db.prepare(`SELECT count(*) AS count FROM ${table} WHERE repository_id=?`).get(this.context.marker.projectId) as { count: number }).count);
@@ -782,6 +810,7 @@ export class RepositoryMemoryCore {
       memories: count("memories"),
       moduleNarratives: count("module_narratives"),
       repositoryProfiles: count("repository_profiles"),
+      skillCandidates: count("skill_candidates"),
       embeddings: count("memory_embeddings"),
       hostRuns: count("host_runs"),
       uncertainMemories: Number((db.prepare("SELECT count(*) AS count FROM memories WHERE repository_id=? AND status='uncertain'").get(this.context.marker.projectId) as { count: number }).count),
@@ -802,8 +831,8 @@ export class RepositoryMemoryCore {
         maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
-        portability: { exportFormat: 1, importMode: "replace", backupFormat: 1, restore: "same-project" },
-        layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: false },
+        portability: { exportFormat: 2, importFormats: [1, 2], importMode: "replace", backupFormat: 1, restore: "same-project" },
+        layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: true },
       },
     };
   }

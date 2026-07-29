@@ -7,6 +7,38 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic L4 Skill Candidate generation from at least three independent
+  committed Sessions with matching successful command and test workflows.
+- Repository-scoped candidate inspection with Session, Evidence, and audit
+  provenance; explicit approve/reject review; and safe `SKILL.md` export.
+- CLI and MCP entry points for candidate rebuild, list, inspect, review, and
+  export. RepoMind never installs or executes exported candidates.
+- A rebuildable fixed-commit L4 acceptance runner covering thresholds,
+  unsuccessful Session exclusion, provenance, review, safe export, approval
+  invalidation, repository isolation, logical recovery, and operation latency.
+
+### Changed
+
+- Logical repository export format v2 now includes L4 candidates and their
+  provenance while retaining read compatibility with v1 exports.
+- Candidate source changes reset prior approval to `pending`. Export refuses
+  unapproved candidates and existing files, redacts secrets and absolute
+  paths, and records a checksummed audit event.
+
+### Validation
+
+- The development regression and coverage suites pass 156 tests across 34
+  files. Coverage remains above every project floor at 83.48% statements and
+  lines, 77.55% branches, and 94.82% functions; L4 candidate code has 95.96%
+  line, 82.70% branch, and 100% function coverage.
+- The rebuildable L4 development acceptance passed all 20 gates with four
+  successful source Sessions, four excluded Sessions, and 28 Evidence links.
+  Candidate rebuild/list/inspect P95 was 0.780/0.093/0.300 ms over 20 samples.
+  This was intentionally recorded as dirty-worktree development evidence; a
+  clean-commit run is still required before release.
+
 ## [0.14.0] - 2026-07-29
 
 ### Added

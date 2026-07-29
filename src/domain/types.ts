@@ -150,6 +150,73 @@ export interface RebuildRepositoryProfileResult {
   profile: RepositoryProfileSummary;
 }
 
+export type SkillCandidateStatus = "pending" | "approved" | "rejected";
+
+export interface SkillCandidateSummary {
+  id: string;
+  title: string;
+  trigger: string;
+  inputs: string[];
+  steps: string[];
+  verification: string[];
+  risks: string[];
+  sourceSessionCount: number;
+  status: SkillCandidateStatus;
+  reviewReason: string | null;
+  createdAt: number;
+  updatedAt: number;
+  reviewedAt: number | null;
+}
+
+export interface SkillCandidateSessionSource {
+  sessionId: string;
+  task: string;
+  finalHead: string | null;
+  startedAt: number;
+  endedAt: number;
+  evidenceIds: string[];
+}
+
+export interface SkillCandidateAuditEntry {
+  action: "generated" | "sources_changed" | "approved" | "rejected" | "exported";
+  previousStatus: SkillCandidateStatus | null;
+  nextStatus: SkillCandidateStatus;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface SkillCandidateDetails extends SkillCandidateSummary {
+  workflowKey: string;
+  sourceFingerprint: string;
+  sources: SkillCandidateSessionSource[];
+  audit: SkillCandidateAuditEntry[];
+}
+
+export interface RebuildSkillCandidatesInput {
+  minSessions?: number;
+}
+
+export interface RebuildSkillCandidatesResult {
+  created: number;
+  updated: number;
+  unchanged: number;
+  candidates: SkillCandidateSummary[];
+}
+
+export interface ReviewSkillCandidateInput {
+  candidateId: string;
+  action: "approve" | "reject";
+  reason: string;
+}
+
+export interface ExportSkillCandidateResult {
+  candidateId: string;
+  path: string;
+  sha256: string;
+  redactions: number;
+}
+
 export interface StaleReason {
   kind: "file_created" | "file_modified" | "file_deleted";
   filePath: string;

@@ -9,6 +9,7 @@ import {
   backupRepository,
   exportRepository,
   importRepository,
+  loadRepositoryExport,
   restoreRepository,
 } from "../src/portability/repository-data.js";
 import { initializeRepository } from "../src/repository.js";
@@ -61,12 +62,35 @@ describe("repository export, import, backup, and restore", () => {
     source.record({ type: "command", title: "Release checks", content: "Run npm test before release.", confidence: 0.95 });
     source.rebuildModuleNarratives();
     source.rebuildRepositoryProfile();
+    for (let index = 1; index <= 3; index++) {
+      const started = source.startSession({ task: `Run release v0.${index}.0` });
+      source.commitSession({
+        sessionId: started.sessionId,
+        idempotencyKey: `portable-release-${index}`,
+        status: "success",
+        summary: `Release v0.${index}.0 completed.`,
+        commands: [{ command: "npm run build", exitCode: 0, summary: "Build passed." }],
+        tests: [{ command: "npm test", exitCode: 0, summary: "Tests passed." }],
+      });
+    }
+    const skill = source.rebuildSkillCandidates().candidates[0]!;
+    source.reviewSkillCandidate({ candidateId: skill.id, action: "approve", reason: "Portable workflow reviewed." });
     const sourceProjectId = source.context.marker.projectId;
     const exportPath = join(artifacts, "repository-export.json");
     const exported = exportRepository(source.context, exportPath);
-    expect(exported.counts.memories).toBe(2);
+    expect(exported.counts.memories).toBeGreaterThan(2);
     expect(exported.counts.module_narratives).toBe(1);
     expect(exported.counts.repository_profiles).toBe(1);
+    expect(exported.counts.skill_candidates).toBe(1);
+    expect(exported.counts.skill_candidate_sessions).toBe(3);
+    const legacyPath = join(artifacts, "repository-export-v1.json");
+    const legacy = JSON.parse(readFileSync(exportPath, "utf8")) as Record<string, unknown>;
+    legacy.formatVersion = 1;
+    const legacyTables = legacy.tables as Record<string, unknown>;
+    for (const name of Object.keys(legacyTables).filter((name) => name.startsWith("skill_candidate"))) delete legacyTables[name];
+    rewriteChecksum(legacy);
+    writeFileSync(legacyPath, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+    expect(loadRepositoryExport(legacyPath).tables.skill_candidates).toEqual([]);
     source.close();
 
     const target = new RepositoryMemoryCore(targetRepository);
@@ -80,7 +104,14 @@ describe("repository export, import, backup, and restore", () => {
     expect(imported).toMatchObject({ imported: true, sourceProjectId, targetProjectId });
     expect(() => target.inspect(old.id)).toThrow();
     expect(target.search("SQLite transactions").map((item) => item.id)).toContain(moduleMemory.id);
-    expect(target.status()).toMatchObject({ memories: 2, moduleNarratives: 1, repositoryProfiles: 1, embeddings: 0 });
+    expect(target.inspectSkillCandidate(skill.id)).toMatchObject({ status: "approved", sourceSessionCount: 3 });
+    expect(target.status()).toMatchObject({
+      memories: exported.counts.memories,
+      moduleNarratives: 1,
+      repositoryProfiles: 1,
+      skillCandidates: 1,
+      embeddings: 0,
+    });
     expect(target.context.marker.projectId).toBe(targetProjectId);
     expect(target.inspectRepositoryProfile().versions).toHaveLength(1);
     target.close();

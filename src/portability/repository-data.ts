@@ -31,7 +31,7 @@ interface TableDefinition {
 }
 
 const FORMAT = "repomind-repository-export";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const BACKUP_FORMAT = "repomind-sqlite-backup";
 const BACKUP_FORMAT_VERSION = 1;
 const CURRENT_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -109,15 +109,33 @@ const TABLES = {
     columns: ["profile_id", "version", "content", "source_fingerprint", "memory_ids_json", "narrative_ids_json", "created_at"],
     select: "SELECT v.* FROM repository_profile_versions v JOIN repository_profiles p ON p.id=v.profile_id WHERE p.repository_id=? ORDER BY v.profile_id, v.version",
   },
+  skill_candidates: {
+    columns: ["id", "repository_id", "workflow_key", "title", "trigger_text", "inputs_json", "steps_json", "verification_json", "risks_json", "source_fingerprint", "source_session_count", "status", "review_reason", "created_at", "updated_at", "reviewed_at"],
+    select: "SELECT * FROM skill_candidates WHERE repository_id=? ORDER BY created_at, id",
+    repositoryColumn: "repository_id",
+  },
+  skill_candidate_sessions: {
+    columns: ["candidate_id", "session_id", "sort_order"],
+    select: "SELECT cs.* FROM skill_candidate_sessions cs JOIN skill_candidates c ON c.id=cs.candidate_id WHERE c.repository_id=? ORDER BY cs.candidate_id, cs.sort_order",
+  },
+  skill_candidate_evidence: {
+    columns: ["candidate_id", "evidence_id"],
+    select: "SELECT ce.* FROM skill_candidate_evidence ce JOIN skill_candidates c ON c.id=ce.candidate_id WHERE c.repository_id=? ORDER BY ce.candidate_id, ce.evidence_id",
+  },
+  skill_candidate_audit_log: {
+    columns: ["id", "candidate_id", "action", "previous_status", "next_status", "reason", "metadata_json", "created_at"],
+    select: "SELECT a.* FROM skill_candidate_audit_log a JOIN skill_candidates c ON c.id=a.candidate_id WHERE c.repository_id=? ORDER BY a.created_at, a.id",
+  },
 } as const satisfies Record<string, TableDefinition>;
 
 type TableName = keyof typeof TABLES;
 
 const TABLE_ORDER = Object.keys(TABLES) as TableName[];
+const V1_TABLE_ORDER = TABLE_ORDER.filter((table) => !table.startsWith("skill_candidate"));
 
 const exportEnvelopeSchema = z.object({
   format: z.literal(FORMAT),
-  formatVersion: z.literal(FORMAT_VERSION),
+  formatVersion: z.union([z.literal(1), z.literal(FORMAT_VERSION)]),
   exportedAt: z.number().int().nonnegative(),
   schemaVersion: z.number().int().positive().max(CURRENT_SCHEMA_VERSION),
   repository: z.object({ projectId: z.string().min(1), name: z.string().min(1) }).strict(),
@@ -138,7 +156,7 @@ const backupManifestSchema = z.object({
 
 export interface RepositoryExportBundle {
   format: typeof FORMAT;
-  formatVersion: typeof FORMAT_VERSION;
+  formatVersion: 1 | typeof FORMAT_VERSION;
   exportedAt: number;
   schemaVersion: number;
   repository: { projectId: string; name: string };
@@ -210,13 +228,14 @@ function exportPayload(bundle: Omit<RepositoryExportBundle, "checksum">): string
   return stableJson(bundle);
 }
 
-function validateRows(tables: Record<string, ExportRow[]>): Record<TableName, ExportRow[]> {
+function validateRows(tables: Record<string, ExportRow[]>, formatVersion: 1 | typeof FORMAT_VERSION): Record<TableName, ExportRow[]> {
   const actualNames = Object.keys(tables).sort();
-  const expectedNames = [...TABLE_ORDER].sort();
+  const expectedOrder = formatVersion === 1 ? V1_TABLE_ORDER : TABLE_ORDER;
+  const expectedNames = [...expectedOrder].sort();
   if (stableJson(actualNames) !== stableJson(expectedNames)) {
     throw new RepoMindError("INVALID_INPUT", "Export contains missing or unknown tables", { expectedNames, actualNames });
   }
-  for (const tableName of TABLE_ORDER) {
+  for (const tableName of expectedOrder) {
     const expectedColumns = [...TABLES[tableName].columns].sort();
     for (const [index, row] of tables[tableName]!.entries()) {
       const actualColumns = Object.keys(row).sort();
@@ -225,7 +244,7 @@ function validateRows(tables: Record<string, ExportRow[]>): Record<TableName, Ex
       }
     }
   }
-  return tables as Record<TableName, ExportRow[]>;
+  return Object.fromEntries(TABLE_ORDER.map((tableName) => [tableName, tables[tableName] ?? []])) as Record<TableName, ExportRow[]>;
 }
 
 export function loadRepositoryExport(path: string): RepositoryExportBundle {
@@ -239,12 +258,12 @@ export function loadRepositoryExport(path: string): RepositoryExportBundle {
   }
   const result = exportEnvelopeSchema.safeParse(parsed);
   if (!result.success) throw new RepoMindError("INVALID_INPUT", "Invalid repository export", { issues: result.error.issues });
-  const tables = validateRows(result.data.tables as Record<string, ExportRow[]>);
   const { checksum, ...payload } = result.data;
   const actualChecksum = sha256(exportPayload(payload as Omit<RepositoryExportBundle, "checksum">));
   if (actualChecksum !== checksum) {
     throw new RepoMindError("INVALID_INPUT", "Repository export checksum does not match", { expected: checksum, actual: actualChecksum });
   }
+  const tables = validateRows(result.data.tables as Record<string, ExportRow[]>, result.data.formatVersion);
   return { ...result.data, tables } as RepositoryExportBundle;
 }
 
@@ -345,6 +364,7 @@ export function importRepository(
   const db = context.database.raw;
   context.database.transaction(() => {
     assertNoActiveWork(context);
+    db.prepare("DELETE FROM skill_candidates WHERE repository_id=?").run(context.marker.projectId);
     db.prepare("DELETE FROM repository_profiles WHERE repository_id=?").run(context.marker.projectId);
     db.prepare("DELETE FROM module_narratives WHERE repository_id=?").run(context.marker.projectId);
     db.prepare("DELETE FROM memories WHERE repository_id=?").run(context.marker.projectId);

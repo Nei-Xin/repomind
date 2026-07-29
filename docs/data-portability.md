@@ -11,7 +11,7 @@ Project ID.
 repomind export --output D:\backups\repository.json --json
 ```
 
-The JSON envelope identifies `repomind-repository-export`, format version 1,
+The JSON envelope identifies `repomind-repository-export`, format version 2,
 the source Project ID, database schema version, export time, fixed table data,
 and a deterministic SHA-256 checksum. RepoMind refuses unknown or missing
 tables, unknown or missing columns, unsupported versions, and checksum changes.
@@ -19,8 +19,9 @@ The destination file and its parent directory must be explicit; existing files
 are never overwritten.
 
 The export contains sessions, Evidence, L1 memories, governance history,
-relationships, host-run history, L2 narratives, L3 profiles, source links, and
-L3 versions. It excludes:
+relationships, host-run history, L2 narratives, L3 profiles, L4 Skill
+Candidates, their review audit, and all source links. Version 1 exports remain
+readable and import with empty L4 tables. It excludes:
 
 - checkout paths, because they belong to one machine;
 - FTS tables, because they are rebuilt during import;
@@ -40,7 +41,7 @@ repomind import --input D:\backups\repository.json --dry-run --json
 repomind import --input D:\backups\repository.json --yes --json
 ```
 
-Import version 1 has one unambiguous mode: `replace`. Dry-run validates the
+Logical import has one unambiguous mode: `replace`. Dry-run validates the
 envelope, checksum, table contract, sensitive patterns, schema compatibility,
 and active-work guard without changing data. `--yes` deletes the current
 repository's logical data and inserts the archive in one SQLite transaction.
@@ -49,9 +50,9 @@ A constraint error rolls the entire transaction back.
 The source Project ID is retained as provenance in the result, while every
 repository and checkout foreign key is mapped to the initialized target. This
 allows a reviewed export to seed a different repository without rewriting its
-`.repomind/project.json`. Memory, Evidence, Session, L2, and L3 IDs remain
-stable. FTS is rebuilt in the same transaction and vectors return to an empty,
-rebuildable state.
+`.repomind/project.json`. Memory, Evidence, Session, L2, L3, and L4 candidate
+IDs remain stable. FTS is rebuilt in the same transaction and vectors return
+to an empty, rebuildable state.
 
 Merge import is intentionally not implemented. Combining two governed memory
 histories requires duplicate, contradiction, audit, and ID-collision policies;
@@ -99,5 +100,6 @@ the swap. A missing live database can be restored without this flag.
 
 This iteration provides local CLI recovery, not scheduled backups, archive
 encryption, cloud sync, MCP restore tools, or logical merge. macOS CI, coverage
-proof, a second real Coding Agent, 10,000-L1 scale, L4 Skill Candidates, and
-remote LLM extraction remain separate final-product goals.
+proof, a second real Coding Agent, 10,000-L1 scale, and L4 Skill Candidates now
+have implementation and acceptance evidence; remote LLM extraction remains a
+separate final-product goal.

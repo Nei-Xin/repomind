@@ -95,12 +95,19 @@ facts and L2 module boundaries, retains every generated version, and exposes
 the complete source chain for inspection. A stale profile remains inspectable
 but is not injected into a new task.
 
-## L4 — Skill candidates (not implemented)
+## L4 — Skill candidates
 
-L4 would detect workflows repeated successfully across sessions and emit them
-as *proposals* — trigger, inputs, steps, verification, risk, and the evidence
-they came from. RepoMind would never install or execute one. A memory system
-that starts running things is no longer a memory system.
+L4 detects workflows repeated successfully across at least three committed
+Sessions and emits them as proposals: trigger, inputs, steps, verification,
+risk, and the Evidence they came from. The deterministic v0.15 implementation
+requires matching successful command and test sets. It excludes failed,
+partial, abandoned, command-free, and one-off Sessions.
+
+Candidates use `pending`, `approved`, and `rejected` review states. New source
+Evidence resets an approved or rejected candidate to `pending`. Only an
+approved candidate can be exported as `SKILL.md`; RepoMind never installs or
+executes one. A memory system that starts running things is no longer a memory
+system.
 
 ## Why the layers matter
 

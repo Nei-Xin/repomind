@@ -104,7 +104,7 @@ describe("L3 repository profile", () => {
     core.abandonSession(optedOut.sessionId);
     expect(core.status()).toMatchObject({
       repositoryProfiles: 1,
-      capabilities: { layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: false } },
+      capabilities: { layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: true } },
     });
     core.close();
   });
