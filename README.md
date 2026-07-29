@@ -311,9 +311,14 @@ included. See
 roadmap.
 
 The v0.17 distribution acceptance passes all 11 local package gates and the
-clean-commit GitHub matrix passes installed-tarball verification on Ubuntu,
-Windows, and macOS. See
-[`docs/release-readiness-v0.17.md`](docs/release-readiness-v0.17.md).
+clean-commit and release-tag GitHub matrices pass installed-tarball verification
+on Ubuntu, Windows, and macOS. A post-release external `p-limit` study also
+passes six fresh-context OpenCode runs: both arms pass every check, while
+RepoMind lowers mean input Tokens by 41.1% and Agent duration by 17.5% after a
+Claude Code source task. See
+[`docs/release-readiness-v0.17.md`](docs/release-readiness-v0.17.md),
+[`docs/external-open-source-cross-session-acceptance-v0.17.md`](docs/external-open-source-cross-session-acceptance-v0.17.md),
+and [`docs/final-spec-audit-v0.17.md`](docs/final-spec-audit-v0.17.md).
 
 The v0.15.0 formal L4 report passes all 20 gates on a clean fixed commit, and
 the real cross-Agent report passes all 17 checks across OpenCode and Claude

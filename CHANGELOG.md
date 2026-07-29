@@ -7,6 +7,16 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Validation
+
+- The remaining final-spec proof gate passed on the external MIT-licensed
+  `sindresorhus/p-limit` repository. A Claude Code source task produced
+  Evidence-backed Memory, and three paired fresh-context OpenCode comparisons
+  preserved 100% public and hidden success while RepoMind reduced mean input
+  Tokens by 41.1% and Agent duration by 17.5%. The report retains the original
+  negative harness summary and the no-rerun correction for partial committed
+  Sessions.
+
 ## [0.17.0] - 2026-07-29
 
 ### Added

@@ -118,6 +118,31 @@ This closes the v0.17 distribution and upgrade release gates. It does not by
 itself satisfy the separate v1.0 requirement for a cross-session benefit case
 on an external real open-source repository.
 
+## Formal release and tag result
+
+Release commit `6961a65ed0e96c90fc3041811da4b5ceb7f5d8e2` updated the package
+version, Changelog, and release wording. Annotated tag `v0.17.0` points to that
+commit and was pushed on 2026-07-29.
+
+[GitHub Actions tag run 30451648338](https://github.com/Nei-Xin/repomind/actions/runs/30451648338)
+completed successfully in 6 minutes 5 seconds. Ubuntu, Windows, macOS,
+coverage, and comparison jobs all passed against the tagged commit. This is
+separate from the successful main-branch release-commit run `30451228817`.
+
+## Post-release external proof
+
+The separate external real-open-source criterion subsequently passed on the
+fixed MIT-licensed `sindresorhus/p-limit` repository. A Claude Code Task 1
+created Evidence-backed Memory, and three paired fresh-context OpenCode Task 2
+runs compared no memory with Host-managed RepoMind from the same post-Task-1
+commit. Both arms passed all checks; RepoMind reduced mean input Tokens by
+41.1% and Agent duration by 17.5%, with both improvements present in every
+pair. See
+[`external-open-source-cross-session-acceptance-v0.17.md`](external-open-source-cross-session-acceptance-v0.17.md).
+
+This post-release report closes the final v1.0 proof criterion without changing
+the contents or identity of the already published v0.17.0 tag.
+
 ## Next security iteration
 
 After the v0.17 distribution proof is committed and cross-platform CI passes,
