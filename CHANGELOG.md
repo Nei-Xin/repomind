@@ -40,6 +40,16 @@ under **Changed** with its migration impact.
   or opposite negation remain distinct so contradictory facts are not silently
   merged.
 
+### Validation
+
+- The clean-commit live `gpt-5.6-terra` run passed all 13 remote-extraction
+  gates across nine scenarios: recall, precision, empty/injection behavior,
+  Evidence and Audit binding, deduplication, atomic failures, latency, token
+  reporting, worktree provenance, and SQLite health all passed.
+- Recall, precision, empty accuracy, Evidence binding, and Audit binding were
+  all 1.000. P50/P95 remote latency was 9.565/12.669 seconds and the provider
+  reported 7,584 input plus 1,083 output tokens.
+
 ## [0.15.0] - 2026-07-29
 
 ### Added
