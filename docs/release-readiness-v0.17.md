@@ -97,8 +97,26 @@ tests, databases, local configuration, and coverage output.
 
 The full local regression passed 169 tests across 38 files. Coverage passed the
 existing floors at 83.82% statements/lines, 77.54% branches, and 95.04%
-functions. These are dirty-worktree implementation results; formal release
-evidence still requires a clean commit and successful GitHub matrix.
+functions.
+
+## Clean-commit cross-platform result
+
+Commit `432f4f68523fe4275716b8089aa28afd7b3fbab3` fixed the package runner,
+Migration fixtures, product code, and documentation in a clean worktree.
+[GitHub Actions run 30444019485](https://github.com/Nei-Xin/repomind/actions/runs/30444019485)
+completed successfully on 2026-07-29.
+
+All five jobs passed: Ubuntu verify, Windows verify, macOS verify, source
+coverage, and the comparison benchmark. Each verify job completed typecheck,
+build, all 169 tests, the eight-task fixture validation, and the new installed-
+tarball acceptance. The package-smoke command therefore passed through the
+generated npm bin shim on all three supported CI operating systems. The macOS
+verify job completed in 1 minute 10 seconds; Windows, the slowest matrix job,
+completed in 6 minutes 18 seconds.
+
+This closes the v0.17 distribution and upgrade release gates. It does not by
+itself satisfy the separate v1.0 requirement for a cross-session benefit case
+on an external real open-source repository.
 
 ## Next security iteration
 

@@ -32,8 +32,10 @@ under **Changed** with its migration impact.
   lines, 77.54% branches, and 95.04% functions.
 - The local packaged-install acceptance passed all 11 gates through the npm
   tarball, including CLI persistence, MCP Start/Search/Inspect/Abandon, and
-  checksummed backup/restore. Cross-platform CI remains required on a clean
-  commit before release.
+  checksummed backup/restore.
+- GitHub Actions run `30444019485` passed Ubuntu, Windows, macOS, coverage, and
+  comparison jobs against clean commit `432f4f6`. Every verify job ran the new
+  installed-tarball acceptance after all 169 tests and fixture validation.
 
 ## [0.16.0] - 2026-07-29
 
