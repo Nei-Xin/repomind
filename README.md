@@ -200,7 +200,9 @@ and retains a pre-restore snapshot. Outputs never overwrite existing files,
 and exports with sensitive-pattern findings require `--allow-sensitive` after
 review. Encrypted archives use authenticated AES-256-GCM and scrypt; plaintext
 formats remain compatible. See [`docs/data-portability.md`](docs/data-portability.md)
-for the data contract, password handling, and recovery procedure.
+for the data contract, password handling, and recovery procedure. The formal
+29-gate result and three-platform installed-package proof are recorded in
+[`docs/encrypted-portability-v0.18.md`](docs/encrypted-portability-v0.18.md).
 
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use

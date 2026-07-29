@@ -28,6 +28,12 @@ under **Changed** with its migration impact.
 
 - The installed-tarball smoke suite now exercises both encrypted portability
   loops and credential exclusion in its Ubuntu, Windows, and macOS CI path.
+- The formal clean-commit encrypted-portability run passed all 29 gates on 40
+  L1 Memories with authenticated-failure zero-write checks, temporary plaintext
+  cleanup, credential-safe reports, and measured plaintext/encrypted overhead.
+- GitHub Actions run `30464400835` passed Ubuntu, Windows, macOS, source
+  coverage, and comparison against implementation commit `bcf8822`; every
+  platform also passed the 14-gate installed-tarball smoke.
 - The remaining final-spec proof gate passed on the external MIT-licensed
   `sindresorhus/p-limit` repository. A Claude Code source task produced
   Evidence-backed Memory, and three paired fresh-context OpenCode comparisons

@@ -74,6 +74,44 @@ fresh in-process passphrase, passes it only through the child environment, and
 checks that package reports omit it. The normal three-platform CI matrix runs
 this installed-package proof on Ubuntu, Windows, and macOS.
 
+## Formal clean-commit result
+
+The formal Windows run passed all 29 gates on 2026-07-29 against clean commit
+`bcf88224d52ac362a07d98a22e920f78c2a6f4c4`. The report records
+`implementationDirty=false` and `requireClean=true`. Its deterministic dataset
+contains 40 L1 Memories, two L2 narratives, and one L3 profile.
+
+The five-sample P50 encryption overhead on this machine was 93.267 ms for
+logical export, 96.09 ms for logical import dry-run, 106.503 ms for physical
+backup, and 159.485 ms for physical restore dry-run. The plaintext/encrypted
+sizes were 106,069/142,027 bytes for logical export and 462,848/617,723 bytes
+for physical backup. These are single-machine measurements, not universal
+performance targets.
+
+Artifacts are retained outside the repository at:
+
+```text
+D:\data\code\project\repomind-test\v018-encrypted-portability-formal-bcf8822-01
+```
+
+- JSON report SHA-256:
+  `a21a9245b22589cf188c16f772fb1b0b8327865be9a5e6a6e21d701db4b77946`
+- Markdown report SHA-256:
+  `47824976a916b9471a5aa8f4308886aad3857907daab439e6df317af6072b827`
+
+## Clean-commit cross-platform result
+
+[GitHub Actions run 30464400835](https://github.com/Nei-Xin/repomind/actions/runs/30464400835)
+completed successfully against `bcf8822` in 7 minutes 4 seconds. Ubuntu,
+Windows, macOS, source coverage, and the comparison benchmark all passed. Each
+platform ran typecheck, build, the complete test suite, Agent fixture checks,
+and the 14-gate installed-tarball smoke, including encrypted logical and
+physical portability with a generated environment-only passphrase.
+
+The five Actions warnings are upstream Node.js 20 deprecation notices for
+GitHub-maintained actions that GitHub forced onto Node.js 24. They did not
+represent a RepoMind test, package, or runtime failure.
+
 ## Remaining boundary
 
 This iteration does not add Merge Import, automatic schedules, remote upload,
