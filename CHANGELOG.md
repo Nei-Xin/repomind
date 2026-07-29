@@ -7,13 +7,15 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-29
+
 ### Added
 
 - A rebuildable packaged-install acceptance runner that packs RepoMind, installs
   the tarball into an isolated consumer, and exercises CLI, MCP, backup, and
   restore through the installed artifact on every CI operating system.
 - A versioned release-to-Schema manifest with immutable Migration hashes and
-  upgrade fixtures covering every Schema shipped from v0.4.0 through v0.16.0.
+  upgrade fixtures covering every Schema shipped from v0.4.0 through v0.17.0.
 
 ### Fixed
 

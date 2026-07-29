@@ -42,7 +42,7 @@ test suite.
 ## Published Schema fixtures
 
 `tests/fixtures/released-schema-manifest.json` records every Git tag from
-v0.4.0 through v0.16.0, its shipped Schema version, and the SHA-256 of every
+v0.4.0 through v0.17.0, its shipped Schema version, and the SHA-256 of every
 published Migration body. Tests fail if an old Migration is edited or a
 release mapping disappears.
 
@@ -59,7 +59,7 @@ SQLite handle.
 
 ## Release gate
 
-Before v0.17.0 can be released:
+The v0.17.0 release requires:
 
 - local typecheck, build, tests, coverage, and packaged-install acceptance pass;
 - a clean commit passes all GitHub CI jobs, including the three packaged-

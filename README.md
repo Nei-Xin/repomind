@@ -294,12 +294,14 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v0.16.0 includes deterministic L2 Module Narratives, an
+RepoMind v0.17.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
-Candidate generation with safe export. v0.16.0 adds explicit, validated remote
-LLM extraction while keeping deterministic extraction as the default. It does
+Candidate generation with safe export. It includes the explicit, validated
+remote LLM extraction introduced in v0.16.0 while keeping deterministic
+extraction as the default. v0.17.0 adds installed-tarball verification on all
+three CI operating systems and locks every published Schema upgrade path. It does
 not include automatic host-tool observation, Skill installation, or Skill
 execution. Merge import and encrypted archives remain open. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
@@ -307,6 +309,11 @@ OpenCode/Claude Code interoperability in both tested lifecycle directions are
 included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
+
+The v0.17 distribution acceptance passes all 11 local package gates and the
+clean-commit GitHub matrix passes installed-tarball verification on Ubuntu,
+Windows, and macOS. See
+[`docs/release-readiness-v0.17.md`](docs/release-readiness-v0.17.md).
 
 The v0.15.0 formal L4 report passes all 20 gates on a clean fixed commit, and
 the real cross-Agent report passes all 17 checks across OpenCode and Claude
