@@ -7,6 +7,28 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- An injectable LLM Runner boundary and an opt-in OpenAI-compatible structured-
+  output adapter configured independently through `REPOMIND_EXTRACTION_*`.
+- Explicit `repomind extract` and `repo_memory_extract` entry points for
+  completed Sessions, plus provider/model/usage/timing result metadata.
+- Fixed-fixture tests for valid and empty batches, malformed output, fabricated
+  Evidence, all-or-nothing validation, deduplication, prompt injection,
+  cancellation, provider configuration, and HTTP adapter behavior.
+
+### Security
+
+- Remote candidates pass strict Zod validation plus deterministic Evidence,
+  scope, confidence, size, and repository-path checks before any write begins.
+  Accepted batches use one transaction and every memory binds existing Session
+  Evidence; any invalid candidate or remote failure produces zero partial
+  writes.
+- Memory audit provenance records remote mode, provider, model, and source
+  Session; deduplicated candidates are audited when they add new Evidence.
+- Remote extraction is disabled by default, uses already-redacted and bounded
+  Session Evidence, and never runs implicitly during Session Start or Commit.
+
 ## [0.15.0] - 2026-07-29
 
 ### Added

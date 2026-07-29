@@ -7,6 +7,8 @@ import type {
   CorrectMemoryInput,
   CorrectMemoryResult,
   EvidenceKind,
+  ExtractSessionInput,
+  ExtractSessionResult,
   ForgetMemoryInput,
   ForgetMemoryResult,
   BeginHostRunInput,
@@ -49,6 +51,10 @@ import type {
 } from "./domain/types.js";
 import { embeddingProviderFromEnvironment } from "./embedding/config.js";
 import type { EmbeddingProvider } from "./embedding/provider.js";
+import { extractionRunnerFromEnvironment } from "./extraction/config.js";
+import { buildExtractionMessages, type ExtractionEvidenceInput } from "./extraction/prompt.js";
+import type { LlmRunner } from "./extraction/runner.js";
+import { EXTRACTION_JSON_SCHEMA, validateExtractionOutput } from "./extraction/schema.js";
 import { RepoMindError } from "./errors.js";
 import { captureDiff, inspectGit } from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
@@ -141,8 +147,10 @@ export class RepositoryMemoryCore {
   readonly context: RepositoryContext;
   readonly embeddingProvider: EmbeddingProvider | null;
   readonly embeddingConfigError: string | null;
+  readonly extractionRunner: LlmRunner | null;
+  readonly extractionConfigError: string | null;
 
-  constructor(repositoryPath: string, options: { embeddingProvider?: EmbeddingProvider | null } = {}) {
+  constructor(repositoryPath: string, options: { embeddingProvider?: EmbeddingProvider | null; extractionRunner?: LlmRunner | null } = {}) {
     this.context = openRepository(repositoryPath);
     let provider: EmbeddingProvider | null = null;
     let configError: string | null = null;
@@ -153,6 +161,15 @@ export class RepositoryMemoryCore {
     }
     this.embeddingProvider = provider;
     this.embeddingConfigError = configError;
+    let extractionRunner: LlmRunner | null = null;
+    let extractionConfigError: string | null = null;
+    try {
+      extractionRunner = "extractionRunner" in options ? options.extractionRunner ?? null : extractionRunnerFromEnvironment();
+    } catch (error) {
+      extractionConfigError = error instanceof Error ? error.message : String(error);
+    }
+    this.extractionRunner = extractionRunner;
+    this.extractionConfigError = extractionConfigError;
   }
 
   close(): void {
@@ -292,6 +309,85 @@ export class RepositoryMemoryCore {
       `).run(input.sessionId, input.idempotencyKey, requestHash, JSON.stringify(result), Date.now());
       return result;
     });
+  }
+
+  async extractSession(input: ExtractSessionInput): Promise<ExtractSessionResult> {
+    if (!input.sessionId.trim()) throw new RepoMindError("INVALID_INPUT", "sessionId must not be empty");
+    const runner = this.extractionRunner;
+    if (!runner) {
+      throw new RepoMindError("CAPABILITY_UNAVAILABLE", this.extractionConfigError ?? "Remote extraction is disabled; configure REPOMIND_EXTRACTION_PROVIDER explicitly");
+    }
+    const db = this.context.database.raw;
+    const session = db.prepare(`
+      SELECT id, task, status FROM sessions WHERE id=? AND repository_id=?
+    `).get(input.sessionId, this.context.marker.projectId) as { id: string; task: string; status: string } | undefined;
+    if (!session) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
+    if (!(session.status === "committed" || session.status === "partial" || session.status === "failed")) {
+      throw new RepoMindError("INVALID_INPUT", `Session ${input.sessionId} must be completed before remote extraction; current status is ${session.status}`);
+    }
+    const evidence = (db.prepare(`
+      SELECT id, kind, content, commit_hash, metadata_json
+      FROM evidence WHERE repository_id=? AND session_id=? ORDER BY created_at, id
+    `).all(this.context.marker.projectId, input.sessionId) as Array<{
+      id: string; kind: string; content: string; commit_hash: string | null; metadata_json: string;
+    }>).map((row): ExtractionEvidenceInput => ({
+      id: row.id,
+      kind: row.kind,
+      content: row.content,
+      commitHash: row.commit_hash,
+      metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+    }));
+    if (!evidence.length) throw new RepoMindError("INVALID_INPUT", `Session ${input.sessionId} has no Evidence to extract`);
+
+    const startedAt = Date.now();
+    const run = await runner.run({
+      messages: buildExtractionMessages(session, evidence),
+      responseSchema: EXTRACTION_JSON_SCHEMA,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    // The complete batch is schema-checked and deterministically validated
+    // before any database mutation or transaction begins.
+    const validated = validateExtractionOutput(run.output, new Set(evidence.map((item) => item.id)), this.context.root);
+
+    let stored = 0;
+    let skipped = 0;
+    let conflicts = 0;
+    const ids: string[] = [];
+    this.context.database.transaction(() => {
+      for (const candidate of validated.candidates) {
+        const outcome = this.storeMemory({
+          type: candidate.type,
+          title: candidate.title,
+          content: candidate.content,
+          confidence: candidate.confidence,
+          scopeType: candidate.scopeType,
+          ...(candidate.scopeValue === null ? {} : { scopeValue: candidate.scopeValue }),
+          tags: candidate.tags,
+          relatedFiles: candidate.relatedFiles,
+        }, "extracted", candidate.evidenceIds, {
+          audit: {
+            extractionMode: "remote-llm",
+            provider: runner.id,
+            model: runner.model,
+            sessionId: input.sessionId,
+          },
+          auditReason: "validated remote LLM memory created",
+        });
+        ids.push(outcome.id);
+        outcome.stored ? stored++ : skipped++;
+        conflicts += outcome.conflicts.length;
+      }
+    });
+    return {
+      sessionId: input.sessionId,
+      provider: runner.id,
+      model: runner.model,
+      candidates: validated.candidates.length,
+      evidenceAvailable: evidence.length,
+      memories: { stored, skipped, conflicts, ids },
+      durationMs: Date.now() - startedAt,
+      ...(run.usage ? { usage: run.usage } : {}),
+    };
   }
 
   record(input: RecordMemoryInput): StoreMemoryResult {
@@ -580,7 +676,7 @@ export class RepositoryMemoryCore {
       FROM evidence e JOIN memory_evidence me ON me.evidence_id=e.id WHERE me.memory_id=? ORDER BY e.created_at
     `).all(memoryId);
     const files = db.prepare("SELECT file_path, file_hash FROM memory_files WHERE memory_id=? ORDER BY file_path").all(memoryId);
-    const audit = db.prepare("SELECT action, reason, created_at FROM memory_audit_log WHERE memory_id=? ORDER BY created_at").all(memoryId);
+    const audit = db.prepare("SELECT action, previous_json, next_json, reason, created_at FROM memory_audit_log WHERE memory_id=? ORDER BY created_at").all(memoryId);
     const relations = db.prepare(`
       SELECT 'outgoing' AS direction, relation_type, target_memory_id AS related_memory_id, created_at
       FROM memory_relations WHERE source_memory_id=?
@@ -826,6 +922,9 @@ export class RepositoryMemoryCore {
           ? { configured: true, provider: this.embeddingProvider.id, model: this.embeddingProvider.model, dimensions: this.embeddingProvider.dimensions, remote: this.embeddingProvider.remote }
           : { configured: false, error: this.embeddingConfigError },
         automaticExtraction: "deterministic",
+        remoteExtraction: this.extractionRunner
+          ? { configured: true, provider: this.extractionRunner.id, model: this.extractionRunner.model, remote: this.extractionRunner.remote, mode: "explicit" }
+          : { configured: false, error: this.extractionConfigError, mode: "explicit" },
         staleDetection: "file-hash",
         governance: ["validate", "correct", "invalidate", "forget"],
         maintenanceReview: true,
@@ -1204,7 +1303,12 @@ export class RepositoryMemoryCore {
     input: RecordMemoryInput,
     source: "extracted" | "manual",
     evidenceIds: string[],
-    options: { ignoreConflictsWith?: string; reactivateRetired?: boolean } = {},
+    options: {
+      ignoreConflictsWith?: string;
+      reactivateRetired?: boolean;
+      audit?: Record<string, unknown>;
+      auditReason?: string;
+    } = {},
   ): StoreMemoryResult {
     const db = this.context.database.raw;
     const fingerprint = this.memoryFingerprint(input);
@@ -1230,7 +1334,22 @@ export class RepositoryMemoryCore {
     if (existing) {
       const retired = existing.status === "superseded" || existing.status === "invalid";
       if (!retired) {
-        for (const evidenceId of evidenceIds) db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId);
+        let evidenceAdded = 0;
+        for (const evidenceId of evidenceIds) {
+          evidenceAdded += Number(db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(existing.id, evidenceId).changes);
+        }
+        if (options.audit && evidenceAdded) {
+          db.prepare(`
+            INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at)
+            VALUES (?, ?, 'memory_evidence_linked', ?, ?, ?)
+          `).run(
+            `aud_${randomUUID()}`,
+            existing.id,
+            JSON.stringify({ status: existing.status, source, ...options.audit, evidenceIds }),
+            "Validated remote extraction linked new Evidence to an existing memory",
+            Date.now(),
+          );
+        }
         return { id: existing.id, stored: false, reactivated: false, conflicts: [] };
       }
       // A retired memory owns its content fingerprint forever (UNIQUE constraint).
@@ -1276,7 +1395,13 @@ export class RepositoryMemoryCore {
     db.prepare("INSERT INTO memory_fts(memory_id, repository_id, title, content, search_tokens) VALUES (?, ?, ?, ?, ?)")
       .run(id, this.context.marker.projectId, title, content, searchTokens(title, content, tags, files));
     db.prepare("INSERT INTO memory_audit_log(id, memory_id, action, next_json, reason, created_at) VALUES (?, ?, 'created', ?, ?, ?)")
-      .run(`aud_${randomUUID()}`, id, JSON.stringify({ status: "active", source }), `${source} memory created`, now);
+      .run(
+        `aud_${randomUUID()}`,
+        id,
+        JSON.stringify({ status: "active", source, ...(options.audit ?? {}) }),
+        options.auditReason ?? `${source} memory created`,
+        now,
+      );
     if (conflicting.length) this.markConflicts(id, conflicting);
     return { id, stored: true, reactivated: false, conflicts: conflicting.map((row) => row.id) };
   }

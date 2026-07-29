@@ -380,6 +380,22 @@ export interface CommitSessionResult {
   memories: { stored: number; skipped: number; conflicts: number };
 }
 
+export interface ExtractSessionInput {
+  sessionId: string;
+  signal?: AbortSignal;
+}
+
+export interface ExtractSessionResult {
+  sessionId: string;
+  provider: string;
+  model: string;
+  candidates: number;
+  evidenceAvailable: number;
+  memories: { stored: number; skipped: number; conflicts: number; ids: string[] };
+  durationMs: number;
+  usage?: { inputTokens?: number; outputTokens?: number };
+}
+
 export type HostRunStatus = "running" | SessionStatus;
 
 export interface HostRunRecord {

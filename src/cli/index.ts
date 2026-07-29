@@ -55,6 +55,7 @@ Usage:
   repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
+  repomind extract --session <completed-session-id> [--repo <path>] [--json]
   repomind search <query> [--repo <path>] [--limit <n>] [--json]
   repomind inspect <memory-id> [--repo <path>] [--json]
   repomind record --type <type> --title <text> --content <text> [--scope-type repository|module|path] [--scope-value <path>] [--related-files <csv>] [--repo <path>] [--json]
@@ -535,6 +536,7 @@ async function main(): Promise<void> {
         }));
         break;
       }
+      case "extract": output(await core.extractSession({ sessionId: required(values.session, "--session") })); break;
       case "search": {
         const result = await core.searchHybrid(required(positionals[1], "query"), { limit: values.limit ? Number(values.limit) : 5 });
         output(result.memories);

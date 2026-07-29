@@ -36,6 +36,7 @@ describe("MCP server", () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
         "repo_memory_correct",
+        "repo_memory_extract",
         "repo_memory_forget",
         "repo_memory_inspect",
         "repo_memory_invalidate",

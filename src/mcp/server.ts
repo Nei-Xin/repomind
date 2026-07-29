@@ -338,7 +338,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     "repo_session_commit",
-    "Commit a task result, capture final Git evidence, and store deterministic L1 memories.",
+    "Commit a task result, capture final Git evidence, and store deterministic local L1 memories. Remote LLM extraction is a separate explicit tool.",
     {
       session_id: z.string().min(1),
       repo_path: z.string().optional(),
@@ -364,6 +364,26 @@ export function createMcpServer(): McpServer {
           ...(input.commands ? { commands: input.commands.map((item) => ({ command: item.command, exitCode: item.exit_code, summary: item.summary })) } : {}),
           ...(input.remaining_work ? { remainingWork: input.remaining_work } : {}),
         });
+        return result(value);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.tool(
+    "repo_memory_extract",
+    "Explicitly send one completed Session's redacted Evidence to the configured remote LLM, validate the complete response, and atomically store evidence-backed L1 memories.",
+    {
+      session_id: z.string().min(1),
+      repo_path: z.string().optional(),
+    },
+    async (input) => {
+      try {
+        const repoPath = input.repo_path ?? sessionRepositories.get(input.session_id);
+        if (!repoPath) throw new RepoMindError("INVALID_INPUT", "repo_path is required after an MCP server restart");
+        const value = await coreFor(repoPath).extractSession({ sessionId: input.session_id });
+        for (const memoryId of value.memories.ids) memoryRepositories.set(memoryId, repoPath);
         return result(value);
       } catch (error) {
         return failure(error);

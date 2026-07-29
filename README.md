@@ -2,7 +2,7 @@
 
 RepoMind is a local, evidence-backed memory layer for coding agents. It captures repository task evidence, stores reusable L1 memories, and exposes them through a CLI and MCP server.
 
-The current implementation includes repository identity, SQLite/FTS5/sqlite-vec storage, Git snapshots, session start/commit, deterministic memory extraction, hybrid search with deterministic fallback, inspection, file-hash stale-memory detection, deterministic conflict detection, secret redaction, and audited validation, correction, invalidation, and forget workflows.
+The current implementation includes repository identity, SQLite/FTS5/sqlite-vec storage, Git snapshots, session start/commit, deterministic memory extraction, opt-in validated remote LLM extraction, hybrid search with deterministic fallback, inspection, file-hash stale-memory detection, deterministic conflict detection, secret redaction, and audited validation, correction, invalidation, and forget workflows.
 
 ## Requirements
 
@@ -39,6 +39,27 @@ After making changes, commit the RepoMind session using the returned session ID:
 ```bash
 repomind commit --session <session-id> --key demo-1 --summary "Validated the SQLite loader fix" --json
 ```
+
+Optionally run the separate remote LLM extraction phase after configuring an
+OpenAI-compatible endpoint:
+
+```text
+REPOMIND_EXTRACTION_PROVIDER=openai-compatible
+REPOMIND_EXTRACTION_BASE_URL=https://api.example.com/v1
+REPOMIND_EXTRACTION_API_KEY=...
+REPOMIND_EXTRACTION_MODEL=...
+```
+
+```bash
+repomind extract --session <session-id> --json
+```
+
+This capability is disabled by default. It sends the completed Session's
+redacted Evidence to the configured provider, validates every candidate and
+Evidence reference before persistence, and writes the accepted batch in one
+transaction. See
+[`docs/remote-llm-extraction.md`](docs/remote-llm-extraction.md) for the data
+boundary, timeout setting, MCP tool, and privacy limitations.
 
 Search and inspect the resulting memory:
 
@@ -262,9 +283,10 @@ RepoMind v0.15.0 includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
-Candidate generation with safe export. It does not include remote LLM
-extraction, automatic host-tool observation, Skill installation, or Skill
-execution. Merge import and encrypted archives remain open. Source-only V8
+Candidate generation with safe export. The unreleased v0.16 work adds explicit,
+validated remote LLM extraction while keeping deterministic extraction as the
+default. It does not include automatic host-tool observation, Skill
+installation, or Skill execution. Merge import and encrypted archives remain open. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
 OpenCode-to-Claude Code interoperability are included. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged

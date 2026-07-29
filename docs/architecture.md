@@ -63,11 +63,21 @@ extracted memory binds to at least one evidence row, which is what lets
 user to trust a summary. Recall returns memory bodies only; evidence is fetched
 on demand so a large diff never lands in an agent's context by default.
 
-Extraction is deterministic today: decisions become `decision` memories,
+Commit-time extraction remains deterministic: decisions become `decision` memories,
 passing test commands become verified `command` memories, and a successful
-summary becomes a `solution` memory. No model output reaches the database. When
-an LLM extractor lands it must pass schema validation and evidence binding
-first ([ADR-009](adr/ADR-009-validated-output-before-persistence.md)).
+summary becomes a `solution` memory. Remote LLM extraction is a separate,
+explicit phase for completed Sessions:
+
+```text
+load redacted Evidence -> remote call (no transaction) -> Zod + deterministic
+validation -> one SQLite transaction -> dedupe, Evidence links, FTS, audit
+```
+
+No model output reaches the database before the complete batch passes schema,
+Evidence-subset, scope, confidence, and repository-path validation. One invalid
+candidate, timeout, or cancellation produces zero writes
+([ADR-009](adr/ADR-009-validated-output-before-persistence.md)). The remote
+provider is disabled by default and never runs as part of Session Commit.
 
 ## Lifecycle
 
