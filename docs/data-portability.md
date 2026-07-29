@@ -1,9 +1,10 @@
 # Data export, backup, and restore
 
-RepoMind v0.13 development provides two deliberately separate portability
+RepoMind provides two deliberately separate portability
 mechanisms. A logical export moves repository knowledge into another initialized
 repository. A physical backup restores the exact SQLite state of the same
-Project ID.
+Project ID. v0.18 adds opt-in encryption to both archive types while retaining
+the existing plaintext formats.
 
 ## Logical export format
 
@@ -32,7 +33,57 @@ An export requires no open Session or running Host Run. RepoMind scans every
 string for known credential patterns. A finding blocks the write by default.
 After inspecting and accepting the risk, `--allow-sensitive` records that the
 operator explicitly allowed the export. It does not silently alter archive
-content and it is not a substitute for encrypted storage.
+content. It does not silently alter the exported data.
+
+## Encrypted archives
+
+Set a passphrase in the process environment, then opt in with `--encrypt` when
+creating an archive:
+
+```powershell
+$env:REPOMIND_ARCHIVE_PASSPHRASE = Read-Host "Archive passphrase" -MaskInput
+repomind export --output D:\backups\repository.enc.json --encrypt --json
+repomind backup --output D:\backups\repomind.db.enc --encrypt --json
+Remove-Item Env:REPOMIND_ARCHIVE_PASSPHRASE
+```
+
+The passphrase must contain at least 12 UTF-8 bytes. It has no command-line
+form and is never included in command output. To use a secret-manager-specific
+variable, add `--passphrase-env MY_ARCHIVE_SECRET`; this flag names the
+variable and never contains its value.
+
+The encrypted JSON envelope is `repomind-encrypted-archive` format version 1.
+It uses AES-256-GCM with a random 16-byte salt, random 12-byte IV, and 16-byte
+authentication tag. The 32-byte key is derived with scrypt (`N=32768`, `r=8`,
+`p=1`). Purpose, creation time, plaintext format/version/size/SHA-256, KDF
+parameters, salt, cipher, and IV are authenticated as GCM additional data.
+The public CLI result reports the algorithm and plaintext metadata but omits
+salt, IV, tag, ciphertext, and passphrase.
+
+Import and restore auto-detect the encrypted envelope. They read
+`REPOMIND_ARCHIVE_PASSPHRASE` when it exists, or the variable named with
+`--passphrase-env`:
+
+```powershell
+repomind import --input D:\backups\repository.enc.json --dry-run --json
+repomind import --input D:\backups\repository.enc.json --yes --json
+repomind restore --input D:\backups\repomind.db.enc --dry-run --json
+repomind restore --input D:\backups\repomind.db.enc --yes --json
+```
+
+An incorrect passphrase, changed ciphertext or tag, changed authenticated
+metadata, or archive-purpose mismatch fails before logical target data or the
+live database is written. Encrypted physical backup is one JSON file and has
+no sidecar manifest; the authenticated envelope carries its size and hash.
+Restore briefly stages decrypted SQLite in an operating-system temporary
+directory, requests file mode 0600 where the platform supports POSIX modes,
+and removes that directory in `finally` on success or failure.
+
+Encryption protects portable archives at rest. It does not encrypt RepoMind's
+live local database or the same-data-directory pre-restore rollback snapshot,
+does not hide envelope size and creation metadata, and does not provide key
+escrow, rotation, scheduled backup, or cloud storage. Keep the environment and
+host process secure and retain the passphrase separately from the archive.
 
 ## Logical import
 
@@ -98,8 +149,7 @@ the swap. A missing live database can be restored without this flag.
 
 ## Current boundary
 
-This iteration provides local CLI recovery, not scheduled backups, archive
-encryption, cloud sync, MCP restore tools, or logical merge. macOS CI, coverage
-proof, a second real Coding Agent, 10,000-L1 scale, and L4 Skill Candidates now
-have implementation and acceptance evidence; remote LLM extraction remains a
-separate final-product goal.
+This iteration provides local CLI recovery and optional encrypted archives,
+not scheduled backups, cloud sync, MCP restore tools, key-management service
+integration, or logical merge. Existing plaintext export versions 1 and 2 and
+backup format 1 remain compatible.

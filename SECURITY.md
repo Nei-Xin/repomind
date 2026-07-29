@@ -32,6 +32,10 @@ The security properties it aims to hold:
 - **Secret redaction.** Content entering long-term storage passes through
   deterministic redaction that replaces recognized secrets with a visible
   `[REDACTED:kind]` marker, and diff capture excludes sensitive paths outright.
+- **Optional encrypted archives.** Logical exports and physical backups can be
+  wrapped with AES-256-GCM after a scrypt key derivation. Passphrases are read
+  from an environment variable, never a CLI value. Authentication and purpose
+  checks complete before import or restore writes target state.
 
 ## Known limitations
 
@@ -57,10 +61,18 @@ guarantee:
   removed. Review the exact boundary in
   [the remote extraction guide](docs/remote-llm-extraction.md) and the
   provider's retention policy before enabling it.
+- Archive encryption does not encrypt the live SQLite database or persistent
+  pre-restore rollback snapshots, hide envelope size/timestamps, manage keys,
+  or protect a passphrase from other processes with the same host privileges.
+  Losing the passphrase makes the archive unrecoverable. RepoMind never stores
+  it and has no recovery channel.
 
 ## Verifying
 
 `npm test` includes redaction tests asserting that secrets do not survive in
 evidence content, evidence metadata, session tasks, memory fields, the FTS
 index, governance audit entries, or the forget tombstone, and that
-`repo_memory_inspect` output stays clean.
+`repo_memory_inspect` output stays clean. Encrypted-portability tests also
+exercise wrong passphrases, ciphertext/tag/AAD tampering, purpose mismatch,
+zero-write failures, environment-only CLI credentials, and temporary plaintext
+cleanup.

@@ -2,13 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { databasePath, readProjectMarker } from "../config/paths.js";
@@ -19,6 +21,14 @@ import { searchTokens } from "../search/lexical.js";
 import { redactDeep } from "../security/redaction.js";
 import { Database } from "../storage/database.js";
 import { migrations } from "../storage/migrations.js";
+import {
+  createEncryptedArchive,
+  decryptEncryptedArchive,
+  encryptedArchiveMetadata,
+  parseEncryptedArchive,
+  type EncryptedArchive,
+  type EncryptedArchiveMetadata,
+} from "./encryption.js";
 
 type JsonScalar = string | number | null;
 type ExportRow = Record<string, JsonScalar>;
@@ -166,11 +176,17 @@ export interface RepositoryExportBundle {
 
 export interface ExportRepositoryOptions {
   allowSensitive?: boolean;
+  passphrase?: string;
 }
 
 export interface ImportRepositoryOptions {
   allowSensitive?: boolean;
   dryRun?: boolean;
+  passphrase?: string;
+}
+
+export interface BackupRepositoryOptions {
+  passphrase?: string;
 }
 
 export interface BackupManifest {
@@ -187,6 +203,13 @@ export interface BackupManifest {
 export interface RestoreRepositoryOptions {
   dryRun?: boolean;
   allowUnreadable?: boolean;
+  passphrase?: string;
+}
+
+interface LoadedRepositoryExport {
+  bundle: RepositoryExportBundle;
+  encrypted: boolean;
+  encryption: EncryptedArchiveMetadata | null;
 }
 
 function stableJson(value: unknown): string {
@@ -247,15 +270,7 @@ function validateRows(tables: Record<string, ExportRow[]>, formatVersion: 1 | ty
   return Object.fromEntries(TABLE_ORDER.map((tableName) => [tableName, tables[tableName] ?? []])) as Record<TableName, ExportRow[]>;
 }
 
-export function loadRepositoryExport(path: string): RepositoryExportBundle {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(resolve(path), "utf8"));
-  } catch (error) {
-    throw new RepoMindError("INVALID_INPUT", `Could not read export ${resolve(path)}`, {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  }
+function parseRepositoryExport(parsed: unknown): RepositoryExportBundle {
   const result = exportEnvelopeSchema.safeParse(parsed);
   if (!result.success) throw new RepoMindError("INVALID_INPUT", "Invalid repository export", { issues: result.error.issues });
   const { checksum, ...payload } = result.data;
@@ -265,6 +280,38 @@ export function loadRepositoryExport(path: string): RepositoryExportBundle {
   }
   const tables = validateRows(result.data.tables as Record<string, ExportRow[]>, result.data.formatVersion);
   return { ...result.data, tables } as RepositoryExportBundle;
+}
+
+function loadRepositoryExportDetails(path: string, passphrase?: string): LoadedRepositoryExport {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(resolve(path), "utf8"));
+  } catch (error) {
+    throw new RepoMindError("INVALID_INPUT", `Could not read export ${resolve(path)}`, {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const encrypted = parseEncryptedArchive(parsed);
+  if (!encrypted) return { bundle: parseRepositoryExport(parsed), encrypted: false, encryption: null };
+  const plaintext = decryptEncryptedArchive(encrypted, passphrase, "repository-export");
+  if (encrypted.plaintext.format !== FORMAT || ![1, FORMAT_VERSION].includes(encrypted.plaintext.formatVersion)) {
+    throw new RepoMindError("INVALID_INPUT", "Encrypted archive plaintext metadata is not a supported repository export");
+  }
+  let plaintextValue: unknown;
+  try {
+    plaintextValue = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    throw new RepoMindError("INVALID_INPUT", "Encrypted repository export plaintext is not valid JSON");
+  }
+  const bundle = parseRepositoryExport(plaintextValue);
+  if (bundle.formatVersion !== encrypted.plaintext.formatVersion) {
+    throw new RepoMindError("INVALID_INPUT", "Encrypted repository export version does not match its authenticated metadata");
+  }
+  return { bundle, encrypted: true, encryption: encryptedArchiveMetadata(encrypted) };
+}
+
+export function loadRepositoryExport(path: string, options: { passphrase?: string } = {}): RepositoryExportBundle {
+  return loadRepositoryExportDetails(path, options.passphrase).bundle;
 }
 
 function tableCounts(tables: Record<TableName, ExportRow[]>): Record<TableName, number> {
@@ -279,7 +326,14 @@ export function exportRepository(
   context: RepositoryContext,
   outputPath: string,
   options: ExportRepositoryOptions = {},
-): { path: string; checksum: string; sensitiveFindings: number; counts: Record<TableName, number> } {
+): {
+  path: string;
+  checksum: string;
+  sensitiveFindings: number;
+  counts: Record<TableName, number>;
+  encrypted: boolean;
+  encryption: EncryptedArchiveMetadata | null;
+} {
   const output = assertNewFile(outputPath);
   const db = context.database.raw;
   const tables = context.database.transaction(() => {
@@ -304,8 +358,29 @@ export function exportRepository(
     });
   }
   const checksum = sha256(exportPayload(payload));
-  writeAtomicJson(output, { ...payload, checksum });
-  return { path: output, checksum, sensitiveFindings, counts: tableCounts(tables) };
+  const bundle = { ...payload, checksum };
+  let encryption: EncryptedArchiveMetadata | null = null;
+  if (options.passphrase !== undefined) {
+    const plaintext = Buffer.from(`${JSON.stringify(bundle, null, 2)}\n`, "utf8");
+    const encrypted = createEncryptedArchive(plaintext, {
+      purpose: "repository-export",
+      plaintextFormat: FORMAT,
+      plaintextFormatVersion: FORMAT_VERSION,
+      passphrase: options.passphrase,
+    });
+    writeAtomicJson(output, encrypted);
+    encryption = encryptedArchiveMetadata(encrypted);
+  } else {
+    writeAtomicJson(output, bundle);
+  }
+  return {
+    path: output,
+    checksum,
+    sensitiveFindings,
+    counts: tableCounts(tables),
+    encrypted: encryption !== null,
+    encryption,
+  };
 }
 
 function insertRows(context: RepositoryContext, tableName: TableName, rows: ExportRow[]): void {
@@ -339,8 +414,18 @@ export function importRepository(
   context: RepositoryContext,
   inputPath: string,
   options: ImportRepositoryOptions = {},
-): { imported: boolean; sourceProjectId: string; targetProjectId: string; checksum: string; sensitiveFindings: number; counts: Record<TableName, number> } {
-  const bundle = loadRepositoryExport(inputPath);
+): {
+  imported: boolean;
+  sourceProjectId: string;
+  targetProjectId: string;
+  checksum: string;
+  sensitiveFindings: number;
+  counts: Record<TableName, number>;
+  encrypted: boolean;
+  encryption: EncryptedArchiveMetadata | null;
+} {
+  const loaded = loadRepositoryExportDetails(inputPath, options.passphrase);
+  const { bundle } = loaded;
   const sensitiveFindings = sensitiveCount(bundle.tables);
   if (sensitiveFindings > 0 && !options.allowSensitive) {
     throw new RepoMindError("INVALID_INPUT", "Import may contain sensitive values; inspect the export and re-run with --allow-sensitive to confirm", {
@@ -358,6 +443,8 @@ export function importRepository(
     checksum: bundle.checksum,
     sensitiveFindings,
     counts: tableCounts(bundle.tables),
+    encrypted: loaded.encrypted,
+    encryption: loaded.encryption,
   };
   if (options.dryRun) return result;
 
@@ -443,7 +530,7 @@ export function backupManifestPath(databaseFile: string): string {
   return `${resolve(databaseFile)}.manifest.json`;
 }
 
-export function backupRepository(
+function backupRepositoryPlain(
   context: RepositoryContext,
   outputPath: string,
 ): { path: string; manifestPath: string; sha256: string; sizeBytes: number; schemaVersion: number } {
@@ -471,6 +558,49 @@ export function backupRepository(
     throw error;
   } finally {
     context.database.raw.exec("PRAGMA locking_mode=NORMAL");
+  }
+}
+
+export function backupRepository(
+  context: RepositoryContext,
+  outputPath: string,
+  options: BackupRepositoryOptions = {},
+): {
+  path: string;
+  manifestPath: string | null;
+  sha256: string;
+  sizeBytes: number;
+  schemaVersion: number;
+  encrypted: boolean;
+  encryption: EncryptedArchiveMetadata | null;
+} {
+  if (options.passphrase === undefined) {
+    return { ...backupRepositoryPlain(context, outputPath), encrypted: false, encryption: null };
+  }
+  const output = assertNewFile(outputPath);
+  const temporaryDirectory = mkdtempSync(join(tmpdir(), "repomind-encrypted-backup-"));
+  const temporaryDatabase = join(temporaryDirectory, "repomind.db");
+  try {
+    const backup = backupRepositoryPlain(context, temporaryDatabase);
+    const plaintext = readFileSync(temporaryDatabase);
+    const encrypted = createEncryptedArchive(plaintext, {
+      purpose: "sqlite-backup",
+      plaintextFormat: BACKUP_FORMAT,
+      plaintextFormatVersion: BACKUP_FORMAT_VERSION,
+      passphrase: options.passphrase,
+    });
+    writeAtomicJson(output, encrypted);
+    return {
+      path: output,
+      manifestPath: null,
+      sha256: backup.sha256,
+      sizeBytes: backup.sizeBytes,
+      schemaVersion: backup.schemaVersion,
+      encrypted: true,
+      encryption: encryptedArchiveMetadata(encrypted),
+    };
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
@@ -511,10 +641,10 @@ function moveIfExists(source: string, target: string): void {
   if (existsSync(source)) renameSync(source, target);
 }
 
-export function restoreRepository(
+function restoreRepositoryPlain(
   repositoryPath: string,
   inputPath: string,
-  options: RestoreRepositoryOptions = {},
+  options: Omit<RestoreRepositoryOptions, "passphrase"> = {},
 ): {
   restored: boolean;
   projectId: string;
@@ -636,5 +766,60 @@ export function restoreRepository(
     }
     if (existsSync(staged)) rmSync(staged, { force: true });
     throw error;
+  }
+}
+
+function encryptedBackup(path: string): EncryptedArchive | null {
+  const content = readFileSync(resolve(path));
+  if (!content.toString("utf8", 0, Math.min(content.length, 64)).trimStart().startsWith("{")) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(content.toString("utf8"));
+  } catch (error) {
+    throw new RepoMindError("INVALID_INPUT", `Encrypted backup is not valid JSON: ${resolve(path)}`, {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return parseEncryptedArchive(value);
+}
+
+export function restoreRepository(
+  repositoryPath: string,
+  inputPath: string,
+  options: RestoreRepositoryOptions = {},
+): ReturnType<typeof restoreRepositoryPlain> & {
+  encrypted: boolean;
+  encryption: EncryptedArchiveMetadata | null;
+} {
+  const input = resolve(inputPath);
+  const encrypted = encryptedBackup(input);
+  if (!encrypted) {
+    return {
+      ...restoreRepositoryPlain(repositoryPath, input, options),
+      encrypted: false,
+      encryption: null,
+    };
+  }
+  const plaintext = decryptEncryptedArchive(encrypted, options.passphrase, "sqlite-backup");
+  if (encrypted.plaintext.format !== BACKUP_FORMAT || encrypted.plaintext.formatVersion !== BACKUP_FORMAT_VERSION) {
+    throw new RepoMindError("INVALID_INPUT", "Encrypted archive plaintext metadata is not a supported SQLite backup");
+  }
+  const root = locateGitRoot(repositoryPath);
+  const marker = readProjectMarker(root);
+  const temporaryDirectory = mkdtempSync(join(tmpdir(), "repomind-encrypted-restore-"));
+  const temporaryDatabase = join(temporaryDirectory, "repomind.db");
+  try {
+    writeFileSync(temporaryDatabase, plaintext, { flag: "wx", mode: 0o600 });
+    const manifest = createManifest(temporaryDatabase, marker.projectId);
+    writeAtomicJson(backupManifestPath(temporaryDatabase), manifest);
+    const result = restoreRepositoryPlain(repositoryPath, temporaryDatabase, options);
+    return {
+      ...result,
+      inputPath: input,
+      encrypted: true,
+      encryption: encryptedArchiveMetadata(encrypted),
+    };
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }

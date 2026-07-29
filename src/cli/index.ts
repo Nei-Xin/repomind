@@ -65,10 +65,10 @@ Usage:
   repomind forget <memory-id> --reason <text> [--scope memory|memory-and-evidence] --yes [--repo <path>] [--json]
   repomind reindex [--repo <path>] [--json]
   repomind vector-reindex [--repo <path>] [--json]
-  repomind export --output <new-export.json> [--allow-sensitive] [--repo <path>] [--json]
-  repomind import --input <export.json> [--dry-run | --yes] [--allow-sensitive] [--repo <path>] [--json]
-  repomind backup --output <new-backup.db> [--repo <path>] [--json]
-  repomind restore --input <backup.db> [--dry-run | --yes] [--allow-unreadable] [--repo <path>] [--json]
+  repomind export --output <new-export.json> [--encrypt] [--passphrase-env <name>] [--allow-sensitive] [--repo <path>] [--json]
+  repomind import --input <export.json> [--passphrase-env <name>] [--dry-run | --yes] [--allow-sensitive] [--repo <path>] [--json]
+  repomind backup --output <new-backup.db.enc> [--encrypt] [--passphrase-env <name>] [--repo <path>] [--json]
+  repomind restore --input <backup.db|backup.db.enc> [--passphrase-env <name>] [--dry-run | --yes] [--allow-unreadable] [--repo <path>] [--json]
   repomind sessions [--repo <path>] [--json]
   repomind session-abandon <session-id> [--repo <path>]
   repomind runs [--repo <path>] [--status running|committed|partial|failed|abandoned] [--limit <1-200>] [--json]
@@ -119,6 +119,8 @@ const { values, positionals } = parseArgs({
     "allow-sensitive": { type: "boolean", default: false },
     "allow-unreadable": { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
+    encrypt: { type: "boolean", default: false },
+    "passphrase-env": { type: "string" },
     dataset: { type: "string" },
     scenarios: { type: "boolean", default: false },
     compare: { type: "boolean", default: false },
@@ -152,6 +154,42 @@ const { values, positionals } = parseArgs({
 function required(value: string | undefined, flag: string): string {
   if (!value) throw new RepoMindError("INVALID_INPUT", `${flag} is required`);
   return value;
+}
+
+const DEFAULT_ARCHIVE_PASSPHRASE_ENV = "REPOMIND_ARCHIVE_PASSPHRASE";
+
+function archivePassphrase(requiredForEncryption: boolean): string | undefined {
+  const variable = values["passphrase-env"] ?? DEFAULT_ARCHIVE_PASSPHRASE_ENV;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(variable)) {
+    throw new RepoMindError("INVALID_INPUT", "--passphrase-env must be a valid environment variable name");
+  }
+  const passphrase = process.env[variable];
+  if (values["passphrase-env"] !== undefined && !passphrase) {
+    throw new RepoMindError("INVALID_INPUT", `Environment variable ${variable} is not set or is empty`);
+  }
+  if (requiredForEncryption && !passphrase) {
+    throw new RepoMindError("INVALID_INPUT", `Set ${variable} to a passphrase before using --encrypt`);
+  }
+  return passphrase;
+}
+
+function archivePassphraseOption(requiredForEncryption: boolean): { passphrase?: string } {
+  const passphrase = archivePassphrase(requiredForEncryption);
+  return passphrase === undefined ? {} : { passphrase };
+}
+
+function assertEncryptionFlags(command: string): void {
+  const createsArchive = command === "export" || command === "backup";
+  const readsArchive = command === "import" || command === "restore";
+  if (values.encrypt && !createsArchive) {
+    throw new RepoMindError("INVALID_INPUT", "--encrypt is only valid with export or backup");
+  }
+  if (values["passphrase-env"] !== undefined && !createsArchive && !readsArchive) {
+    throw new RepoMindError("INVALID_INPUT", "--passphrase-env is only valid with export, import, backup, or restore");
+  }
+  if (values["passphrase-env"] !== undefined && createsArchive && !values.encrypt) {
+    throw new RepoMindError("INVALID_INPUT", "--passphrase-env requires --encrypt when creating an export or backup");
+  }
 }
 
 function memoryType(value: string | undefined, flag: string): MemoryType {
@@ -225,6 +263,7 @@ async function main(): Promise<void> {
     console.log(HELP);
     return;
   }
+  assertEncryptionFlags(command);
   if (command === "mcp") {
     await runMcpServer();
     return;
@@ -434,6 +473,7 @@ async function main(): Promise<void> {
     const result = restoreRepository(repositoryPath(), required(values.input, "--input"), {
       dryRun: !confirmed,
       allowUnreadable: values["allow-unreadable"],
+      ...archivePassphraseOption(false),
     });
     output(confirmed || values["dry-run"] ? result : {
       ...result,
@@ -497,6 +537,7 @@ async function main(): Promise<void> {
       )); break;
       case "export": output(exportRepository(core.context, required(values.output, "--output"), {
         allowSensitive: values["allow-sensitive"],
+        ...(values.encrypt ? archivePassphraseOption(true) : {}),
       })); break;
       case "import": {
         if (values.yes && values["dry-run"]) throw new RepoMindError("INVALID_INPUT", "--yes and --dry-run cannot be combined");
@@ -504,6 +545,7 @@ async function main(): Promise<void> {
         const result = importRepository(core.context, required(values.input, "--input"), {
           allowSensitive: values["allow-sensitive"],
           dryRun: !confirmed,
+          ...archivePassphraseOption(false),
         });
         output(confirmed || values["dry-run"] ? result : {
           ...result,
@@ -512,7 +554,9 @@ async function main(): Promise<void> {
         if (!confirmed && !values["dry-run"]) process.exitCode = 1;
         break;
       }
-      case "backup": output(backupRepository(core.context, required(values.output, "--output"))); break;
+      case "backup": output(backupRepository(core.context, required(values.output, "--output"), {
+        ...(values.encrypt ? archivePassphraseOption(true) : {}),
+      })); break;
       case "start": output(await core.startSessionHybrid({
         task: required(values.task, "--task"),
         clientName: "cli",

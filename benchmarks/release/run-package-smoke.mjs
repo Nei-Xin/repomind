@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -183,6 +183,7 @@ const env = {
   REPOMIND_DATA_DIR: data,
   REPOMIND_EMBEDDING_PROVIDER: "deterministic",
   REPOMIND_EMBEDDING_DIMENSIONS: "64",
+  REPOMIND_ARCHIVE_PASSPHRASE: randomBytes(24).toString("base64"),
 };
 const initialized = cli(entry, env, repository, "init");
 const recorded = cli(entry, env, repository, "record", "--type", "decision", "--title", "Packaged release boundary", "--content", "Install and run RepoMind from the npm tarball.");
@@ -195,6 +196,20 @@ const restorePreview = cli(entry, env, repository, "restore", "--input", backupP
 const restored = cli(entry, env, repository, "restore", "--input", backupPath, "--yes");
 const originalAfterRestore = cli(entry, env, repository, "search", "npm tarball");
 const mutationAfterRestore = cli(entry, env, repository, "search", "Post-backup mutation");
+const encryptedExportPath = join(artifacts, "repository.enc.json");
+const encryptedBackupPath = join(artifacts, "repository.db.enc");
+const encryptedExport = cli(entry, env, repository, "export", "--output", encryptedExportPath, "--encrypt");
+const encryptedBackup = cli(entry, env, repository, "backup", "--output", encryptedBackupPath, "--encrypt");
+const postExportMutation = cli(entry, env, repository, "record", "--type", "risk", "--title", "Post-export mutation", "--content", "Encrypted import must remove this record.");
+const encryptedImport = cli(entry, env, repository, "import", "--input", encryptedExportPath, "--yes");
+const postEncryptedBackupMutation = cli(entry, env, repository, "record", "--type", "risk", "--title", "Post-encrypted-backup mutation", "--content", "Encrypted restore must remove this record.");
+const encryptedRestore = cli(entry, env, repository, "restore", "--input", encryptedBackupPath, "--yes");
+const postExportAfterImport = cli(entry, env, repository, "search", "Post-export mutation");
+const postEncryptedBackupAfterRestore = cli(entry, env, repository, "search", "Post-encrypted-backup mutation");
+const encryptedArtifactsHidePlaintext = !readFileSync(encryptedExportPath, "utf8").includes("Packaged release boundary")
+  && !readFileSync(encryptedBackupPath, "utf8").includes("Packaged release boundary");
+const encryptedOutputsHidePassphrase = !JSON.stringify({ encryptedExport, encryptedBackup, encryptedImport, encryptedRestore })
+  .includes(env.REPOMIND_ARCHIVE_PASSPHRASE);
 
 const mcp = new JsonRpcClient(entry, env);
 let mcpResult;
@@ -234,6 +249,9 @@ const checks = [
   { name: "packaged CLI records searches and inspects Evidence", passed: searched.some((item) => item.id === recorded.id) && inspected.evidence.length > 0 && inspected.audit.length > 0 },
   { name: "packaged backup dry-run and confirmed restore succeed", passed: backup.sha256 && restorePreview.restored === false && restored.restored === true && existsSync(restored.preRestoreBackup) },
   { name: "restore preserves baseline and removes later mutation", passed: originalAfterRestore.some((item) => item.id === recorded.id) && !mutationAfterRestore.some((item) => item.id === mutation.id) },
+  { name: "packaged encrypted export import backup and restore succeed", passed: encryptedExport.encrypted && encryptedBackup.encrypted && encryptedBackup.manifestPath === null && encryptedImport.imported && encryptedImport.encrypted && encryptedRestore.restored && encryptedRestore.encrypted },
+  { name: "encrypted replacement loops remove later mutations", passed: !postExportAfterImport.some((item) => item.id === postExportMutation.id) && !postEncryptedBackupAfterRestore.some((item) => item.id === postEncryptedBackupMutation.id) },
+  { name: "encrypted package artifacts and outputs hide plaintext credentials", passed: encryptedArtifactsHidePlaintext && encryptedOutputsHidePassphrase },
   { name: "packaged MCP exposes the complete tool surface", passed: mcpResult.toolCount === 24 },
   { name: "packaged MCP starts searches inspects and abandons", passed: mcpResult.sessionId.startsWith("ses_") && mcpResult.searchCount > 0 && mcpResult.memory.id === recorded.id },
   { name: "no Session remains open", passed: cli(entry, env, repository, "status").openSessions === 0 },
@@ -258,6 +276,8 @@ const report = {
     projectId: initialized.projectId,
     memoryId: recorded.id,
     backupSha256: backup.sha256,
+    encryptedExportSha256: sha256(encryptedExportPath),
+    encryptedBackupSha256: sha256(encryptedBackupPath),
     mcpTools: mcpResult.toolCount,
   },
   environment: {
@@ -269,6 +289,9 @@ const report = {
 
 const reportPath = join(workspace, "package-smoke-report.json");
 writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+if (readFileSync(reportPath, "utf8").includes(env.REPOMIND_ARCHIVE_PASSPHRASE)) {
+  throw new Error("Package smoke report contains the generated archive passphrase");
+}
 const markdown = [
   "# RepoMind packaged-install smoke report",
   "",

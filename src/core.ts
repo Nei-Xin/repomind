@@ -938,7 +938,14 @@ export class RepositoryMemoryCore {
         maintenanceReview: true,
         bootstrap: "review-required",
         hostRunHistory: true,
-        portability: { exportFormat: 2, importFormats: [1, 2], importMode: "replace", backupFormat: 1, restore: "same-project" },
+        portability: {
+          exportFormat: 2,
+          importFormats: [1, 2],
+          importMode: "replace",
+          backupFormat: 1,
+          restore: "same-project",
+          encryption: { optional: true, format: 1, cipher: "aes-256-gcm", kdf: "scrypt" },
+        },
         layeredMemory: { l0: true, l1: true, l2: true, l3: true, l4: true },
       },
     };

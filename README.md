@@ -182,12 +182,25 @@ repomind restore --input D:\backups\repomind.db --dry-run --json
 repomind restore --input D:\backups\repomind.db --yes --json
 ```
 
+For an encrypted archive, provide the passphrase only through the environment
+and opt in when creating it:
+
+```powershell
+$env:REPOMIND_ARCHIVE_PASSPHRASE = Read-Host "Archive passphrase" -MaskInput
+repomind export --output D:\backups\repomind-export.enc.json --encrypt --json
+repomind import --input D:\backups\repomind-export.enc.json --yes --json
+repomind backup --output D:\backups\repomind.db.enc --encrypt --json
+repomind restore --input D:\backups\repomind.db.enc --yes --json
+Remove-Item Env:REPOMIND_ARCHIVE_PASSPHRASE
+```
+
 Logical import maps repository references into the initialized target and uses
 explicit `replace` semantics. Physical restore requires the same Project ID
 and retains a pre-restore snapshot. Outputs never overwrite existing files,
 and exports with sensitive-pattern findings require `--allow-sensitive` after
-review. See [`docs/data-portability.md`](docs/data-portability.md) for the data
-contract and recovery procedure.
+review. Encrypted archives use authenticated AES-256-GCM and scrypt; plaintext
+formats remain compatible. See [`docs/data-portability.md`](docs/data-portability.md)
+for the data contract, password handling, and recovery procedure.
 
 See [`docs/daily-workflow.md`](docs/daily-workflow.md) for candidate sources,
 confirmation and staleness rules, run-history fields, and a continuous-use
@@ -294,7 +307,7 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v0.17.0 includes deterministic L2 Module Narratives, an
+RepoMind v0.18 development includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
@@ -303,7 +316,9 @@ remote LLM extraction introduced in v0.16.0 while keeping deterministic
 extraction as the default. v0.17.0 adds installed-tarball verification on all
 three CI operating systems and locks every published Schema upgrade path. It does
 not include automatic host-tool observation, Skill installation, or Skill
-execution. Merge import and encrypted archives remain open. Source-only V8
+execution. v0.18 adds opt-in encrypted logical exports and physical backups
+with environment-only passphrases and authenticated zero-write rejection.
+Merge import remains open. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
 OpenCode/Claude Code interoperability in both tested lifecycle directions are
 included. See

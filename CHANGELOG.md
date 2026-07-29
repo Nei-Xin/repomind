@@ -7,8 +7,27 @@ under **Changed** with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in AES-256-GCM encrypted logical exports and physical backup archives,
+  with scrypt key derivation, authenticated versioned metadata, automatic
+  import/restore detection, and full compatibility with existing plaintext
+  formats.
+- CLI `--encrypt` and `--passphrase-env` controls that accept archive
+  passphrases only through the process environment, plus a rebuildable
+  fixed-commit encrypted-portability acceptance and performance runner.
+
+### Security
+
+- Wrong passphrases, ciphertext/tag/AAD tampering, and archive-purpose mismatch
+  are rejected before target data is written. Physical restore removes its
+  temporary plaintext SQLite directory on every exit path, and CLI/report
+  outputs exclude passphrase values.
+
 ### Validation
 
+- The installed-tarball smoke suite now exercises both encrypted portability
+  loops and credential exclusion in its Ubuntu, Windows, and macOS CI path.
 - The remaining final-spec proof gate passed on the external MIT-licensed
   `sindresorhus/p-limit` repository. A Claude Code source task produced
   Evidence-backed Memory, and three paired fresh-context OpenCode comparisons
