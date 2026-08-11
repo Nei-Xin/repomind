@@ -595,7 +595,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 9. 外部 p-limit 只有一个仓库和三个配对；
 10. 云模型会受证书、限流、服务波动和模型目录变化影响；
 11. v0.7/v0.8 的 72 次与 RC 120 次实验都是 L1-only，不能证明 L2/L3 uplift；
-12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑，但尚未完成 layered-vs-L1-only 四臂消融或第三 Session 的 L2/L3 消费实验；
+12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑和第三 Session 的 L2/L3 消费实验，但尚未完成 layered-vs-L1-only 四臂消融与多任务 OpenCode -> Claude repeat 5；
 13. 当前 Windows junction、related-file realpath 和 dangling-link 均有本机回归，但仍未覆盖所有平台的挂载点、重解析点和对抗性 TOCTOU 组合；
 14. 新 cross-session report v3 与 Agent report v7 已保存实际注入与去重的 L1/L2/L3 ID、数量和字符数；legacy Agent eval v6 仍缺少这些字段，不能与新结果混合归因；
 15. v4/v5 的兼容仅在 aggregate/profile 路径成立，旧报告直接进入当前 v7 renderer 会失败；
@@ -611,6 +611,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 **正式 L1 证据**：v0.8 的 72 次 Host-managed、L1-only 实验完整通过，RepoMind hidden 24/24，对 no-memory 提升正确率并减少耗时/Token/读取，与 full-history 正确率相同。
 **更大样本 L1 信号**：RC 120 次 L1-only 实验中 RepoMind 40/40，但因一次 full-history 证书错误导致 Integrity 失败，只能作为观察性证据；敏感性分析显示与 full-history 正确率相同，输入 Token 未必更低。
 **当前跨 Session 正式证据**：2026-08-11 的 120-stage OpenCode/Luna 批次中，shared hidden 为 15/15、isolated 为 0/15；在两臂都正确的另 15 个 pair 中，Host 时长均值下降 18.055%，total prompt 下降 11.854%。独立审计通过；实际 uplift 由 L1 注入承担。
-**尚未证明**：L2/L3 在第三个 Session 被实际消费并产生独立增量、紧预算效果，以及 Claude/OpenCode 跨 Agent 正式结果。
+**最新 L2/L3 跨 Agent 证据**：OpenCode -> Claude 的单任务 repeat 5 中，L1=0 的 shared consumer 使用 L2/L3 得到 hidden 5/5，fresh isolated 为 0/5，30/30 stage clean exit 且独立审计 14/14 通过。
+**尚未证明**：L2 与 L3 的独立贡献、紧预算效果、多任务跨 Agent 外部效度，以及 Claude -> OpenCode 的反向正式结果。
 
 这种表述既体现效果，也能承受面试官对实验严谨性的追问。

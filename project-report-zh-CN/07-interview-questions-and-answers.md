@@ -433,7 +433,7 @@ v0.7 让 Agent 主动调用 Start 和 Commit，虽然 hidden 也是 24/24，但�
 
 **参考答案：**
 
-从用户价值看，OpenCode 与 Claude Host Adapter 已实现，但当前分层 Host 的双向跨 Agent 正式实验尚未完成，L2/L3 也没有在第三个 Session 被实际消费；从正确性看，是 required-test policy、Commit CAS 与 branch 语义不够完整；从安全看，marker/DB/related-file 路径已硬化，但远程 Hybrid 原始 query、合法 marker 身份指向和 TOCTOU 仍有边界；从实验看，是外部仓库/模型覆盖仍少。
+从用户价值看，OpenCode -> Claude 的单任务 repeat 5 已证明 L2/L3 能在第三个 Session 被实际消费，但双向、多任务与四臂消融仍未完成；从正确性看，是 required-test policy、Commit CAS 与 branch 语义不够完整；从安全看，marker/DB/related-file 路径已硬化，但远程 Hybrid 原始 query、合法 marker 身份指向和 TOCTOU 仍有边界；从实验看，是外部仓库/模型覆盖仍少。
 
 我会先补第三 Session 的 L2/L3 消费与紧预算实验，再用现有 Claude Adapter 跑双向跨 Agent 正式批次，同时推进隐私、Commit 并发一致性和 Host required-check policy。通用 Adapter 抽象、related-file realpath、失败命令、data-directory 并发、argv quoting、结构标题和零 L1 都已经实现，不应继续冒充未来路线图。
 

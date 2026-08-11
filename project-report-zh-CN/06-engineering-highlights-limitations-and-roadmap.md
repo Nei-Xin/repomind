@@ -237,7 +237,7 @@ branch、HEAD、status 和 diff 来自多次 Git 调用，期间仓库可以变�
 
 Prompt 当前作为 argv 参数传给 OpenCode 或 Claude Code。审计曾用大量引号复现“Prompt 低于 28,000 但 quoting 后触发长度问题”；两个 Adapter 都保留 28,000 字符 Prompt guard，并按 libuv Windows quoting 估算 command 和全部 argv 的完整命令行，超过 `32,767` 字符时在 spawn 前拒绝并 abandon Session。17k 引号膨胀用例已进入 Windows 回归。剩余产品约束是任务仍走 argv；stdin/临时文件会从架构上更稳健，也便于处理更长任务。
 
-v0.8 的 72 次和 2026-08-04 RC 的 120 次仍来自旧 L1-only Host 路径。2026-08-11 已在 fresh suite、顺序轮换、固定模型与独立审计条件下完成新的 120-stage 跨 Session实验：correctness 的 shared/isolated hidden 为 15/15 与 0/15；efficiency 的 Host 时长和 total prompt 均值分别下降 18.055% 与 11.854%。不过 telemetry 同时证明本轮 uplift 由 L1 承担，L3 全被 provenance 去重、L2 未进入 consumer prompt。剩余问题已经收敛为 layered-vs-L1-only 消融、第三 Session 的 L2/L3 消费、紧预算和跨 Agent 外部效度。
+v0.8 的 72 次和 2026-08-04 RC 的 120 次仍来自旧 L1-only Host 路径。2026-08-11 已在 fresh suite、顺序轮换、固定模型与独立审计条件下完成新的 120-stage 跨 Session实验：correctness 的 shared/isolated hidden 为 15/15 与 0/15；efficiency 的 Host 时长和 total prompt 均值分别下降 18.055% 与 11.854%，但该轮 uplift 由 L1 承担。后续 OpenCode -> Claude 单任务 repeat 5 已在 L1=0 时稳定注入 L2/L3，shared consumer 5/5、isolated 0/5，且独立审计 14/14 通过。剩余问题收敛为多任务外部效度、layered-vs-L1-only 四臂消融、紧预算和 Claude -> OpenCode 反向验证。
 
 ### 4.9 L2 搜索的 stale 截断顺序
 

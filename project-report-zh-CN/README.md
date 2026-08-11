@@ -33,6 +33,7 @@
 | [09 本次审计与验证记录](09-audit-and-verification-record.md) | 审计基线、实际命令、结果、数据来源和未执行项 | 复核与后续更新 |
 | [10 跨 Session Host 正式实验](10-cross-session-formal-experiment-20260811.md) | 新 120-stage OpenCode/Luna 实验、独立审计、正确率与效率结果、L1-L3 证据边界 | 结果复核、简历和面试答辩 |
 | [11 三阶段 L2/L3 消费实验](11-three-stage-l2-l3-consumption-experiment-20260811.md) | derived-only 第三 Session、五连测、独立审计、上游断流与结论边界 | 分层上下文效果复核、面试答辩 |
+| [12 OpenCode -> Claude Repeat 5](12-opencode-claude-repeat5-20260811.md) | 跨 Agent derived-only 消费、30-stage repeat 5、containment 14/14 审计 | 最新核心效果证据、面试答辩 |
 
 ## 3. 一句话结论
 
@@ -101,4 +102,4 @@ RepoMind 将一次 Agent 任务拆成“显式开始 -> 检索历史结论 -> Ag
 - 只有成功的 Host-managed Commit 会同步、best-effort 地维护 L2、尝试 L3、刷新 L4 候选。直接调用 Core、`repomind commit`、MCP/Agent-managed Commit 仍需显式 rebuild；partial、failed、abandoned Run 不执行派生层维护。
 - 派生层维护失败独立写入 Run 报告，不回滚已经 committed 的 Session，也不把成功 Host Run 改判失败。没有 L3 来源时记为 skipped。
 - L4 自动维护最多生成或刷新 pending Candidate；不会自动 approve、export、install 或 execute，人工审核边界不变。
-- v0.8 的 72 次和 2026-08-04 RC 120 次实验仍是旧 L1-only Host 路径，不能把它们的数字归因于新实现。2026-08-11 已用当前路径完成新的 120-stage OpenCode 跨 Session 正式实验；实际 uplift 由 L1 注入承担，L2/L3 虽已自动维护和检索去重，但尚未通过第三个 Session 证明被 Agent 消费。当前 Claude Adapter 已实现并有单测，当前分层 Host 的 Claude/OpenCode 双向正式实验仍待执行。
+- v0.8 的 72 次和 2026-08-04 RC 120 次实验仍是旧 L1-only Host 路径，不能把它们的数字归因于新实现。2026-08-11 的 120-stage OpenCode 跨 Session 正式实验实际 uplift 由 L1 注入承担；后续三阶段实验已证明 L2/L3 能在 L1=0 的第三 Session 被消费。最新 OpenCode -> Claude repeat 5 中 shared consumer 5/5、isolated 0/5，独立审计 14/14 通过；该证据仍只有一个任务类型，也不是双向四臂消融。
