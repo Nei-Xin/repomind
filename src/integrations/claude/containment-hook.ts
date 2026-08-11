@@ -59,9 +59,10 @@ function canonicalCandidate(candidate: string): string {
 
 export function pathWithinCheckout(root: string, value: string): boolean {
   if (!value.trim() || value.includes("\0")) return false;
+  const lexicalRoot = resolve(root);
   const base = canonicalRoot(root);
-  const lexical = resolve(base, value);
-  if (!inside(base, lexical)) return false;
+  const lexical = resolve(lexicalRoot, value);
+  if (!inside(lexicalRoot, lexical)) return false;
   try {
     const stat = lstatSync(base);
     if (!stat.isDirectory()) return false;

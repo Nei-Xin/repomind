@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createClaudeHostAdapter } from "../src/integrations/claude/adapter.js";
 import { analyzeClaudeEvents } from "../src/integrations/claude/events.js";
@@ -183,6 +184,7 @@ describe("Claude Code host adapter", () => {
   });
 
   it("allows bypassPermissions only for a Host-asserted trusted isolated checkout", async () => {
+    const repository = resolve("fixture", "isolated-checkout");
     const requests: AgentProcessRequest[] = [];
     const execute: AgentProcessExecutor = async (request) => {
       requests.push(request);
@@ -200,7 +202,7 @@ describe("Claude Code host adapter", () => {
       trustedIsolatedCheckout: true,
     });
     await adapter.run({
-      repository: "C:\\fixture\\isolated-checkout",
+      repository,
       prompt: "Implement the isolated fixture task",
       model: "gpt-5.6-luna",
       timeoutMs: 60_000,
@@ -210,7 +212,7 @@ describe("Claude Code host adapter", () => {
     expect(requests[0]!.args).not.toContain("--allowedTools");
     expect(flagValue(requests[0]!.args, "--tools")).toContain("Read,Glob,Grep,Edit,Write,Bash,PowerShell");
     expect(requests[0]!.args).toContain("--include-hook-events");
-    expect(requests[0]!.env.REPOMIND_AGENT_ROOT).toBe("C:\\fixture\\isolated-checkout");
+    expect(requests[0]!.env.REPOMIND_AGENT_ROOT).toBe(repository);
     const settings = JSON.parse(flagValue(requests[0]!.args, "--settings") ?? "{}") as {
       hooks?: { PreToolUse?: Array<{ matcher?: string }> };
     };

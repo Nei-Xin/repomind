@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ describe("repository initialization", () => {
     const projectId = randomUUID();
     const path = databasePath(projectId);
 
-    expect(path).toBe(resolve(data, "repositories", projectId, "repomind.db"));
+    expect(path).toBe(resolve(realpathSync.native(data), "repositories", projectId, "repomind.db"));
     expect(existsSync(dirname(path))).toBe(true);
   });
 

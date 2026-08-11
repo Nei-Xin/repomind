@@ -81,10 +81,10 @@ version/help output, pre/post-initialization Agent diagnostics, idempotent
 initialization, CLI/MCP persistence, encrypted recovery, package-boundary
 inspection, and zero open Sessions.
 
-The packed artifact contains 236 files and 1,561,289 unpacked bytes. Benchmark
+The packed artifact contains 236 files and 1,561,670 unpacked bytes. Benchmark
 sources, hidden validators, fixture repositories, local databases, tests, and
 coverage output are excluded. The retained Windows tarball SHA-256 is
-`7335b47a34fd5d706a47550f86c14548321508bd37115fef46ef749ec5cd838d`.
+`b4b3dbf5effc2899e33f808baff19550b7a694e0868db8878547f4fd800ed65d`.
 The complete audit and command record is in
 [`release-audit-v1.0.0-rc.2.md`](release-audit-v1.0.0-rc.2.md).
 

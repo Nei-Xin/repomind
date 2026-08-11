@@ -26,6 +26,8 @@ Release, with a SHA-256 checksum.
 | High | The npm package name is owned by another project | Prohibited by-name npm installation and npm publication; release through the repository's GitHub artifact | `npm view repomind` ownership audit and README warning |
 | Medium | The runtime tarball included benchmark sources, hidden validators, and fixture repositories | Removed `benchmarks` from the published file allowlist | Package boundary check; file count reduced from 337 to 236 |
 | Medium | Release assets had no automated tag publication path | Added a tag-triggered release workflow with full local gates, `.tgz`, and `SHA256SUMS` upload | Workflow syntax and local equivalents reviewed; tag run remains the independent remote gate |
+| Release blocker | Main CI exposed macOS `/var` versus `/private/var` alias failures in containment and path assertions | Canonicalized containment after a lexical-root guard and made cross-platform tests compare real paths | Focused containment/repository/cross-session tests and replacement main CI |
+| Release blocker | The comparison benchmark still expected a partial Session to create an L1 target | Corrected the completed fixture Session to `success`; the partial-to-L1 product gate remains unchanged | Focused strict comparison and replacement main CI |
 
 ## Commands and results
 
@@ -70,7 +72,7 @@ npm run bench:cross-session-agent-fixtures
 npm run bench:layered-consumption-fixtures
 -> passed: 3/3 three-stage derived-only sequences with L1 disabled at consumption
 
-npm run bench:package-smoke -- --workspace D:\data\code\project\repomind-test\v100-rc2-package-final-20260812-0047
+npm run bench:package-smoke -- --workspace D:\data\code\project\repomind-test\v100-rc2-package-crossplatform-20260812-0115
 -> accepted: 17/17 checks
 ```
 
@@ -85,10 +87,10 @@ real Agent/model experiment was rerun for this release audit.
 ```text
 Package: repomind@1.0.0-rc.2
 Filename: repomind-1.0.0-rc.2.tgz
-Compressed bytes: 316476
-Unpacked bytes: 1561289
+Compressed bytes: 316595
+Unpacked bytes: 1561670
 Files: 236
-SHA-256: 7335b47a34fd5d706a47550f86c14548321508bd37115fef46ef749ec5cd838d
+SHA-256: b4b3dbf5effc2899e33f808baff19550b7a694e0868db8878547f4fd800ed65d
 Forbidden files: 0
 MCP tools exercised: 24
 Open Sessions after smoke: 0
@@ -97,7 +99,7 @@ Open Sessions after smoke: 0
 Local evidence is retained outside the repository at:
 
 ```text
-D:\data\code\project\repomind-test\v100-rc2-package-final-20260812-0047
+D:\data\code\project\repomind-test\v100-rc2-package-crossplatform-20260812-0115
 ```
 
 ## Remaining remote gates

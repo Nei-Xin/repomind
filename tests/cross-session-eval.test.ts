@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -471,8 +471,11 @@ describe("cross-session learning evaluation", () => {
         expect(chain[1]!.baseCommit).toBe(chain[0]!.checkpointCommit);
         expect(chain.every((run) => run.initialWorktreeClean)).toBe(true);
       }
-      expect(prompts.find((entry) => entry.cwd === sharedConsumer.repository)!.prompt).toContain("cyan-token");
-      expect(prompts.find((entry) => entry.cwd === isolatedConsumer.repository)!.prompt).not.toContain("cyan-token");
+      const promptFor = (repository: string): string => prompts.find(
+        (entry) => realpathSync.native(entry.cwd) === realpathSync.native(repository),
+      )!.prompt;
+      expect(promptFor(sharedConsumer.repository)).toContain("cyan-token");
+      expect(promptFor(isolatedConsumer.repository)).not.toContain("cyan-token");
       expect(consumerHistories).toHaveLength(2);
       for (const history of consumerHistories) {
         const commits = history.revList.split(/\r?\n/u).filter(Boolean);

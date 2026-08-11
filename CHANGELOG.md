@@ -28,11 +28,15 @@ period; every behavioral change is listed with its migration impact.
 
 - Claude evaluation runs constrain filesystem-capable tools to the Host-owned
   disposable checkout, including command and path canary coverage.
+- Claude containment accepts checkout-local paths through macOS's canonical
+  `/private/var` alias while continuing to reject lexical and symlink escapes.
 - Invalid CLI options now produce a concise `INVALID_INPUT` message and help
   hint instead of leaking a Node.js parser stack trace.
 - Fresh and repeated initialization, pre-initialization diagnostics, packaged
   version/help output, and Agent executable discovery are now part of the
   installed-package acceptance.
+- Comparison fixtures now respect the RC.2 rule that partial Sessions retain
+  Evidence but cannot promote reusable L1 Memory.
 
 ### Packaging
 
