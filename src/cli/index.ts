@@ -29,6 +29,7 @@ import { runAgentHost } from "../integrations/agent-host/run.js";
 import {
   createAgentHostAdapter,
   isRegisteredAgentHostId,
+  REGISTERED_AGENT_HOST_IDS,
   type RegisteredAgentHostId,
 } from "../integrations/agent-host/registry.js";
 import { validateHostContextBudget } from "../integrations/opencode/context.js";
@@ -45,6 +46,7 @@ const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "fail
 const HELP = `RepoMind ${VERSION}
 
 Usage:
+  repomind --version
   repomind init [--repo <path>] [--new-id]
   repomind status [--repo <path>] [--json]
   repomind review [--kind all|stale|conflict|other] [--limit <1-200>] [--repo <path>] [--json]
@@ -95,11 +97,13 @@ Usage:
   repomind mcp
 `;
 
-const { values, positionals } = parseArgs({
-  args: process.argv.slice(2),
-  allowPositionals: true,
-  strict: true,
-  options: {
+function parseCliArgs() {
+  try {
+    return parseArgs({
+      args: process.argv.slice(2),
+      allowPositionals: true,
+      strict: true,
+      options: {
     repo: { type: "string" },
     json: { type: "boolean", default: false },
     "new-id": { type: "boolean", default: false },
@@ -160,9 +164,18 @@ const { values, positionals } = parseArgs({
     strict: { type: "boolean", default: false },
     "require-acceptance": { type: "boolean", default: false },
     markdown: { type: "boolean", default: false },
-    help: { type: "boolean", short: "h", default: false },
-  },
-});
+        help: { type: "boolean", short: "h", default: false },
+        version: { type: "boolean", short: "v", default: false },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`INVALID_INPUT: ${message}\nRun 'repomind --help' to see supported commands and options.`);
+    process.exit(1);
+  }
+}
+
+const { values, positionals } = parseCliArgs();
 
 function required(value: string | undefined, flag: string): string {
   if (!value) throw new RepoMindError("INVALID_INPUT", `${flag} is required`);
@@ -252,6 +265,10 @@ function renderReviewQueue(queue: MemoryReviewQueue): string {
 
 async function main(): Promise<void> {
   const command = positionals[0];
+  if (values.version) {
+    console.log(VERSION);
+    return;
+  }
   if (!command || values.help) {
     console.log(HELP);
     return;
@@ -271,6 +288,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "run") {
+    const task = required(values.task, "--task");
     const runner = agentHostRunner(values.runner);
     const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
     const maxMemories = values["max-memories"] ? Number(values["max-memories"]) : 5;
@@ -296,10 +314,21 @@ async function main(): Promise<void> {
       ...(values["runner-executable"] ? { executable: values["runner-executable"] } : {}),
     });
     try {
+      const root = locateGitRoot(repositoryPath());
+      const initialized = new RepositoryMemoryCore(root);
+      initialized.close();
+      const runnerVersion = await adapter.version(root);
+      if (!runnerVersion) {
+        throw new RepoMindError(
+          "CAPABILITY_UNAVAILABLE",
+          `${adapter.displayName} is not executable. Install it, add it to PATH, or pass --runner-executable <path>. Run 'repomind doctor --runner ${runner}' for details.`,
+          { runner, executable: adapter.executable },
+        );
+      }
       const report = await runAgentHost({
         adapter,
         repository: repositoryPath(),
-        task: required(values.task, "--task"),
+        task,
         ...(values.model ? { model: values.model } : {}),
         maxMemories,
         ...(contextBudgetChars === undefined ? {} : { contextBudgetChars }),
@@ -444,7 +473,18 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "doctor") {
-    const checks: Record<string, unknown> = { node: process.version, sqlite: true, fts5: false, sqliteVec: false, git: false, initialized: false };
+    if (values["runner-executable"] && !values.runner) {
+      throw new RepoMindError("INVALID_INPUT", "--runner-executable requires --runner with doctor");
+    }
+    const selectedRunners = values.runner ? [agentHostRunner(values.runner)] : [...REGISTERED_AGENT_HOST_IDS];
+    const checks: Record<string, unknown> = {
+      node: process.version,
+      sqlite: true,
+      fts5: false,
+      sqliteVec: false,
+      git: false,
+      initialized: false,
+    };
     const memory = new DatabaseSync(":memory:", { allowExtension: true });
     try {
       memory.exec("CREATE VIRTUAL TABLE check_fts USING fts5(content)");
@@ -467,6 +507,26 @@ async function main(): Promise<void> {
       checks.capabilities = (core.status() as { capabilities: unknown }).capabilities;
       core.close();
     } catch { /* an uninitialized repository is a valid diagnostic result */ }
+    const probeRoot = typeof checks.gitRoot === "string" ? checks.gitRoot : repositoryPath();
+    checks.agents = Object.fromEntries(await Promise.all(selectedRunners.map(async (runner) => {
+      const adapter = createAgentHostAdapter(runner, {
+        ...(values["runner-executable"] ? { executable: values["runner-executable"] } : {}),
+      });
+      const version = await adapter.version(probeRoot);
+      return [runner, {
+        displayName: adapter.displayName,
+        executable: adapter.executable,
+        available: version !== null,
+        version,
+        ...(version === null ? {
+          nextStep: `Install ${adapter.displayName}, add it to PATH, or pass --runner-executable <path>.`,
+        } : {}),
+      }];
+    })));
+    checks.nextSteps = [
+      ...(checks.git ? [] : ["Run this command inside a Git repository."]),
+      ...(checks.git && !checks.initialized ? ["Run 'repomind init' in the repository."] : []),
+    ];
     output(checks);
     return;
   }

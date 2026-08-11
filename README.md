@@ -8,11 +8,27 @@ The current implementation includes repository identity, SQLite/FTS5/sqlite-vec 
 
 - Node.js 22.5 or newer
 - Git
+- OpenCode or Claude Code for `repomind run` (the CLI/MCP memory workflows do
+  not require either Agent)
 
 ## Install
 
+Install the tagged GitHub Release artifact:
+
 ```bash
-npm install
+npm install --global https://github.com/Nei-Xin/repomind/releases/download/v1.0.0-rc.2/repomind-1.0.0-rc.2.tgz
+repomind --version
+```
+
+The unscoped package name `repomind` on npm belongs to a different project.
+Do not use `npm install --global repomind` for this repository. RepoMind's
+release workflow publishes the installable tarball and its `SHA256SUMS` file
+on the matching GitHub Release until a project-owned npm scope is configured.
+
+To install from a source checkout instead:
+
+```bash
+npm ci
 npm run build
 npm link
 ```
@@ -21,14 +37,29 @@ Initialize RepoMind inside a Git repository:
 
 ```bash
 repomind init
-repomind doctor
+repomind doctor --runner opencode
 ```
+
+Use `--runner claude` when Claude Code is the intended Host. `doctor` checks
+Git, repository initialization, SQLite/FTS/vector support, and the selected
+Agent executable. If an Agent is outside `PATH`, add
+`--runner-executable <path>`. Running `init` again is safe and preserves the
+existing Project ID; `init --new-id` intentionally creates a new identity.
 
 Only `.repomind/project.json` is written to the repository. Memory data is stored under `~/.repomind/repositories/<projectId>/repomind.db`. Set `REPOMIND_DATA_DIR` to override the user data directory.
 
 ## Five-minute flow
 
-Start a task:
+For the normal Agent workflow, run the task through RepoMind:
+
+```bash
+repomind run --task "Fix the Windows SQLite loader" --runner opencode
+```
+
+RepoMind retrieves L1-L3 context, runs the selected Agent, captures evidence,
+closes the Session, and maintains derived context after a successful result.
+
+For a manually managed or MCP-driven workflow, start a Session:
 
 ```bash
 repomind start --task "Fix the Windows SQLite loader" --json
@@ -350,7 +381,7 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v1.0.0-rc.1 is the feature-frozen release candidate for the local
+RepoMind v1.0.0-rc.2 is the current release candidate for the local
 single-user v1.0 product. It includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
@@ -358,16 +389,18 @@ replace-import, backup, and restore loop. It also includes a rebuildable
 Candidate generation with safe export. It includes the explicit, validated
 remote LLM extraction introduced in v0.16.0 while keeping deterministic
 extraction as the default. v0.17.0 adds installed-tarball verification on all
-three CI operating systems and locks every published Schema upgrade path. It does
+three CI operating systems and locks every published Schema upgrade path. It
 does not passively observe tools used by Agents launched outside RepoMind's
 registered Host adapters, and it does not include Skill installation or Skill
 execution. v0.18.0 added opt-in encrypted logical exports and physical backups
 with environment-only passphrases and authenticated zero-write rejection.
 Logical Merge Import remains deferred beyond v1.0. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
-historical OpenCode/Claude Code MCP and L4 interoperability acceptance is
-included. The current layered Host path still requires its own mixed-Agent
-formal experiment. See
+OpenCode/Claude Code Host and MCP interoperability acceptance are included.
+The RC.2 Host path automatically injects budgeted L1-L3 context, maintains
+derived layers after successful runs, discovers L4 candidates without
+approving them, and enforces Claude checkout containment in isolated
+evaluation runs. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 

@@ -175,7 +175,7 @@ const entry = join(installedRoot, installedManifest.bin.repomind);
 const binShim = join(consumer, "node_modules", ".bin", process.platform === "win32" ? "repomind.cmd" : "repomind");
 const installedFiles = filesUnder(installedRoot);
 const forbiddenFiles = installedFiles.filter((path) =>
-  /(^|\/)(\.repomind|coverage|node_modules)(\/|$)|^tests?(\/|$)|\.db(?:-|\.|$)|(^|\/)\.env(?:\.|$)|opencode\.json$/iu.test(path));
+  /(^|\/)(\.repomind|benchmarks|coverage|node_modules)(\/|$)|^tests?(\/|$)|\.db(?:-|\.|$)|(^|\/)\.env(?:\.|$)|opencode\.json$/iu.test(path));
 
 createRepository(repository);
 const env = {
@@ -185,7 +185,30 @@ const env = {
   REPOMIND_EMBEDDING_DIMENSIONS: "64",
   REPOMIND_ARCHIVE_PASSPHRASE: randomBytes(24).toString("base64"),
 };
+const versionOutput = run(process.execPath, [entry, "--version"], { env });
+const helpOutput = run(process.execPath, [entry, "--help"], { env });
+const doctorBeforeInit = cli(
+  entry,
+  env,
+  repository,
+  "doctor",
+  "--runner",
+  "opencode",
+  "--runner-executable",
+  process.execPath,
+);
 const initialized = cli(entry, env, repository, "init");
+const reinitialized = cli(entry, env, repository, "init");
+const doctorAfterInit = cli(
+  entry,
+  env,
+  repository,
+  "doctor",
+  "--runner",
+  "opencode",
+  "--runner-executable",
+  process.execPath,
+);
 const recorded = cli(entry, env, repository, "record", "--type", "decision", "--title", "Packaged release boundary", "--content", "Install and run RepoMind from the npm tarball.");
 const searched = cli(entry, env, repository, "search", "npm tarball");
 const inspected = cli(entry, env, repository, "inspect", recorded.id);
@@ -244,8 +267,11 @@ const checks = [
   { name: "tarball checksum matches npm pack", passed: sha1(tarball) === packResult.shasum },
   { name: "installed package version matches packed version", passed: installedManifest.version === packResult.version },
   { name: "package bin entry and generated shim exist", passed: existsSync(entry) && existsSync(binShim) },
-  { name: "package excludes databases local config tests and coverage", passed: forbiddenFiles.length === 0 },
+  { name: "package excludes benchmarks databases local config tests and coverage", passed: forbiddenFiles.length === 0 },
+  { name: "packaged CLI exposes version and help without a repository", passed: versionOutput === installedManifest.version && helpOutput.includes(`RepoMind ${installedManifest.version}`) },
+  { name: "packaged doctor reports initialization and Agent availability", passed: doctorBeforeInit.initialized === false && doctorBeforeInit.agents.opencode.available === true && doctorAfterInit.initialized === true },
   { name: "packaged CLI initializes a Git repository", passed: Boolean(initialized.projectId) },
+  { name: "packaged CLI initialization is idempotent", passed: reinitialized.projectId === initialized.projectId },
   { name: "packaged CLI records searches and inspects Evidence", passed: searched.some((item) => item.id === recorded.id) && inspected.evidence.length > 0 && inspected.audit.length > 0 },
   { name: "packaged backup dry-run and confirmed restore succeed", passed: backup.sha256 && restorePreview.restored === false && restored.restored === true && existsSync(restored.preRestoreBackup) },
   { name: "restore preserves baseline and removes later mutation", passed: originalAfterRestore.some((item) => item.id === recorded.id) && !mutationAfterRestore.some((item) => item.id === mutation.id) },

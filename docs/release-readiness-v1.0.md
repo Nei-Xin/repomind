@@ -2,11 +2,14 @@
 
 ## Decision
 
-`v1.0.0-rc.1` is the feature-frozen release candidate for RepoMind's local,
-single-user product. All 28 final-product criteria in section 24 of
+`v1.0.0-rc.2` is the current release candidate for RepoMind's local,
+single-user product. It preserves the v1.0 storage and portability contracts
+while adding the registered OpenCode/Claude Host lifecycle and the
+release-blocking installation corrections found after RC.1. All 28
+final-product criteria in section 24 of
 `REPOMIND_FINAL_PRODUCT_SPEC.md` have implementation and retained acceptance
-evidence. The RC changes release metadata and documentation only; it does not
-change product behavior, storage, protocols, or archive formats from v0.18.0.
+evidence. RC.2 changes Host and CLI behavior, but does not change storage,
+protocol, or archive formats from v0.18.0.
 
 During the RC period, only release-blocking correctness, data-safety, security,
 installation, compatibility, and documentation defects may change the product.
@@ -46,7 +49,7 @@ of the live local SQLite database.
 | CLI and MCP | Existing commands, JSON fields, error codes, and the 24 registered MCP tools form the v1.0 compatibility baseline |
 | Providers | Deterministic extraction and FTS remain defaults; remote LLM, Embedding, and encryption are explicit opt-ins |
 
-`v1.0.0-rc.1` maps to Schema 11. No Migration or archive conversion is needed
+`v1.0.0-rc.2` maps to Schema 11. No Migration or archive conversion is needed
 from v0.18.0. A future incompatible CLI or MCP change requires a major version
 or a documented compatibility period; patch releases must continue to open all
 published databases.
@@ -68,7 +71,24 @@ Windows, macOS, source coverage, and comparison all passed. Each platform also
 ran the installed-tarball acceptance, including encrypted export, import,
 backup, and restore.
 
-## Local RC preparation result
+## Local RC.2 preparation result
+
+The 2026-08-12 Windows preparation audit passed typecheck, build, all 266
+tests across 46 files, the eight-task Agent fixture validator, the full
+cross-session fixture validator, and all three derived-only layered sequences.
+The installed `repomind@1.0.0-rc.2` tarball passed 17 checks, including clean
+version/help output, pre/post-initialization Agent diagnostics, idempotent
+initialization, CLI/MCP persistence, encrypted recovery, package-boundary
+inspection, and zero open Sessions.
+
+The packed artifact contains 236 files and 1,561,289 unpacked bytes. Benchmark
+sources, hidden validators, fixture repositories, local databases, tests, and
+coverage output are excluded. The retained Windows tarball SHA-256 is
+`7335b47a34fd5d706a47550f86c14548321508bd37115fef46ef749ec5cd838d`.
+The complete audit and command record is in
+[`release-audit-v1.0.0-rc.2.md`](release-audit-v1.0.0-rc.2.md).
+
+## Historical RC.1 preparation result
 
 The 2026-07-30 Windows preparation run used Node.js 22.20.0. Typecheck and
 build passed, all 174 tests across 39 files passed, the 15 focused
@@ -94,18 +114,18 @@ D:\data\code\project\repomind-test\v100-rc1-package-precommit-20260730-01
 This is pre-commit validation of the metadata and documentation worktree. It
 does not replace the required clean-commit main and tag CI runs.
 
-## RC creation gates
+## RC.2 creation gates
 
-Before creating the `v1.0.0-rc.1` tag:
+Before creating the `v1.0.0-rc.2` tag:
 
 1. the RC preparation commit is clean and contains no product behavior change;
 2. package metadata, CLI banner, MCP handshake, Changelog, and released-Schema
-   fixture agree on `1.0.0-rc.1` and Schema 11;
+   fixture agree on `1.0.0-rc.2` and Schema 11;
 3. local typecheck, build, full regression, version/Migration tests, and package
    content inspection pass;
 4. the preparation commit passes Ubuntu, Windows, macOS, coverage, and
    comparison jobs on its first clean push; and
-5. only then is an annotated `v1.0.0-rc.1` tag created and pushed, after which
+5. only then is an annotated `v1.0.0-rc.2` tag created and pushed, after which
    the independent tag-triggered five-job CI must also pass.
 
 Passwords and provider keys remain environment-only throughout every gate.
@@ -135,7 +155,7 @@ runtime, stored data, protocols, installation, or recovery.
 ## Rollback and release discipline
 
 An RC is not promoted when a gate is unknown or waived. A failed RC remains an
-immutable tag; the fix is released as `v1.0.0-rc.2` rather than moving the tag.
+immutable tag; the fix is released as a later RC rather than moving the tag.
 Operators can restore the retained pre-restore snapshot or a verified v0.18
 backup, but a v1.0 database must never be opened by older code unless that
 specific downgrade has been tested. RepoMind does not promise downgrade

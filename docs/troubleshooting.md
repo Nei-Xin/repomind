@@ -1,8 +1,9 @@
 # Troubleshooting
 
-Start with `repomind doctor --json`. It reports the Node version, SQLite and
-FTS5 availability, whether Git resolves a repository root from the current
-directory, and whether that repository is initialized.
+Start with `repomind doctor --runner opencode --json` or replace `opencode`
+with `claude`. It reports the Node version, SQLite/FTS5/vector availability,
+whether Git resolves a repository root, whether that repository is
+initialized, and whether the selected Agent executable can report its version.
 
 ## Error codes
 
@@ -19,9 +20,21 @@ parsing prose.
 | `MEMORY_NOT_FOUND` | unknown memory ID for this repository | confirm the ID and the repository it belongs to |
 | `INVALID_INPUT` | schema or precondition failure | the `details` field names the offending field or state |
 | `GIT_INSPECTION_FAILED` | a read-only Git command failed | check that `git` is on `PATH` and the repository is readable |
+| `CAPABILITY_UNAVAILABLE` | the selected Agent executable could not start | install the Agent, add it to `PATH`, or pass `--runner-executable <path>` |
 | `STORAGE_UNAVAILABLE` | the database could not be opened | check permissions on the data directory |
 
 ## Common situations
+
+**`npm install --global repomind` installs an unrelated project.** The
+unscoped npm name is owned by another publisher. Install the versioned `.tgz`
+from this repository's GitHub Release as shown in the main README, and verify
+the result with `repomind --version`.
+
+**`repomind run` says the Agent is not executable.** Run
+`repomind doctor --runner opencode --json` (or `--runner claude`). If the Agent
+is installed outside `PATH`, pass its absolute path with
+`--runner-executable`. The preflight runs before a RepoMind Session is opened,
+so fixing the executable does not require abandoning a stale Session.
 
 **The MCP client shows no tools, or the connection fails immediately.** Build
 first: the server runs from `dist/`. Then confirm nothing but JSON-RPC reaches

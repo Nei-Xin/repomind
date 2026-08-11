@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm run bench:agent-fixtures
+      - run: npm run bench:cross-session-agent-fixtures
+      - run: npm run bench:layered-consumption-fixtures
+      - run: npm run bench:package-smoke -- --workspace "${{ runner.temp }}/repomind-package-smoke"
+      - name: Pack release artifact
+        shell: bash
+        run: |
+          mkdir release
+          npm pack --pack-destination release
+          (cd release && sha256sum *.tgz > SHA256SUMS)
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/*.tgz release/SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/*.tgz release/SHA256SUMS \
+              --verify-tag \
+              --prerelease \
+              --generate-notes \
+              --title "RepoMind $GITHUB_REF_NAME"
+          fi

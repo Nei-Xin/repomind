@@ -8,6 +8,47 @@ period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-08-12
+
+### Added
+
+- A generic Host-managed Agent lifecycle with registered OpenCode and Claude
+  Code adapters, budgeted L1-L3 context injection, cross-session telemetry,
+  bounded infrastructure retry, and automatic post-success L2-L4 maintenance.
+- Cross-Agent and layered-consumption fixtures, filesystem-containment canary,
+  result auditor, and retained repeat-five evidence across three real workflow
+  families.
+- `repomind --version`, Agent availability diagnostics in `repomind doctor`,
+  and a preflight that rejects a missing Agent executable before opening a
+  Session.
+- A tag-triggered GitHub prerelease workflow that runs release gates and
+  publishes an installable npm tarball with `SHA256SUMS`.
+
+### Fixed
+
+- Claude evaluation runs constrain filesystem-capable tools to the Host-owned
+  disposable checkout, including command and path canary coverage.
+- Invalid CLI options now produce a concise `INVALID_INPUT` message and help
+  hint instead of leaking a Node.js parser stack trace.
+- Fresh and repeated initialization, pre-initialization diagnostics, packaged
+  version/help output, and Agent executable discovery are now part of the
+  installed-package acceptance.
+
+### Packaging
+
+- The runtime tarball excludes benchmark sources, hidden validators, and
+  fixture repositories, reducing the public install surface while retaining
+  every runtime file, including the Claude containment hook.
+- Installation documentation uses the project-owned GitHub Release artifact.
+  The unscoped npm name `repomind` is owned by another publisher and is not a
+  valid installation source for this project.
+
+### Compatibility
+
+- Retains database Schema 11, logical export format 2, physical backup format
+  1, encrypted envelope format 1, CLI/MCP contracts, and automatic upgrade
+  support for every previously released database.
+
 ## [1.0.0-rc.1] - 2026-07-30
 
 ### Release candidate

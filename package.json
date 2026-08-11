@@ -1,6 +1,6 @@
 {
   "name": "repomind",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "description": "Evidence-backed repository memory for coding agents",
   "repository": {
     "type": "git",
@@ -10,7 +10,7 @@
   "bugs": "https://github.com/Nei-Xin/repomind/issues",
   "type": "module",
   "bin": {
-    "repomind": "dist/cli/index.js"
+    "repomind": "dist/cli/entry.js"
   },
   "exports": {
     ".": "./dist/index.js"
@@ -20,8 +20,7 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md",
-    "benchmarks"
+    "SECURITY.md"
   ],
   "keywords": [
     "mcp",
@@ -33,12 +32,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "start": "node dist/cli/index.js",
-    "bench": "node dist/cli/index.js eval --compare --strict --json > comparison-report.json",
+    "start": "node dist/cli/entry.js",
+    "bench": "node dist/cli/entry.js eval --compare --strict --json > comparison-report.json",
     "bench:agent-fixtures": "node benchmarks/agent-suite/validate.mjs",
     "bench:cross-session-agent-fixtures": "node benchmarks/cross-session-agent-suite/validate.mjs",
     "bench:layered-consumption-fixtures": "node benchmarks/cross-session-agent-suite/validate-layered.mjs",

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,7 +7,7 @@ import { createTestRepository } from "./helpers.js";
 import { git } from "./helpers.js";
 import { runOpenCodeHost } from "../src/integrations/opencode/run.js";
 
-const CLI = resolve("dist/cli/index.js");
+const CLI = resolve("dist/cli/entry.js");
 
 function cli(repository: string, data: string, ...args: string[]): string {
   return execFileSync(process.execPath, [CLI, ...args, "--repo", repository, "--json"], {
@@ -36,8 +36,71 @@ describe("cross-process CLI end-to-end", () => {
     rmSync(data, { recursive: true, force: true });
   });
 
+  it("supports first-use diagnostics and clean CLI errors", () => {
+    expect(existsSync(CLI), "dist/cli/entry.js is missing; run npm run build before npm test").toBe(true);
+    const environment = {
+      ...process.env,
+      REPOMIND_DATA_DIR: data,
+      REPOMIND_EMBEDDING_PROVIDER: "deterministic",
+      REPOMIND_EMBEDDING_DIMENSIONS: "64",
+    };
+    const version = spawnSync(process.execPath, [CLI, "--version"], {
+      encoding: "utf8",
+      windowsHide: true,
+      env: environment,
+    });
+    expect(version).toMatchObject({ status: 0, stderr: "" });
+    expect(version.stdout.trim()).toBe("1.0.0-rc.2");
+
+    const beforeInit = JSON.parse(execFileSync(process.execPath, [
+      CLI, "doctor", "--repo", repository, "--runner", "opencode",
+      "--runner-executable", process.execPath, "--json",
+    ], { encoding: "utf8", windowsHide: true, env: environment })) as {
+      initialized: boolean;
+      agents: { opencode: { available: boolean; version: string } };
+      nextSteps: string[];
+    };
+    expect(beforeInit).toMatchObject({
+      git: true,
+      initialized: false,
+      agents: { opencode: { available: true } },
+      nextSteps: ["Run 'repomind init' in the repository."],
+    });
+    expect(beforeInit.agents.opencode.version).toContain(process.version);
+
+    const first = JSON.parse(cli(repository, data, "init")) as { projectId: string };
+    const second = JSON.parse(cli(repository, data, "init")) as { projectId: string };
+    expect(second.projectId).toBe(first.projectId);
+    const afterInit = JSON.parse(execFileSync(process.execPath, [
+      CLI, "doctor", "--repo", repository, "--runner", "opencode",
+      "--runner-executable", process.execPath, "--json",
+    ], { encoding: "utf8", windowsHide: true, env: environment })) as { initialized: boolean; nextSteps: string[] };
+    expect(afterInit).toMatchObject({ initialized: true, nextSteps: [] });
+
+    const missingAgent = spawnSync(process.execPath, [
+      CLI, "run", "--repo", repository, "--task", "First-use preflight",
+      "--runner", "opencode", "--runner-executable", join(data, "missing-agent.exe"), "--json",
+    ], { encoding: "utf8", windowsHide: true, env: environment });
+    expect(missingAgent.status).toBe(1);
+    expect(JSON.parse(missingAgent.stderr)).toMatchObject({
+      code: "CAPABILITY_UNAVAILABLE",
+      message: expect.stringContaining("--runner-executable"),
+    });
+    expect(JSON.parse(cli(repository, data, "status"))).toMatchObject({ openSessions: 0 });
+
+    const invalid = spawnSync(process.execPath, [CLI, "--unknown-first-use-option"], {
+      encoding: "utf8",
+      windowsHide: true,
+      env: environment,
+    });
+    expect(invalid.status).toBe(1);
+    expect(invalid.stderr).toContain("INVALID_INPUT:");
+    expect(invalid.stderr).toContain("repomind --help");
+    expect(invalid.stderr).not.toContain("at parseArgs");
+  });
+
   it("persists memories across separate CLI processes", { timeout: 30_000 }, () => {
-    expect(existsSync(CLI), "dist/cli/index.js is missing; run npm run build before npm test").toBe(true);
+    expect(existsSync(CLI), "dist/cli/entry.js is missing; run npm run build before npm test").toBe(true);
 
     const initialized = JSON.parse(cli(repository, data, "init")) as { projectId: string };
     expect(initialized.projectId).toBeTruthy();
