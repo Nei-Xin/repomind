@@ -42,6 +42,7 @@ interface NarrativeRow {
 const DEFAULT_BUDGET = 4_000;
 const MIN_BUDGET = 500;
 const MAX_BUDGET = 20_000;
+const NARRATIVE_RENDER_VERSION = 2;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -65,9 +66,10 @@ function clip(value: string, max = 280): string {
 }
 
 function sourceFingerprint(sources: SourceMemory[]): string {
-  return sha256(JSON.stringify(sources.map((source) => [
-    source.id, source.fingerprint, source.updatedAt, source.lastValidatedAt, source.evidenceCount,
-  ])));
+  return sha256(JSON.stringify({
+    renderVersion: NARRATIVE_RENDER_VERSION,
+    sources: sources.map((source) => [source.id, source.fingerprint]),
+  }));
 }
 
 function renderNarrative(modulePath: string, sources: SourceMemory[], maxChars: number): string {
@@ -82,7 +84,10 @@ function renderNarrative(modulePath: string, sources: SourceMemory[], maxChars: 
   )))].sort();
   const blocks = [`# Module: ${modulePath}`, "", "## Key files", ...(files.length ? files.map((file) => `- ${file}`) : ["- No linked files."])];
   for (const [heading, types] of groups) {
-    const matching = sources.filter((source) => types.includes(source.type));
+    const matching = sources.filter((source) => types.includes(source.type)).sort((left, right) =>
+      types.indexOf(left.type) - types.indexOf(right.type)
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id));
     if (!matching.length) continue;
     blocks.push("", `## ${heading}`);
     for (const source of matching) blocks.push(`- [${source.type}] ${source.title}: ${clip(source.content)} (${source.id})`);
@@ -287,12 +292,16 @@ export class ModuleNarrativeStore {
   }
 
   private summary(row: NarrativeRow, current: boolean): ModuleNarrativeSummary {
+    const sourceMemoryIds = (this.context.database.raw.prepare(
+      "SELECT memory_id FROM module_narrative_sources WHERE narrative_id=? ORDER BY sort_order",
+    ).all(row.id) as Array<{ memory_id: string }>).map((source) => source.memory_id);
     return {
       id: row.id,
       modulePath: row.module_path,
       title: row.title,
       content: row.content,
       sourceCount: Number(row.source_count),
+      sourceMemoryIds,
       budgetChars: Number(row.budget_chars),
       version: Number(row.version),
       current,

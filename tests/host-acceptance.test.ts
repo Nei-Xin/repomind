@@ -102,6 +102,7 @@ describe("eight-task host-run acceptance", () => {
       const events = [
         { type: "tool_use", part: { tool: "bash", state: { status: "completed", input: { command: "node --test" }, output: "tests passed", metadata: { exit: 0 } } } },
         { type: "text", part: { text: "Implemented and verified the requested fixture change." } },
+        { type: "step_finish", part: { reason: "stop" } },
       ];
       return processResult(`${events.map(JSON.stringify).join("\n")}\n`);
     };
@@ -124,6 +125,15 @@ describe("eight-task host-run acceptance", () => {
       hiddenPassed: 8,
     });
     expect(report.tasks.every((task) => task.run?.agent.events.repoMindCalls === 0)).toBe(true);
+    expect(report.tasks.every((task) => {
+      const layer = task.run?.context.l2;
+      return layer !== undefined && layer.eligible >= 1 && layer.injected + layer.deduplicated === layer.eligible;
+    })).toBe(true);
+    const l3Layers = report.tasks.map((task) => task.run?.context.l3).filter((layer) => layer !== undefined);
+    expect(l3Layers.some((layer) => layer.eligible === 1)).toBe(true);
+    expect(l3Layers.every((layer) => {
+      return layer.eligible === 0 || layer.injected + layer.deduplicated === layer.eligible;
+    })).toBe(true);
     expect(report.tasks.every((task) => task.openSessions === 0 && task.artifactsVerified)).toBe(true);
     expect(JSON.parse(readFileSync(join(output, "summary.json"), "utf8"))).toMatchObject({ version: 1, totals: { accepted: 8 } });
     expect(readFileSync(join(output, "summary.md"), "utf8")).toContain("Acceptance: **passed**");

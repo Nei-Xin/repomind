@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RepoMindError } from "../../errors.js";
 import { parseAgentEvents } from "./events.js";
-import { loadAgentReport } from "./aggregate.js";
+import { loadAgentReport, type AgentReportSchemaVersion } from "./aggregate.js";
 import type { AgentArm, AgentBaselineArm, AgentRunResult } from "./report.js";
 
 export type AgentPhaseKey = "ordinary" | "sessionStart" | "sessionCommit" | "repoMindOther";
@@ -81,15 +81,84 @@ export interface AgentProtocolPhaseSummary {
   meanFollowingTurnOutputTokens: number;
 }
 
+export type ProfileTelemetryState = "full" | "unavailable" | "not-applicable" | "missing";
+
+export interface ProfileTelemetryCoverage {
+  total: number;
+  full: number;
+  unavailable: number;
+  notApplicable: number;
+  missing: number;
+}
+
+interface HostContextLayerProfile {
+  provided: number;
+  eligible: number;
+  injected: number;
+}
+
+export interface HostManagedRunProfile {
+  taskId: string;
+  iteration: number;
+  startMs: number | null;
+  agentMs: number | null;
+  commitMs: number | null;
+  maintenanceMs: number | null;
+  totalLifecycleMs: number | null;
+  lifecycle: {
+    start: string;
+    commit: string;
+    maintenance: string;
+  };
+  context: {
+    availability: ProfileTelemetryState;
+    l1: HostContextLayerProfile | null;
+    l2: HostContextLayerProfile | null;
+    l3: HostContextLayerProfile | null;
+    contextChars: number | null;
+    budgetChars: number | null;
+  };
+  quality: {
+    availability: ProfileTelemetryState;
+    completion: string | null;
+    status: string | null;
+  };
+  maintenance: {
+    availability: ProfileTelemetryState;
+    attempted: boolean | null;
+    status: string | null;
+  };
+}
+
+export interface HostManagedProfile {
+  runCount: number;
+  meanStartMs: number | null;
+  meanAgentMs: number | null;
+  meanCommitMs: number | null;
+  meanMaintenanceMs: number | null;
+  meanTotalLifecycleMs: number | null;
+  meanContextChars: number | null;
+  meanBudgetChars: number | null;
+  meanInjected: { l1: number | null; l2: number | null; l3: number | null };
+  telemetryCoverage: {
+    context: ProfileTelemetryCoverage;
+    quality: ProfileTelemetryCoverage;
+    maintenance: ProfileTelemetryCoverage;
+  };
+  runs: HostManagedRunProfile[];
+}
+
 export interface AgentProfileReport {
-  version: 1;
+  version: 2;
   generatedAt: string;
   source: {
     reportPath: string;
     reportSha256: string;
+    schemaVersion: AgentReportSchemaVersion;
     rawDirectory: string;
     name: string;
     model: string;
+    repoMindLifecycle: string;
     repoMindVersion: string;
     repoMindCommit: string | null;
   };
@@ -98,6 +167,7 @@ export interface AgentProfileReport {
   arms: Partial<Record<AgentArm, AgentArmProfile>>;
   comparisons: Record<AgentBaselineArm, ProfileMetric[] | null>;
   repoMindProtocol: Record<Exclude<AgentPhaseKey, "ordinary">, AgentProtocolPhaseSummary>;
+  hostManaged: HostManagedProfile;
 }
 
 interface TraceTool {
@@ -346,6 +416,144 @@ function summarizeProtocol(runs: AgentRunProfile[], phase: Exclude<AgentPhaseKey
   };
 }
 
+function sourceTelemetryState(
+  record: Record<string, unknown>,
+  field: "contextTelemetry" | "maintenanceTelemetry",
+): ProfileTelemetryState {
+  if (!Object.hasOwn(record, field)) return "missing";
+  const telemetry = record[field];
+  if (!telemetry || typeof telemetry !== "object") return "unavailable";
+  const availability = (telemetry as { availability?: unknown }).availability;
+  if (availability === "full") return "full";
+  if (availability === "not-applicable") return "not-applicable";
+  return "unavailable";
+}
+
+function sourceQualityState(record: Record<string, unknown>): ProfileTelemetryState {
+  if (!Object.hasOwn(record, "quality")) return "missing";
+  return record.quality && typeof record.quality === "object" ? "full" : "unavailable";
+}
+
+function contextLayer(value: unknown): HostContextLayerProfile | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const provided = number(record.provided);
+  const eligible = number(record.eligible);
+  const injected = number(record.injected);
+  return provided === null || eligible === null || injected === null ? null : { provided, eligible, injected };
+}
+
+function hostRunProfile(run: AgentRunResult): HostManagedRunProfile {
+  const record = run as unknown as Record<string, unknown>;
+  const lifecycle = (record.lifecycle && typeof record.lifecycle === "object"
+    ? record.lifecycle
+    : {}) as Record<string, unknown>;
+  const contextAvailability = sourceTelemetryState(record, "contextTelemetry");
+  const contextTelemetry = record.contextTelemetry && typeof record.contextTelemetry === "object"
+    ? record.contextTelemetry as Record<string, unknown>
+    : {};
+  const context = contextTelemetry.context && typeof contextTelemetry.context === "object"
+    ? contextTelemetry.context as Record<string, unknown>
+    : {};
+  const qualityAvailability = sourceQualityState(record);
+  const quality = record.quality && typeof record.quality === "object"
+    ? record.quality as Record<string, unknown>
+    : {};
+  const maintenanceAvailability = sourceTelemetryState(record, "maintenanceTelemetry");
+  const maintenanceTelemetry = record.maintenanceTelemetry && typeof record.maintenanceTelemetry === "object"
+    ? record.maintenanceTelemetry as Record<string, unknown>
+    : {};
+  const maintenanceReport = maintenanceTelemetry.report && typeof maintenanceTelemetry.report === "object"
+    ? maintenanceTelemetry.report as Record<string, unknown>
+    : {};
+  const start = lifecycle.startSucceeded === true
+    ? "success"
+    : lifecycle.startAttempted === true ? "failed" : "not-attempted";
+  const commit = typeof lifecycle.commitStatus === "string"
+    ? lifecycle.commitStatus
+    : lifecycle.commitSucceeded === true ? "success" : lifecycle.commitAttempted === true ? "failed" : "not-attempted";
+  const maintenance = typeof lifecycle.maintenanceStatus === "string"
+    ? lifecycle.maintenanceStatus
+    : lifecycle.maintenanceAttempted === true ? "unknown" : "not-attempted";
+  return {
+    taskId: run.taskId,
+    iteration: run.iteration,
+    startMs: number(record.startMs),
+    agentMs: number(record.agentMs),
+    commitMs: number(record.commitMs),
+    maintenanceMs: number(record.maintenanceMs),
+    totalLifecycleMs: number(record.totalLifecycleMs),
+    lifecycle: { start, commit, maintenance },
+    context: {
+      availability: contextAvailability,
+      l1: contextAvailability === "full" ? contextLayer(context.l1) : null,
+      l2: contextAvailability === "full" ? contextLayer(context.l2) : null,
+      l3: contextAvailability === "full" ? contextLayer(context.l3) : null,
+      contextChars: contextAvailability === "full" ? number(context.contextChars) : null,
+      budgetChars: contextAvailability === "full" ? number(context.budgetChars) : null,
+    },
+    quality: {
+      availability: qualityAvailability,
+      completion: qualityAvailability === "full" && typeof quality.completion === "string" ? quality.completion : null,
+      status: qualityAvailability === "full" && typeof quality.status === "string" ? quality.status : null,
+    },
+    maintenance: {
+      availability: maintenanceAvailability,
+      attempted: maintenanceAvailability === "full" && typeof maintenanceTelemetry.attempted === "boolean"
+        ? maintenanceTelemetry.attempted
+        : null,
+      status: maintenanceAvailability === "full" && typeof maintenanceReport.status === "string"
+        ? maintenanceReport.status
+        : null,
+    },
+  };
+}
+
+function summarizeCoverage(states: ProfileTelemetryState[]): ProfileTelemetryCoverage {
+  const result: ProfileTelemetryCoverage = {
+    total: states.length, full: 0, unavailable: 0, notApplicable: 0, missing: 0,
+  };
+  for (const state of states) {
+    if (state === "not-applicable") result.notApplicable += 1;
+    else result[state] += 1;
+  }
+  return result;
+}
+
+function presentMean(values: Array<number | null>): number | null {
+  const present = values.filter((value): value is number => value !== null);
+  return present.length ? round(mean(present)) : null;
+}
+
+function summarizeHostManaged(runs: AgentRunResult[]): HostManagedProfile {
+  const details = runs.flatMap((run) => {
+    const record = run as unknown as Record<string, unknown>;
+    const lifecycle = record.lifecycle as { mode?: unknown } | undefined;
+    return run.arm === "repomind" && lifecycle?.mode === "host-managed" ? [hostRunProfile(run)] : [];
+  });
+  return {
+    runCount: details.length,
+    meanStartMs: presentMean(details.map((run) => run.startMs)),
+    meanAgentMs: presentMean(details.map((run) => run.agentMs)),
+    meanCommitMs: presentMean(details.map((run) => run.commitMs)),
+    meanMaintenanceMs: presentMean(details.map((run) => run.maintenanceMs)),
+    meanTotalLifecycleMs: presentMean(details.map((run) => run.totalLifecycleMs)),
+    meanContextChars: presentMean(details.map((run) => run.context.contextChars)),
+    meanBudgetChars: presentMean(details.map((run) => run.context.budgetChars)),
+    meanInjected: {
+      l1: presentMean(details.map((run) => run.context.l1?.injected ?? null)),
+      l2: presentMean(details.map((run) => run.context.l2?.injected ?? null)),
+      l3: presentMean(details.map((run) => run.context.l3?.injected ?? null)),
+    },
+    telemetryCoverage: {
+      context: summarizeCoverage(details.map((run) => run.context.availability)),
+      quality: summarizeCoverage(details.map((run) => run.quality.availability)),
+      maintenance: summarizeCoverage(details.map((run) => run.maintenance.availability)),
+    },
+    runs: details,
+  };
+}
+
 export function profileAgentReport(reportPath: string, rawDirectory?: string): AgentProfileReport {
   const loaded = loadAgentReport(reportPath);
   const raw = resolve(rawDirectory ?? join(dirname(loaded.path), "raw"));
@@ -368,10 +576,12 @@ export function profileAgentReport(reportPath: string, rawDirectory?: string): A
   }));
   const repoMindRuns = runs.filter((run) => run.arm === "repomind");
   return {
-    version: 1, generatedAt: new Date().toISOString(),
+    version: 2, generatedAt: new Date().toISOString(),
     source: {
       reportPath: loaded.path, reportSha256: loaded.sha256, rawDirectory: raw,
+      schemaVersion: loaded.schemaVersion,
       name: loaded.report.name, model: loaded.report.model,
+      repoMindLifecycle: loaded.report.repoMindLifecycle ?? "unknown",
       repoMindVersion: loaded.report.provenance.repoMindVersion,
       repoMindCommit: loaded.report.provenance.repoMindCommit,
     },
@@ -386,6 +596,7 @@ export function profileAgentReport(reportPath: string, rawDirectory?: string): A
       sessionCommit: summarizeProtocol(repoMindRuns, "sessionCommit"),
       repoMindOther: summarizeProtocol(repoMindRuns, "repoMindOther"),
     },
+    hostManaged: summarizeHostManaged(loaded.report.runs),
   };
 }
 
@@ -409,7 +620,24 @@ export function renderAgentProfileMarkdown(report: AgentProfileReport): string {
     const value = report.repoMindProtocol[phase];
     return `| ${phase} | ${value.calls} | ${format(value.meanDirectToolDurationMs)} | ${format(value.meanToolTurnCycleDurationMs)} | ${format(value.meanFollowingCycleDurationMs)} | ${format(value.meanToolTurnInputTokens)} | ${format(value.meanToolTurnOutputTokens)} | ${format(value.meanFollowingTurnInputTokens)} | ${format(value.meanFollowingTurnOutputTokens)} |`;
   }).join("\n");
-  return `# RepoMind Agent phase profile\n\nSource: \`${report.source.reportPath}\`\n\nSource SHA-256: \`${report.source.reportSha256}\`\n\nRaw events: \`${report.source.rawDirectory}\`\n\nModel: ${report.source.model}\n\nRepoMind: ${report.source.repoMindVersion} / \`${report.source.repoMindCommit ?? "unavailable"}\`\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\n## Arm-level costs\n\n| Arm | Runs | Wall ms | Observed event ms | Unobserved process ms | Turns | Tool calls | Input tokens | Output tokens |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## RepoMind protocol phases\n\n| Phase | Calls | Direct tool ms/call | Tool-turn cycle ms | Following cycle ms | Tool-turn input | Tool-turn output | Following input | Following output |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${phaseRows}\n\nDirect tool time is measured from the tool's own start/end timestamps. Tool-turn and following-cycle values include model and orchestration time around the call. Token fields are per model turn and are not additive estimates of unique context. The paired overhead tables are the authoritative end-to-end cost.\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
+  const host = report.hostManaged;
+  const layer = (value: HostContextLayerProfile | null): string => value
+    ? `${value.provided}/${value.eligible}/${value.injected}`
+    : "n/a";
+  const phase = (status: string, durationMs: number | null): string => `${status} (${format(durationMs)} ms)`;
+  const hostRows = host.runs.map((run) => {
+    const quality = `${run.quality.availability}${run.quality.completion ? `:${run.quality.completion}/${run.quality.status}` : ""}`;
+    const maintenance = `${run.maintenance.availability}${run.maintenance.status ? `:${run.maintenance.status}` : ""}`;
+    return `| ${run.taskId} | repomind-${run.iteration} | ${phase(run.lifecycle.start, run.startMs)} | ${format(run.agentMs)} | ${phase(run.lifecycle.commit, run.commitMs)} | ${phase(run.lifecycle.maintenance, run.maintenanceMs)} | ${format(run.totalLifecycleMs)} | ${layer(run.context.l1)} | ${layer(run.context.l2)} | ${layer(run.context.l3)} | ${format(run.context.contextChars)}/${format(run.context.budgetChars)} | ${quality} | ${maintenance} |`;
+  }).join("\n");
+  const coverageRows = (["context", "quality", "maintenance"] as const).map((key) => {
+    const value = host.telemetryCoverage[key];
+    return `| ${key} | ${value.full} | ${value.unavailable} | ${value.notApplicable} | ${value.missing} | ${value.total} |`;
+  }).join("\n");
+  const hostSection = host.runCount
+    ? `## Host-managed lifecycle\n\n| Runs | Mean start ms | Mean Agent ms | Mean commit ms | Mean maintenance ms | Mean total ms | Mean context chars | Mean context budget | Mean L1/L2/L3 injected |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n| ${host.runCount} | ${format(host.meanStartMs)} | ${format(host.meanAgentMs)} | ${format(host.meanCommitMs)} | ${format(host.meanMaintenanceMs)} | ${format(host.meanTotalLifecycleMs)} | ${format(host.meanContextChars)} | ${format(host.meanBudgetChars)} | ${format(host.meanInjected.l1)}/${format(host.meanInjected.l2)}/${format(host.meanInjected.l3)} |\n\n### Host telemetry coverage\n\n| Telemetry | Full | Unavailable | Not applicable | Missing | Total |\n| --- | ---: | ---: | ---: | ---: | ---: |\n${coverageRows}\n\n### Host runs\n\nL1/L2/L3 cells are provided/eligible/injected records.\n\n| Task | Run | Start | Agent ms | Commit | Maintenance | Total ms | L1 | L2 | L3 | Context chars | Quality | Maintenance telemetry |\n| --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |\n${hostRows}`
+    : "## Host-managed lifecycle\n\nNo host-managed RepoMind runs are present in this source report.";
+  return `# RepoMind Agent phase profile\n\nSource: \`${report.source.reportPath}\`\n\nSource SHA-256: \`${report.source.reportSha256}\`\n\nSource schema: v${report.source.schemaVersion}\n\nRaw events: \`${report.source.rawDirectory}\`\n\nModel: ${report.source.model}\n\nRepoMind lifecycle: ${report.source.repoMindLifecycle}\n\nRepoMind: ${report.source.repoMindVersion} / \`${report.source.repoMindCommit ?? "unavailable"}\`\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\n## Arm-level costs\n\n| Arm | Runs | Wall ms | Observed event ms | Unobserved process ms | Turns | Tool calls | Input tokens | Output tokens |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n${hostSection}\n\n## Agent-managed RepoMind protocol phases\n\n| Phase | Calls | Direct tool ms/call | Tool-turn cycle ms | Following cycle ms | Tool-turn input | Tool-turn output | Following input | Following output |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${phaseRows}\n\nDirect tool time is measured from the MCP tool's own start/end timestamps and is available only for Agent-managed runs. Host-managed start, commit, and maintenance are measured separately above. Tool-turn and following-cycle values include model and orchestration time around an Agent-managed call. Token fields are per model turn and are not additive estimates of unique context. The paired overhead tables are the authoritative end-to-end cost.\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
 }
 
 export function writeAgentProfileReport(report: AgentProfileReport, outputDirectory: string): void {

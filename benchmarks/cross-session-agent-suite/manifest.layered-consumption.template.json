@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "name": "RepoMind three-stage L2/L3 derived-context consumption suite",
+  "sequences": [
+    {
+      "id": "layered-release-command",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-release-review",
+          "prompt": "Close the completed release review as a coordination-only change. The approved durable workflow is exactly `node --test && node scripts/check-schema.mjs`: tests must finish before schema validation. Schema-first was rejected because generated artifacts could be stale, and an npm-test-based draft recursed after script reorganization. Implementing the workflow is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/release-review.todo and set ops/status/release-review.status to exactly `review=closed`, leaving every other tracked file unchanged. Do not copy the decision into repository files. In your final handoff, explicitly preserve the exact approved command, its order, and the rejected alternatives for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "layered-producer", "corr-release-command", "{repo}", "__BASE_COMMIT__"] }],
+          "allowedChanges": ["ops/pending/release-review.todo", "ops/status/release-review.status"]
+        },
+        {
+          "id": "relay-refresh-release-context",
+          "prompt": "Complete the next coordination-only handoff step for the release workflow. Do not implement or test the release script yet. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/release-context-relay.todo and set ops/status/release-handoff.status to exactly `handoff=ready`, leaving every other tracked file unchanged. Do not copy any supplied historical context into repository files. If the host supplied durable release-workflow context, the very first line of your final response must restate that context, including exact commands and ordering, before the change and test summary; otherwise begin by stating that no durable release-workflow context was available.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "relay", "corr-release-command", "{repo}"] }],
+          "allowedChanges": ["ops/pending/release-context-relay.todo", "ops/status/release-handoff.status"]
+        },
+        {
+          "id": "derived-consumer-restore-release-command",
+          "maxMemories": 0,
+          "prompt": "Restore the package script named verify:release using the most recently approved release verification workflow. Do not change application or test code. Run the resulting workflow and the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "consumer", "corr-release-command", "{repo}"] }],
+          "allowedChanges": ["package.json"]
+        }
+      ]
+    },
+    {
+      "id": "layered-stale-endpoint",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-jobs-cutover",
+          "prompt": "Close the completed jobs API cutover review as a coordination-only change. The current supported route is exactly /v2/tasks. The /v2/jobs preview was never deployed, and /v1/jobs is retired. Implementing the client update is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/jobs-cutover.todo and set ops/status/jobs-cutover.status to exactly `review=closed`, leaving every other tracked file unchanged. Do not add this decision to repository files. In your final handoff, explicitly preserve the supported route and the status of both obsolete alternatives for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "layered-producer", "corr-stale-endpoint", "{repo}", "__BASE_COMMIT__"] }],
+          "allowedChanges": ["ops/pending/jobs-cutover.todo", "ops/status/jobs-cutover.status"]
+        },
+        {
+          "id": "relay-refresh-jobs-context",
+          "prompt": "Complete the next coordination-only handoff step for the jobs API cutover. Do not implement or test the client update yet. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/jobs-context-relay.todo and set ops/status/jobs-handoff.status to exactly `handoff=ready`, leaving every other tracked file unchanged. Do not copy any supplied historical context into repository files. If the host supplied durable jobs-route context, the very first line of your final response must restate that context, including the exact supported and obsolete routes, before the change and test summary; otherwise begin by stating that no durable jobs-route context was available.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "relay", "corr-stale-endpoint", "{repo}"] }],
+          "allowedChanges": ["ops/pending/jobs-context-relay.todo", "ops/status/jobs-handoff.status"]
+        },
+        {
+          "id": "derived-consumer-update-jobs-endpoint",
+          "maxMemories": 0,
+          "prompt": "Update jobsEndpoint to the currently supported production jobs API route while preserving the exported function name. Add a focused test in test/jobs-endpoint.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "consumer", "corr-stale-endpoint", "{repo}"] }],
+          "allowedChanges": ["src/client.js", "test/jobs-endpoint.test.js"]
+        }
+      ]
+    },
+    {
+      "id": "layered-error-contract",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-parser-contract",
+          "prompt": "Close the completed parseConfig API review as a coordination-only change. Malformed JSON must throw a SyntaxError whose code is exactly CONFIG_PARSE_FAILED and whose cause is the original JSON.parse SyntaxError; valid JSON behavior remains unchanged. Implementing the parser contract is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/parser-review.todo and set ops/status/parser-contract.status to exactly `review=closed`, leaving every other tracked file unchanged. Do not add the contract to repository files. In your final handoff, explicitly preserve the error type, code, cause, and successful-parse behavior for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "layered-producer", "corr-error-contract", "{repo}", "__BASE_COMMIT__"] }],
+          "allowedChanges": ["ops/pending/parser-review.todo", "ops/status/parser-contract.status"]
+        },
+        {
+          "id": "relay-refresh-parser-context",
+          "prompt": "Complete the next coordination-only handoff step for the parser contract. Do not implement or test the parser change yet. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete ops/pending/parser-context-relay.todo and set ops/status/parser-handoff.status to exactly `handoff=ready`, leaving every other tracked file unchanged. Do not copy any supplied historical context into repository files. If the host supplied durable parser-contract context, the very first line of your final response must restate the error type, exact code, cause, and valid-parse behavior before the change and test summary; otherwise begin by stating that no durable parser-contract context was available.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "relay", "corr-error-contract", "{repo}"] }],
+          "allowedChanges": ["ops/pending/parser-context-relay.todo", "ops/status/parser-handoff.status"]
+        },
+        {
+          "id": "derived-consumer-restore-parser-contract",
+          "maxMemories": 0,
+          "prompt": "Restore parseConfig's current public error contract for malformed JSON without changing successful parsing. Add focused tests in test/parse-config.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{ "command": "node", "args": ["__VERIFY__", "consumer", "corr-error-contract", "{repo}"] }],
+          "allowedChanges": ["src/parse-config.js", "test/parse-config.test.js"]
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "minSharedTransferHiddenPassRate": 0.8,
+    "minTransferHiddenPassRateDelta": 0.2,
+    "minSharedRecallRate": 1,
+    "maxIsolatedRecallRate": 0,
+    "minSharedCommitRate": 1,
+    "minSharedDerivedRecallRate": 1,
+    "minSharedL2RecallRate": 1,
+    "minSharedL3RecallRate": 1,
+    "maxSharedDerivedStageL1RecallRate": 0,
+    "maxIsolatedDerivedRecallRate": 0
+  }
+}

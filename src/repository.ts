@@ -31,10 +31,10 @@ export function initializeRepository(path: string, newId = false): RepositoryCon
   return openRepository(root, marker);
 }
 
-export function openRepository(path: string, knownMarker?: ProjectMarker): RepositoryContext {
+export function openRepository(path: string, knownMarker?: ProjectMarker, dataDirectory?: string): RepositoryContext {
   const root = canonicalPath(locateGitRoot(path));
   const marker = knownMarker ?? readProjectMarker(root);
-  const database = new Database(databasePath(marker.projectId));
+  const database = new Database(databasePath(marker.projectId, dataDirectory));
   const id = checkoutId(root);
   const now = Date.now();
   database.transaction(() => {

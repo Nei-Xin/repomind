@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "name": "RepoMind cross-session efficiency suite",
+  "sequences": [
+    {
+      "id": "eff-dependency-boundary",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-retire-digest-review",
+          "prompt": "Close the completed dependency-boundary review as a coordination-only change. Inspect ops/dependency-boundary-review.txt and the current package so the final handoff can preserve the decision. Implementing stableDigest is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/dependency-boundary-review.txt and leave every other tracked file unchanged. Do not copy the review into another repository file. In your final handoff, explicitly preserve the approved implementation, dependency boundary, encoding, algorithm, and output format for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "eff-dependency-boundary", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/dependency-boundary-review.txt"]
+        },
+        {
+          "id": "consumer-implement-stable-digest",
+          "prompt": "Implement stableDigest(value) by following the repository's existing dependency and content-identity conventions. Do not add dependencies. Add focused tests in test/digest.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "eff-dependency-boundary", "{repo}"]
+          }],
+          "allowedChanges": ["src/digest.js", "test/digest.test.js"]
+        }
+      ]
+    },
+    {
+      "id": "eff-delivery-failure",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-retire-delivery-incident",
+          "prompt": "Close the completed delivery incident review as a coordination-only change. Inspect ops/delivery-dedup-incident.txt and src/delivery.js so the final handoff can preserve the incident knowledge. Implementing the delivery fix is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/delivery-dedup-incident.txt and leave every other tracked file unchanged. Do not copy the incident record into another repository file. In your final handoff, explicitly preserve both failed approaches, why they failed, and the accepted ownership and retry behavior for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "eff-delivery-failure", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/delivery-dedup-incident.txt"]
+        },
+        {
+          "id": "consumer-fix-delivery-race",
+          "prompt": "Fix the concurrency and retry defects in deliverOnce while preserving the externally observable contract exercised by the current repository's delivery-worker caller-contract tests. Treat those caller tests as the source of truth for each call's result and same-ID retry behavior. Preserve the public signature. Add focused implementation tests in test/delivery.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "eff-delivery-failure", "{repo}"]
+          }],
+          "allowedChanges": ["src/delivery.js", "test/delivery.test.js"]
+        }
+      ]
+    },
+    {
+      "id": "eff-gateway-history",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-retire-cutover-note",
+          "prompt": "Close the completed Nimbus gateway migration note as a coordination-only change. Inspect ops/nimbus-gateway-cutover.txt so the final handoff can preserve its durable constraints. Implementing the retry headers is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/nimbus-gateway-cutover.txt and leave every other tracked file unchanged. Do not copy the note into another repository file. In your final handoff, explicitly preserve every durable compatibility constraint from the note so the next maintainer can use it.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "eff-gateway-history", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/nimbus-gateway-cutover.txt"]
+        },
+        {
+          "id": "consumer-add-retry-headers",
+          "prompt": "Implement createRetryHeaders(attempt, requestId) for the Nimbus gateway and export it from src/index.js. Derive the production retry contract from the current repository's runtime and observability conventions. Return a plain object, and reject any non-integer or out-of-range attempt with RangeError. Add focused tests in test/retry-policy.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "eff-gateway-history", "{repo}"]
+          }],
+          "allowedChanges": ["src/index.js", "src/retry-policy.js", "test/retry-policy.test.js"]
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "minSharedTransferHiddenPassRate": 1,
+    "minTransferHiddenPassRateDelta": 0,
+    "minSharedRecallRate": 1,
+    "maxIsolatedRecallRate": 0,
+    "minSharedCommitRate": 1,
+    "maxMeanDurationRegressionPercent": 10,
+    "maxMeanTotalPromptTokenRegressionPercent": 10,
+    "minTotalPromptTokenPairedWinRate": 0.6,
+    "minAgentDurationPairedWinRate": 0.6,
+    "minComparablePairCoverageRate": 1
+  }
+}

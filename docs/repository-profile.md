@@ -32,6 +32,18 @@ through 1. A rebuild with the same eligible source fingerprint, budget, and
 confidence threshold is unchanged. A changed fingerprint increments the
 version. Every version retains its rendered content and source IDs.
 
+Following a successful `repomind run` Host commit, RepoMind rebuilds L2 first
+and then attempts this L3 rebuild synchronously. If no stable L1 or current L2
+source is eligible, L3 maintenance is reported as skipped rather than failed.
+Any other L3 maintenance error is recorded independently and does not roll
+back the committed Session or change Host-run success. Partial, failed, and
+abandoned runs do not attempt L3 maintenance.
+
+This automatic path is Host-managed only. The `profile-rebuild` CLI command and
+`repo_profile_rebuild` MCP tool remain available; agent-managed sessions,
+direct CLI/MCP commits, and direct Core commits must trigger a rebuild
+explicitly.
+
 `profile-inspect` exposes the current live L1 and L2 source links, Evidence IDs,
 and all retained profile versions. This provides both supported traces:
 
@@ -52,6 +64,11 @@ to disable it. MCP clients receive the same behavior through
 `repo_session_start`; set `include_repository_profile` to `false` to opt out.
 The L3-specific MCP tools are `repo_profile_rebuild`, `repo_profile_get`, and
 `repo_profile_inspect`.
+
+For `repomind run`, only a current profile is eligible for the shared
+repository context budget alongside relevant current L2 and ranked L1. The
+complete task and fixed Host lifecycle instructions are not budgeted or
+truncated.
 
 ## Current boundary
 

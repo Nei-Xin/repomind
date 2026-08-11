@@ -1,0 +1,8 @@
+Stable digest dependency review
+
+The maintained implementation must use node:crypto createHash rather than a
+third-party hashing package. Cache keys are lowercase SHA-256 hexadecimal over
+the UTF-8 input. No package dependency should be added for this feature.
+
+Remove this temporary review record after the constraints have been preserved
+in the final task handoff.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { globSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -22,8 +23,17 @@ import { hashAgentManifest, loadAgentManifest } from "../eval/agent/manifest.js"
 import { runAgentEvaluation } from "../eval/agent/runner.js";
 import { aggregateAgentReports, writeAgentAggregateReport } from "../eval/agent/aggregate.js";
 import { profileAgentReport, writeAgentProfileReport } from "../eval/agent/profile.js";
-import { runOpenCodeHost } from "../integrations/opencode/run.js";
+import { hashCrossSessionManifest, loadCrossSessionManifest } from "../eval/agent/cross-session-manifest.js";
+import { runCrossSessionEvaluation } from "../eval/agent/cross-session-runner.js";
+import { runAgentHost } from "../integrations/agent-host/run.js";
+import {
+  createAgentHostAdapter,
+  isRegisteredAgentHostId,
+  type RegisteredAgentHostId,
+} from "../integrations/agent-host/registry.js";
+import { validateHostContextBudget } from "../integrations/opencode/context.js";
 import { redactSecrets } from "../security/redaction.js";
+import { createAgentTextRenderer } from "./agent-text-renderer.js";
 import { readCommitInput } from "./commit-input.js";
 import { readReviewInput } from "./review-input.js";
 import { stringifyCliJson } from "./json.js";
@@ -75,10 +85,11 @@ Usage:
   repomind run-inspect <run-id> [--repo <path>] [--json]
   repomind bootstrap [--repo <path>] [--output <new-candidates.json>] [--json]
   repomind bootstrap-apply --input <candidates.json> [--candidate <id[,id...]>] --yes [--repo <path>] [--json]
-  repomind run --task <text> [--repo <path>] [--runner opencode] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--timeout <ms>] [--output <dir>] [--json]
-  repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-summary | --agent-profile) [--limit <n>] [--json]
+  repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
+  repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
   repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--lifecycle agent-managed|host-managed] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
+  repomind eval --agent-cross-session --manifest <path> [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--repeat <1-100>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--strict] [--require-acceptance] [--json]
   repomind eval --agent-summary --reports <glob> [--output <dir>] [--strict] [--json]
   repomind eval --agent-profile --report <summary.json> [--raw <dir>] [--output <dir>] [--strict] [--json]
   repomind mcp
@@ -125,6 +136,7 @@ const { values, positionals } = parseArgs({
     scenarios: { type: "boolean", default: false },
     compare: { type: "boolean", default: false },
     agent: { type: "boolean", default: false },
+    "agent-cross-session": { type: "boolean", default: false },
     "agent-summary": { type: "boolean", default: false },
     "agent-profile": { type: "boolean", default: false },
     reports: { type: "string" },
@@ -135,6 +147,7 @@ const { values, positionals } = parseArgs({
     "runner-executable": { type: "string" },
     model: { type: "string" },
     "max-memories": { type: "string" },
+    "context-budget": { type: "string" },
     lifecycle: { type: "string" },
     output: { type: "string" },
     timeout: { type: "string" },
@@ -207,6 +220,12 @@ function repositoryPath(): string {
   return values.repo ?? process.cwd();
 }
 
+function agentHostRunner(value: string | undefined): RegisteredAgentHostId {
+  const runner = value ?? "opencode";
+  if (!isRegisteredAgentHostId(runner)) throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
+  return runner;
+}
+
 function reviewKind(value: string | undefined): MemoryReviewKind | "all" {
   const kind = value ?? "all";
   if (!("all stale conflict other".split(" ") as string[]).includes(kind)) {
@@ -231,32 +250,6 @@ function renderReviewQueue(queue: MemoryReviewQueue): string {
   return lines.join("\n");
 }
 
-function openCodeTextRenderer(): { feed: (chunk: string) => void; lastText: () => string } {
-  let buffer = "";
-  let rendered = "";
-  const renderLine = (line: string): void => {
-    if (!line.trim().startsWith("{")) return;
-    try {
-      const event = JSON.parse(line) as { type?: string; part?: { text?: unknown } };
-      if (event.type !== "text" || typeof event.part?.text !== "string" || !event.part.text.trim()) return;
-      rendered = redactSecrets(event.part.text.trim()).content;
-      console.log(rendered);
-    } catch { /* malformed Agent output is retained in the artifact */ }
-  };
-  return {
-    feed(chunk) {
-      buffer += chunk;
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        renderLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
-      }
-    },
-    lastText: () => rendered,
-  };
-}
-
 async function main(): Promise<void> {
   const command = positionals[0];
   if (!command || values.help) {
@@ -278,10 +271,12 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "run") {
-    const runner = values.runner ?? "opencode";
-    if (runner !== "opencode") throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
+    const runner = agentHostRunner(values.runner);
     const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
     const maxMemories = values["max-memories"] ? Number(values["max-memories"]) : 5;
+    const contextBudgetChars = values["context-budget"] === undefined
+      ? undefined
+      : validateHostContextBudget(Number(values["context-budget"]));
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
     if (!Number.isInteger(maxMemories) || maxMemories < 0 || maxMemories > 20) {
       throw new RepoMindError("INVALID_INPUT", `Invalid --max-memories ${values["max-memories"]}`);
@@ -296,14 +291,18 @@ async function main(): Promise<void> {
     const onSigterm = (): void => interrupt("SIGTERM");
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
-    const renderer = openCodeTextRenderer();
+    const renderer = createAgentTextRenderer(runner);
+    const adapter = createAgentHostAdapter(runner, {
+      ...(values["runner-executable"] ? { executable: values["runner-executable"] } : {}),
+    });
     try {
-      const report = await runOpenCodeHost({
+      const report = await runAgentHost({
+        adapter,
         repository: repositoryPath(),
         task: required(values.task, "--task"),
-        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
         ...(values.model ? { model: values.model } : {}),
         maxMemories,
+        ...(contextBudgetChars === undefined ? {} : { contextBudgetChars }),
         timeoutMs,
         ...(values.output ? { outputDirectory: values.output } : {}),
         signal: controller.signal,
@@ -313,10 +312,11 @@ async function main(): Promise<void> {
           onStderr: (chunk: string) => process.stderr.write(redactSecrets(chunk).content),
         } : {}),
       });
+      renderer.finish();
       if (values.json) output(report);
       else {
         if (report.summary !== renderer.lastText()) console.log(report.summary);
-        console.error(`[RepoMind] exit=${report.agent.exitCode ?? "none"} session=${report.session.status} retrieved=${report.session.retrievedMemories}`);
+        console.error(`[RepoMind] exit=${report.agent.exitCode ?? "none"} session=${report.session.status} retrieved=${report.session.retrievedMemories} context=${report.context.contextChars}/${report.context.budgetChars} maintenance=${report.maintenance?.status ?? "skipped"}`);
       }
       if (!report.succeeded) {
         process.exitCode = interruptedBy === "SIGINT" ? 130
@@ -330,7 +330,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "eval") {
-    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : "", values.agent ? "--agent" : "", values["agent-summary"] ? "--agent-summary" : "", values["agent-profile"] ? "--agent-profile" : ""].filter(Boolean);
+    const modes = [values.dataset ? "--dataset" : "", values.scenarios ? "--scenarios" : "", values.compare ? "--compare" : "", values.agent ? "--agent" : "", values["agent-cross-session"] ? "--agent-cross-session" : "", values["agent-summary"] ? "--agent-summary" : "", values["agent-profile"] ? "--agent-profile" : ""].filter(Boolean);
     if (modes.length > 1) throw new RepoMindError("INVALID_INPUT", `${modes.join(" and ")} cannot be combined`);
     if (values["agent-profile"]) {
       const report = profileAgentReport(required(values.report, "--report"), values.raw);
@@ -346,6 +346,41 @@ async function main(): Promise<void> {
       writeAgentAggregateReport(report, values.output ?? "agent-summary");
       output(report);
       if (values.strict && !report.integrity.passed) process.exitCode = 1;
+      return;
+    }
+    if (values["agent-cross-session"]) {
+      const runner = agentHostRunner(values.runner);
+      const repeat = values.repeat ? Number(values.repeat) : 3;
+      const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
+      const maxMemories = values["max-memories"] ? Number(values["max-memories"]) : 5;
+      const contextBudgetChars = values["context-budget"] === undefined
+        ? undefined
+        : validateHostContextBudget(Number(values["context-budget"]));
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RepoMindError("INVALID_INPUT", `Invalid --timeout ${values.timeout}`);
+      if (!Number.isInteger(maxMemories) || maxMemories < 0 || maxMemories > 20) {
+        throw new RepoMindError("INVALID_INPUT", `Invalid --max-memories ${values["max-memories"]}`);
+      }
+      const manifestPath = required(values.manifest, "--manifest");
+      const report = await runCrossSessionEvaluation({
+        manifest: loadCrossSessionManifest(manifestPath),
+        manifestSha256: hashCrossSessionManifest(manifestPath),
+        runner,
+        model: values.model ?? (runner === "claude" ? "gpt-5.6-luna" : "cliproxyapi/gpt-5.6-luna"),
+        repeat,
+        outputDirectory: values.output ?? "cross-session-results",
+        repoMindRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
+        adapterFactory: (stageRunner, factoryOptions) => createAgentHostAdapter(stageRunner, {
+          ...factoryOptions,
+          ...(stageRunner === "claude" ? { trustedIsolatedCheckout: true } : {}),
+        }),
+        timeoutMs,
+        maxMemories,
+        ...(contextBudgetChars === undefined ? {} : { contextBudgetChars }),
+      });
+      output(report);
+      if (values.strict && !report.integrity.passed) process.exitCode = 1;
+      if (values["require-acceptance"] && report.acceptance.status !== "passed") process.exitCode = 1;
       return;
     }
     if (values.agent) {
@@ -366,6 +401,7 @@ async function main(): Promise<void> {
         repeat,
         outputDirectory: values.output ?? "agent-results",
         repoMindCli: fileURLToPath(import.meta.url),
+        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
         lifecycleMode,
         timeoutMs,
       });

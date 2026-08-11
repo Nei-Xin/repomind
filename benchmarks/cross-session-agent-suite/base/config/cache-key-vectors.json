@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "vectors": [
+    {
+      "input": "RepoMind evidence",
+      "key": "bbcf682769ffa88078668a534b80562f7e19f00fafce097d724d6ae0fb139d14"
+    },
+    {
+      "input": "\u8bd7\u8bcd-video",
+      "key": "e49a93387694a23211bdf2da36a449ed0770bc7625ef41fef48ec641e8f81fda"
+    }
+  ]
+}

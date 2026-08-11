@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -145,6 +145,66 @@ describe("repository memory core", () => {
     core.close();
   });
 
+  it("does not fingerprint related files through links that escape the repository", () => {
+    const outside = join(data, "outside-related-files");
+    mkdirSync(outside);
+    const secret = join(outside, "secret.txt");
+    writeFileSync(secret, "external secret v1\n", "utf8");
+    symlinkSync(outside, join(repository, "external-directory"), process.platform === "win32" ? "junction" : "dir");
+
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const linkedDirectory = core.record({
+        type: "risk",
+        title: "External directory link",
+        content: "Do not use repository links to read external files.",
+        relatedFiles: ["external-directory/secret.txt"],
+      });
+      expect(core.inspect(linkedDirectory.id)).toMatchObject({
+        files: [{ file_path: "external-directory/secret.txt", file_hash: null }],
+      });
+
+      writeFileSync(secret, "external secret v2 with different content\n", "utf8");
+      expect(core.search("repository links external files")[0]).toMatchObject({
+        id: linkedDirectory.id,
+        status: "active",
+      });
+      expect(core.inspect(linkedDirectory.id)).toMatchObject({
+        files: [{ file_path: "external-directory/secret.txt", file_hash: null }],
+      });
+
+      const initiallyMissing = core.record({
+        type: "location",
+        title: "Future external directory link",
+        content: "A missing related path must stay unavailable if replaced by an external link.",
+        relatedFiles: ["future-external/secret.txt"],
+      });
+      symlinkSync(outside, join(repository, "future-external"), process.platform === "win32" ? "junction" : "dir");
+      expect(core.search("missing related path unavailable")[0]).toMatchObject({
+        id: initiallyMissing.id,
+        status: "active",
+      });
+      expect(core.inspect(initiallyMissing.id)).toMatchObject({
+        files: [{ file_path: "future-external/secret.txt", file_hash: null }],
+      });
+
+      if (process.platform !== "win32") {
+        symlinkSync(secret, join(repository, "external-file.txt"), "file");
+        const linkedFile = core.record({
+          type: "risk",
+          title: "External file link",
+          content: "Do not fingerprint a related file symlink that leaves the repository.",
+          relatedFiles: ["external-file.txt"],
+        });
+        expect(core.inspect(linkedFile.id)).toMatchObject({
+          files: [{ file_path: "external-file.txt", file_hash: null }],
+        });
+      }
+    } finally {
+      core.close();
+    }
+  });
+
   it("validates an uncertain memory against the current file hashes", () => {
     const core = new RepositoryMemoryCore(repository);
     const recorded = core.record({
@@ -285,6 +345,110 @@ describe("repository memory core", () => {
     expect(details.files).toContainEqual(expect.objectContaining({ file_path: "README.txt", file_hash: expect.any(String) }));
     expect(second.status()).toMatchObject({ sessions: 1, memories: 3, openSessions: 0 });
     second.close();
+  });
+
+  it("keeps full test Evidence while deduplicating compact verified-command memories", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const commit = (key: string, duration: string): void => {
+      const started = core.startSession({ task: "Verify the delivery contract" });
+      core.commitSession({
+        sessionId: started.sessionId,
+        idempotencyKey: key,
+        status: "success",
+        summary: "Verified the delivery contract without changing repository files.",
+        tests: [{
+          command: "node --test",
+          exitCode: 0,
+          summary: [
+            "TAP version 13",
+            "# Subtest: delivery remains retryable",
+            `# duration_ms ${duration}`,
+            "# tests 4",
+            "# pass 4",
+            "# fail 0",
+            "# skipped 0",
+          ].join("\n"),
+        }],
+      });
+    };
+
+    commit("compact-command-1", "123.45");
+    commit("compact-command-2", "987.65");
+    const commands = core.search("node test verified command", { types: ["command"], limit: 20 });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]!.content).toBe([
+      "Command: \"node --test\"",
+      "Result: passed (exit code 0)",
+      "Summary: tests 4; pass 4; fail 0; skipped 0",
+    ].join("\n"));
+    const evidence = core.context.database.raw.prepare(
+      "SELECT content FROM evidence WHERE kind='test_result' ORDER BY created_at, id",
+    ).all() as Array<{ content: string }>;
+    expect(evidence).toHaveLength(2);
+    expect(evidence[0]!.content).toContain("123.45");
+    expect(evidence[1]!.content).toContain("987.65");
+    core.close();
+  });
+
+  it("keeps deleted paths in diff Evidence without assigning them to extracted memories", () => {
+    mkdirSync(join(repository, "ops"));
+    writeFileSync(join(repository, "ops", "completed-review.txt"), "Retire this completed review.\n", "utf8");
+    git(repository, "add", "ops/completed-review.txt");
+    git(repository, "commit", "-m", "add completed review");
+
+    const core = new RepositoryMemoryCore(repository);
+    const started = core.startSession({ task: "Close the completed review" });
+    rmSync(join(repository, "ops", "completed-review.txt"));
+    core.commitSession({
+      sessionId: started.sessionId,
+      idempotencyKey: "delete-only-memory-files",
+      status: "success",
+      summary: "Closed the review and preserved its durable conclusion for the next maintainer.",
+      tests: [{ command: "node --test", exitCode: 0, summary: "tests 4; pass 4; fail 0" }],
+    });
+
+    const extractedFiles = core.context.database.raw.prepare(`
+      SELECT mf.file_path
+      FROM memories m LEFT JOIN memory_files mf ON mf.memory_id=m.id
+      WHERE m.source='extracted'
+    `).all() as Array<{ file_path: string | null }>;
+    expect(extractedFiles).toHaveLength(2);
+    expect(extractedFiles.every((row) => row.file_path === null)).toBe(true);
+    const diffEvidence = core.context.database.raw.prepare(
+      "SELECT metadata_json FROM evidence WHERE kind='git_diff'",
+    ).get() as { metadata_json: string };
+    expect(JSON.parse(diffEvidence.metadata_json)).toMatchObject({ files: ["ops/completed-review.txt"] });
+    expect(core.rebuildModuleNarratives()).toMatchObject({ created: 0, narratives: [] });
+    core.close();
+  });
+
+  it("disables L1 recall at maxMemories zero while preserving current L2 and L3", async () => {
+    const core = new RepositoryMemoryCore(repository);
+    const recorded = core.record({
+      type: "convention",
+      title: "Release workflow ownership",
+      content: "The release module owns the verified release workflow.",
+      confidence: 0.95,
+      scopeType: "module",
+      scopeValue: "src/release",
+    });
+    const narrative = core.rebuildModuleNarratives().narratives[0]!;
+    const profile = core.rebuildRepositoryProfile().profile;
+
+    const lexical = core.startSession({ task: "Run the release workflow", maxMemories: 0 });
+    expect(lexical.memories).toEqual([]);
+    expect(lexical.moduleNarratives).toEqual([expect.objectContaining({ id: narrative.id, current: true })]);
+    expect(lexical.repositoryProfile).toMatchObject({ id: profile.id, current: true });
+
+    const hybrid = await core.startSessionHybrid({ task: "Run the release workflow", maxMemories: 0 });
+    expect(hybrid.memories).toEqual([]);
+    expect(hybrid.moduleNarratives).toEqual([expect.objectContaining({ id: narrative.id, current: true })]);
+    expect(hybrid.repositoryProfile).toMatchObject({ id: profile.id, current: true });
+    expect(core.search("release workflow")).toEqual([expect.objectContaining({ id: recorded.id })]);
+
+    core.abandonSession(lexical.sessionId);
+    core.abandonSession(hybrid.sessionId);
+    core.close();
   });
 
   it("strictly isolates repositories", () => {

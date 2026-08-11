@@ -49,6 +49,10 @@ describe("L3 repository profile", () => {
     expect(first.profile).toMatchObject({
       memorySourceCount: 3, moduleSourceCount: 1, budgetChars: 1400, minConfidence: 0.8, version: 1, current: true,
     });
+    expect(first.profile.sourceMemoryIds).toEqual(expect.arrayContaining([
+      moduleMemory.id, dependency.id, command.id,
+    ]));
+    expect(first.profile.sourceModuleNarrativeIds).toEqual([moduleNarrative.id]);
     expect(first.profile.content.length).toBeLessThanOrEqual(1400);
     expect(first.profile.content).toContain(moduleNarrative.id);
     expect(first.profile.content).toContain(dependency.id);
@@ -113,6 +117,54 @@ describe("L3 repository profile", () => {
     const core = new RepositoryMemoryCore(repository);
     core.record({ type: "solution", title: "Low confidence task", content: "A one-off task result.", confidence: 0.4 });
     expect(() => core.rebuildRepositoryProfile()).toThrow(/No stable L1 or current L2 sources/u);
+    core.close();
+  });
+
+  it("does not upgrade L2 or L3 when sources only gain Evidence or validation", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const moduleInput = {
+      type: "architecture" as const,
+      title: "Storage ownership",
+      content: "The storage module owns durable repository state.",
+      confidence: 0.95,
+      scopeType: "module" as const,
+      scopeValue: "src/storage",
+    };
+    const repositoryInput = {
+      type: "dependency" as const,
+      title: "Supported runtime",
+      content: "Use Node.js 22 or newer.",
+      confidence: 0.95,
+    };
+    const moduleMemory = core.record(moduleInput);
+    const repositoryMemory = core.record(repositoryInput);
+    const firstL2 = core.rebuildModuleNarratives();
+    const firstL3 = core.rebuildRepositoryProfile();
+
+    expect(firstL2.narratives[0]).toMatchObject({ version: 1, current: true });
+    expect(firstL3.profile).toMatchObject({ version: 1, current: true });
+    expect(core.record(moduleInput)).toMatchObject({ id: moduleMemory.id, stored: false });
+    expect(core.record(repositoryInput)).toMatchObject({ id: repositoryMemory.id, stored: false });
+    core.validateMemory({ memoryId: moduleMemory.id, reason: "Confirmed the storage boundary again." });
+    core.validateMemory({ memoryId: repositoryMemory.id, reason: "Confirmed the supported runtime again." });
+    expect(core.inspect(moduleMemory.id).evidence).toHaveLength(3);
+    expect(core.inspect(repositoryMemory.id).evidence).toHaveLength(3);
+
+    expect(core.listModuleNarratives()[0]).toMatchObject({ version: 1, current: true });
+    expect(core.getRepositoryProfile()).toMatchObject({ version: 1, current: true });
+    expect(core.rebuildModuleNarratives()).toMatchObject({
+      created: 0,
+      updated: 0,
+      unchanged: 1,
+      narratives: [expect.objectContaining({ version: 1, current: true })],
+    });
+    expect(core.rebuildRepositoryProfile()).toMatchObject({
+      created: false,
+      updated: false,
+      unchanged: true,
+      profile: { version: 1, current: true },
+    });
+    expect(core.inspectRepositoryProfile().versions).toHaveLength(1);
     core.close();
   });
 });

@@ -1,0 +1,10 @@
+Delivery deduplication incident review
+
+The old implementation marked an id only after awaiting send, so concurrent
+calls could both deliver. A proposed permanent pre-await mark stopped duplicate
+sends but also blocked retries after send rejected.
+
+The accepted behavior is to claim ownership before awaiting, return false to a
+concurrent duplicate, and remove the claim only when send rejects so a later
+retry can succeed. Remove this incident record after preserving that reasoning
+in the final task handoff.

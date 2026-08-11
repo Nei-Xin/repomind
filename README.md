@@ -68,24 +68,60 @@ repomind search "SQLite loader" --json
 repomind inspect <memory-id> --json
 ```
 
-Run an OpenCode task with RepoMind managing the complete lifecycle outside the
-model loop:
+Run a coding Agent task with RepoMind managing the complete lifecycle outside
+the model loop. OpenCode remains the default:
 
 ```powershell
 repomind run `
   --repo D:\path\to\repository `
   --task "Fix invoice quantity arithmetic" `
-  --model cliproxyapi/gpt-5.6-terra
+  --runner opencode `
+  --model cliproxyapi/gpt-5.6-terra `
+  --context-budget 12000
 ```
 
-`repomind run` starts and retrieves before OpenCode, injects the returned
+Claude Code uses the same Host lifecycle:
+
+```powershell
+repomind run `
+  --repo D:\path\to\repository `
+  --task "Fix invoice quantity arithmetic" `
+  --runner claude `
+  --model gpt-5.6-luna `
+  --context-budget 12000
+```
+
+`repomind run` retrieves before the selected Agent, injects the returned
 memories, captures command and test evidence, and commits after a normal Agent
-exit. Omit `--model` to use OpenCode's configured default. Interrupted, timed
+exit. Omit `--model` to use that Agent's configured default. Daily Claude runs
+use `dontAsk` with an explicit coding-tool allowlist; permission bypass is
+reserved for Host-created disposable evaluation checkouts. Interrupted, timed
 out, or unstartable Agent processes abandon the session instead of leaving it
 open. Redacted `events.jsonl`, `stderr.log`, and `run.json` artifacts are stored
 under `~/.repomind/runs/` by default. See
-[`docs/opencode-integration.md`](docs/opencode-integration.md) for exit behavior,
-configuration isolation, and machine-readable output.
+[`docs/opencode-integration.md`](docs/opencode-integration.md) and
+[`docs/claude-integration.md`](docs/claude-integration.md) for runner-specific
+behavior.
+
+The default `--context-budget` is 12,000 characters. It bounds only the
+repository context injected by the Host: the current L3 profile, relevant
+current L2 narratives, and ranked L1 memories. The complete current task and
+the fixed Host lifecycle instructions are not clipped by this repository
+context budget. Valid values are 1,000 through 24,000 characters. On Windows,
+the Host also rejects a rendered prompt above 28,000 characters before spawn.
+It also computes the fully quoted Windows command line and rejects values above
+the 32,767-character platform boundary. Shorten the task or lower the context
+budget if either guard is reached.
+
+After a successful Host-managed commit, `repomind run` synchronously performs
+best-effort derived maintenance in L2, L3, then L4 order. It rebuilds module
+narratives, attempts the repository profile (reported as skipped when no
+eligible source exists), and refreshes review-required Skill Candidates.
+Maintenance errors are recorded separately and do not roll back the committed
+Session or turn an otherwise successful Host run into a failure. Partial,
+failed, and abandoned runs do not trigger this maintenance. The automation is
+limited to the Host-managed lifecycle: direct CLI or MCP commits and
+agent-managed runs still use the explicit rebuild commands and tools below.
 
 For a newly initialized repository, generate reviewable memory candidates
 without writing them to the database, then explicitly confirm all or a selected
@@ -130,6 +166,8 @@ repomind module-inspect l2_... --json
 Module narratives are independent derived records with L1 source links,
 incremental source fingerprints, FTS recall, and a hard character budget. A
 Session Start can return current matching L2 context alongside atomic memories.
+Successful Host-managed runs rebuild L2 automatically after commit; the manual
+CLI and MCP rebuild operations remain available for every other lifecycle.
 Run the fixed-commit real-repository acceptance with `npm run bench:l2-real`;
 the recorded v0.12 method and results are in
 [`docs/l2-real-repository-acceptance-v0.12.md`](docs/l2-real-repository-acceptance-v0.12.md).
@@ -167,7 +205,9 @@ successful command and test sets match. Every candidate retains Session and
 Evidence provenance. Failed, partial, abandoned, command-free, and one-off
 tasks cannot qualify. A changed source set resets approval to `pending`.
 Export requires explicit approval, never overwrites a file, redacts secrets
-and absolute paths, and never installs or executes the result. See
+and absolute paths, and never installs or executes the result. Successful
+Host-managed commits refresh candidates automatically, but RepoMind never
+automatically approves, exports, installs, or executes one. See
 [`docs/skill-candidates.md`](docs/skill-candidates.md).
 
 Create a portable logical export, preview an atomic replacement import, or
@@ -319,13 +359,15 @@ Candidate generation with safe export. It includes the explicit, validated
 remote LLM extraction introduced in v0.16.0 while keeping deterministic
 extraction as the default. v0.17.0 adds installed-tarball verification on all
 three CI operating systems and locks every published Schema upgrade path. It does
-not include automatic host-tool observation, Skill installation, or Skill
+does not passively observe tools used by Agents launched outside RepoMind's
+registered Host adapters, and it does not include Skill installation or Skill
 execution. v0.18.0 added opt-in encrypted logical exports and physical backups
 with environment-only passphrases and authenticated zero-write rejection.
 Logical Merge Import remains deferred beyond v1.0. Source-only V8
 coverage reporting, regression floors, successful macOS CI, and real
-OpenCode/Claude Code interoperability in both tested lifecycle directions are
-included. See
+historical OpenCode/Claude Code MCP and L4 interoperability acceptance is
+included. The current layered Host path still requires its own mixed-Agent
+formal experiment. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
@@ -343,15 +385,18 @@ The v0.17 distribution acceptance passes all 11 local package gates and the
 clean-commit and release-tag GitHub matrices pass installed-tarball verification
 on Ubuntu, Windows, and macOS. A post-release external `p-limit` study also
 passes six fresh-context OpenCode runs: both arms pass every check, while
-RepoMind lowers mean input Tokens by 41.1% and Agent duration by 17.5% after a
-Claude Code source task. See
+RepoMind lowers mean uncached/raw input Tokens by 41.1% and Agent duration by
+17.5% after a Claude Code source task. That legacy report does not contain the
+new total-prompt breakdown or provider-price weighting, so it is not a cost
+claim. See
 [`docs/release-readiness-v0.17.md`](docs/release-readiness-v0.17.md),
 [`docs/external-open-source-cross-session-acceptance-v0.17.md`](docs/external-open-source-cross-session-acceptance-v0.17.md),
 and [`docs/final-spec-audit-v0.17.md`](docs/final-spec-audit-v0.17.md).
 
-The v0.15.0 formal L4 report passes all 20 gates on a clean fixed commit, and
-the real cross-Agent report passes all 17 checks across OpenCode and Claude
-Code. GitHub CI validates Ubuntu, Windows, macOS, coverage, and the comparison
+The historical v0.15.0 formal L4 report passes all 20 gates on a clean fixed
+commit, and its real L4/MCP cross-Agent report passes all 17 checks across
+OpenCode and Claude Code. It does not validate the current layered Host prompt.
+GitHub CI validates Ubuntu, Windows, macOS, coverage, and the comparison
 benchmark. See
 [`docs/skill-candidate-acceptance-v0.15.md`](docs/skill-candidate-acceptance-v0.15.md)
 and
@@ -387,7 +432,8 @@ The live run requires `REPOMIND_EXTRACTION_*` only in the invoking process and
 refuses to write a report containing the credential. See
 [`docs/remote-extraction-acceptance.md`](docs/remote-extraction-acceptance.md).
 The clean-commit `gpt-5.6-terra` result passed all 13 dataset gates. The separate
-Claude Code to OpenCode continuous task passed all 17 cross-Agent gates, and
+historical Claude Code to OpenCode continuous task passed all 17 MCP/L4
+cross-Agent gates, and
 GitHub CI passed Ubuntu, Windows, macOS, coverage, and comparison jobs against
 the same pushed commit. See
 [`docs/remote-extraction-acceptance-v0.16.md`](docs/remote-extraction-acceptance-v0.16.md).
@@ -397,12 +443,32 @@ The comparison benchmark scores the context bundle each memory strategy delivers
 Run a controlled OpenCode three-arm task benchmark:
 
 ```bash
-repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-terra --lifecycle host-managed --repeat 3 --output agent-results --strict --require-acceptance --json
+repomind eval --agent --manifest path/to/manifest.json --runner opencode --model cliproxyapi/gpt-5.6-luna --lifecycle host-managed --repeat 3 --output agent-results --strict --require-acceptance --json
 ```
 
-Manifest v2 compares no-memory, raw full-history, and RepoMind arms. Each arm starts from a fresh clone at the same commit, and execution order rotates by repetition. `--lifecycle host-managed` starts retrieval before OpenCode, injects the returned memories, and commits the session after Agent execution and external checks. The backward-compatible default is `agent-managed`, where OpenCode calls RepoMind MCP tools itself. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. Report v5 includes paired deltas, lifecycle phase telemetry, separately configured acceptance gates, and full provenance. A reproducible eight-task suite can be generated with `node benchmarks/agent-suite/create.mjs <new-directory>` and validated with `npm run bench:agent-fixtures`. The daily Host-managed entry point has a separate full-path acceptance command: `npm run bench:host-run -- --workspace <new-directory> --model <id> --strict`.
+Manifest v2 compares no-memory, raw full-history, and RepoMind arms. Each arm starts from a fresh clone at the same commit, and execution order rotates by repetition. `--lifecycle host-managed` starts retrieval before OpenCode, injects the returned layered context, runs Host-owned public and hidden checks after the Agent, commits the resulting quality status, and maintains L2-L4 only after a successful commit. Hidden checks authorize the outcome but are never persisted as Evidence; only public check evidence may become reusable Memory. The backward-compatible default is `agent-managed`, where OpenCode calls RepoMind MCP tools itself. Hidden checks stay outside the task repository, raw JSONL is retained, and `--strict` validates experimental integrity rather than requiring RepoMind to win. Report v7 separates start, Agent, commit, and maintenance timing/status and records L1-L3 retrieval/injection IDs, budgets, quality flags, authoritative verification, derived-layer snapshots, paired deltas, acceptance gates, and provenance. A reproducible eight-task suite can be generated with `node benchmarks/agent-suite/create.mjs <new-directory>` and validated with `npm run bench:agent-fixtures`. The daily Host-managed entry point has a separate full-path acceptance command: `npm run bench:host-run -- --workspace <new-directory> --model <id> --strict`.
 
-Aggregate multiple report v4 or v5 files without losing their provenance:
+Run a real cross-Session learning experiment without pre-seeding the measured knowledge:
+
+```bash
+repomind eval --agent-cross-session --manifest path/to/cross-session-manifest.json --runner opencode --model cliproxyapi/gpt-5.6-luna --repeat 5 --output cross-session-results --strict --require-acceptance --json
+```
+
+Each episode compares a `shared` chain with an `isolated` chain. Every stage uses a fresh checkout and the same projectId; only `shared` reuses the previous stage database. Stage checkpoints carry identical within-arm code history forward, while the report measures hidden/public outcomes, recall, L1-L3 injection, duration, Tokens, reads, lifecycle closure, and maintenance. See [`docs/cross-session-agent-benchmark.md`](docs/cross-session-agent-benchmark.md).
+
+The 2026-08-11 repeat-5 formal run used OpenCode only. Its correctness and
+efficiency cohorts passed integrity, acceptance, and independent audit; the
+observed uplift came from L1 injection, while L2 was not injected and L3 was
+deduplicated against its L1 provenance. The mixed Claude/OpenCode manifest has
+not yet completed a formal run. See the
+[`Chinese formal experiment report`](project-report-zh-CN/10-cross-session-formal-experiment-20260811.md)
+for exact results and limitations.
+
+The default runner may also be `claude`. A manifest can override `runner` and
+`model` per stage, enabling Claude-to-OpenCode and OpenCode-to-Claude transfer
+experiments. When a stage switches runner, give that stage an explicit model.
+
+Aggregate multiple report v4-v7 files without losing their provenance:
 
 ```bash
 repomind eval --agent-summary --reports "results/**/summary.json" --output aggregate-results --strict --json
@@ -414,9 +480,10 @@ Profile an existing Agent result without calling the model again:
 repomind eval --agent-profile --report results/summary.json --output agent-profile --strict --json
 ```
 
-The phase profile separates direct RepoMind MCP execution time from the model
-turns surrounding session start and commit, and computes paired wall-time,
-turn, and token overhead against both baselines.
+Aggregate report v2 records each source schema and reports missing telemetry as
+missing rather than zero. Profile v2 separates direct Agent-managed MCP time
+from Host-managed start, Agent, commit, and maintenance phases; it also shows
+L1-L3 context injection and telemetry coverage.
 
 See [`docs/agent-benchmark.md`](docs/agent-benchmark.md) for the protocol,
 [`docs/agent-run-acceptance-results-v0.9.md`](docs/agent-run-acceptance-results-v0.9.md)

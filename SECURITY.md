@@ -22,11 +22,18 @@ The security properties it aims to hold:
   timeouts and output caps. No user or model input is spliced into Git
   arguments. RepoMind never commits, pushes, checks out, resets, or cleans.
   See [ADR-010](docs/adr/ADR-010-read-only-git-commands.md).
-- **Repository boundary.** Every file path is resolved and rejected if it lands
-  outside the repository root.
-- **Repository isolation.** Every query and write carries a repository ID; one
-  repository's memories can never surface in another. A benchmark scenario
-  asserts this.
+- **Repository boundary.** Related-file paths pass both lexical containment and
+  canonical `realpath` containment before RepoMind reads or hashes them, so an
+  in-repository symlink or junction cannot expose an outside target. Missing,
+  inaccessible, and outside targets retain a null fingerprint.
+- **Project-ID isolation.** Every query and write carries a canonical Project
+  UUID. Database paths are contained under the configured data root, and
+  linked repositories/project directories plus SQLite DB/WAL/SHM links,
+  including dangling links, are rejected before database access;
+  different IDs do not share memories, while checkouts intentionally using the
+  same marker share one database. A benchmark scenario asserts isolation
+  between distinct IDs. The marker-authentication limitation is documented
+  below.
 - **Local by default.** No telemetry, no network calls, no automatic upload of
   code or diffs. The database stays on the machine that created it.
 - **Secret redaction.** Content entering long-term storage passes through
@@ -66,6 +73,13 @@ guarantee:
   or protect a passphrase from other processes with the same host privileges.
   Losing the passphrase makes the archive unrecoverable. RepoMind never stores
   it and has no recovery channel.
+- The Project UUID in `.repomind/project.json` is a routing identifier, not an
+  authorization secret. UUID validation and database-path containment prevent
+  path traversal, but a repository that copies another project's valid marker
+  can select that project's local database. Only open trusted repository
+  identities, use `init --new-id` for forks that must be isolated, and do not
+  treat the marker as an access-control boundary. A future checkout-enrollment
+  mechanism is required before RepoMind can safely authorize untrusted roots.
 
 ## Verifying
 

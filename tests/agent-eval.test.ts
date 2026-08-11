@@ -3,12 +3,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { RepositoryMemoryCore } from "../src/core.js";
 import { analyzeAgentEvents } from "../src/eval/agent/events.js";
 import { aggregateAgentReports, renderAgentAggregateMarkdown } from "../src/eval/agent/aggregate.js";
 import { hashAgentManifest, loadAgentManifest, parseAgentManifest } from "../src/eval/agent/manifest.js";
 import { buildAgentReport, type AgentArm, type AgentRunResult } from "../src/eval/agent/report.js";
 import { parseChangedFiles, runAgentEvaluation, type ProcessExecutor } from "../src/eval/agent/runner.js";
-import { analyzeOpenCodeOutcome } from "../src/integrations/opencode/lifecycle.js";
+import { analyzeOpenCodeOutcome, assessOpenCodeOutcome } from "../src/integrations/opencode/lifecycle.js";
 
 const TEST_PROVENANCE = {
   repoMindVersion: "test", repoMindCommit: "abc", repoMindDirty: false, node: process.version,
@@ -28,10 +29,18 @@ describe("agent event analysis", () => {
       JSON.stringify({ type: "step_finish", part: { tokens: { input: 12, output: 3, reasoning: 2, cache: { read: 4, write: 1 } } } }),
       JSON.stringify({ type: "tool_use", part: { tool: "read", state: { status: "completed", input: { filePath: "README.md" } } } }),
       JSON.stringify({ type: "tool_use", part: { tool: "read", state: { status: "completed", input: { filePath: "README.md" } } } }),
+      JSON.stringify({ type: "tool_use", part: { tool: "read", state: { status: "error", input: { filePath: "missing.md" } } } }),
       JSON.stringify({ type: "tool_use", part: { tool: "repomind_repo_session_start", state: { status: "completed", output: JSON.stringify({ memories: [{ id: "m1" }] }) } } }),
       "not json",
     ].join("\n"));
-    expect(metrics).toMatchObject({ turns: 1, fileReads: 2, repeatedFileReads: 1, repoMindCalls: 1, retrievedMemories: 1 });
+    expect(metrics).toMatchObject({
+      turns: 1,
+      fileReads: 2,
+      failedFileReads: 1,
+      repeatedFileReads: 1,
+      repoMindCalls: 1,
+      retrievedMemories: 1,
+    });
     expect(metrics.tokens).toEqual({ input: 12, output: 3, reasoning: 2, cacheRead: 4, cacheWrite: 1 });
   });
 
@@ -44,8 +53,72 @@ describe("agent event analysis", () => {
     ].join("\n"), "fallback");
     expect(outcome.summary).toBe("Fixed the invoice calculation.");
     expect(outcome.commands).toEqual([{
-      command: "npm test", exitCode: 0, summary: "2 tests passed", isTest: true,
+      command: "npm test", exitCode: 0, exitCodeKnown: true, summary: "2 tests passed", isTest: true,
     }]);
+    expect(outcome.trace).toMatchObject({ terminal: "incomplete", malformedLines: 0, unknownCommandResults: 0 });
+
+    const bounded = analyzeOpenCodeOutcome(
+      JSON.stringify({ type: "text", part: { text: `result\u0000${"x".repeat(20_000)}` } }),
+      "fallback",
+    );
+    expect(bounded.summary.length).toBeLessThanOrEqual(12_000);
+    expect(bounded.summary).toContain("[truncated by RepoMind host]");
+    expect(bounded.summary).not.toContain("\u0000");
+  });
+
+  it("separates recovered command failures from terminal failures", () => {
+    const command = (value: string, exitCode: number) => ({
+      command: value, exitCode, exitCodeKnown: true, summary: "", isTest: false,
+    });
+    const observed = [
+      command("node --input-type=module -e \"broken probe\"", 1),
+      command("node --input-type=module -e \"corrected probe\"", 0),
+    ];
+    expect(assessOpenCodeOutcome({
+      agentExitCode: 0,
+      commands: observed,
+    })).toMatchObject({
+      completion: "inconclusive",
+      status: "partial",
+      maintenanceEligible: false,
+      qualityFlags: ["unrecovered-command-failure"],
+      commands: { failed: 1, recovered: 0, unrecovered: 1 },
+      authoritativeVerification: { checks: 0, passed: null },
+    });
+    expect(assessOpenCodeOutcome({
+      agentExitCode: 0,
+      commands: observed,
+      authoritativeChecks: [{ exitCode: 0 }, { exitCode: 0 }],
+    })).toMatchObject({
+      completion: "inconclusive",
+      status: "partial",
+      maintenanceEligible: false,
+      qualityFlags: expect.arrayContaining(["unrecovered-command-failure", "verification-snapshot-changed"]),
+    });
+    expect(assessOpenCodeOutcome({
+      agentExitCode: 0,
+      commands: observed,
+      authoritativeChecks: [{ exitCode: 0 }, { exitCode: 0 }],
+      verificationSnapshotStable: true,
+    })).toMatchObject({
+      completion: "recovered",
+      status: "success",
+      maintenanceEligible: true,
+      qualityFlags: ["recovered-command-failure"],
+      commands: { observed: 2, failed: 1, recovered: 1, unrecovered: 0 },
+      authoritativeVerification: { authority: "host-config", checks: 2, passed: true, snapshotStable: true },
+    });
+    expect(assessOpenCodeOutcome({
+      agentExitCode: 0,
+      commands: [command("npm run build", 1), command("git status --short", 0)],
+    })).toMatchObject({
+      completion: "inconclusive",
+      status: "partial",
+      maintenanceEligible: false,
+      qualityFlags: ["unrecovered-command-failure"],
+      commands: { failed: 1, recovered: 0, unrecovered: 1 },
+      authoritativeVerification: { authority: "none", checks: 0, passed: null, snapshotStable: null },
+    });
   });
 });
 
@@ -98,6 +171,7 @@ function reportRun(arm: AgentArm, hiddenPass: boolean): AgentRunResult {
     taskId: "history", arm, iteration: 1, repository: `/${arm}`,
     requestedCommit: "abc", baseCommit: "abc", agentExitCode: 0, agentSignal: null,
     startMs: repoMind ? null : 0, agentMs: wallDurationMs, commitMs: repoMind ? null : 0,
+    maintenanceMs: repoMind ? null : 0,
     totalLifecycleMs: wallDurationMs, wallDurationMs,
     publicChecks: [{ command: "node", args: [], exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 1, passed: true }],
     hiddenChecks: [{ command: "node", args: [], exitCode: hiddenPass ? 0 : 1, signal: null, stdout: "", stderr: "", durationMs: 1, passed: hiddenPass }],
@@ -108,13 +182,22 @@ function reportRun(arm: AgentArm, hiddenPass: boolean): AgentRunResult {
       mode: repoMind ? "agent-managed" : "none", timing: repoMind ? "nested-in-agent" : "not-applicable",
       startAttempted: repoMind, startSucceeded: repoMind, sessionId: repoMind ? "s1" : null,
       retrievedMemories: repoMind ? 1 : 0, commitAttempted: repoMind, commitSucceeded: repoMind,
-      commitStatus: repoMind ? "committed" : null, evidenceCreated: 0, error: null,
+      commitStatus: repoMind ? "committed" : null, maintenanceAttempted: false, maintenanceStatus: null,
+      evidenceCreated: 0, error: null,
     },
+    contextTelemetry: repoMind
+      ? { availability: "unavailable", reason: "agent-managed fixture" }
+      : { availability: "not-applicable", reason: "baseline fixture" },
+    maintenanceTelemetry: repoMind
+      ? { availability: "unavailable", reason: "agent-managed fixture" }
+      : { availability: "not-applicable", reason: "baseline fixture" },
+    quality: null,
     events: {
       turns: 1,
       tokens: { input: repoMind ? 70 : arm === "full-history" ? 130 : 100, output: repoMind ? 12 : 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
       toolCalls: repoMind ? { repomind_repo_session_start: 1 } : {}, failedTools: 0, failedCommands: 0,
-      fileReads: repoMind ? 3 : arm === "full-history" ? 4 : 5, repeatedFileReads: 0, repoMindCalls: repoMind ? 2 : 0,
+      fileReads: repoMind ? 3 : arm === "full-history" ? 4 : 5, failedFileReads: 0,
+      repeatedFileReads: 0, repoMindCalls: repoMind ? 2 : 0,
       retrievedMemories: repoMind ? 1 : 0,
     },
   };
@@ -177,25 +260,31 @@ describe("paired agent report", () => {
 });
 
 describe("aggregate agent report", () => {
-  it("recomputes paired metrics from traceable report-v4 and report-v5 sources", () => {
+  it("records source schemas and keeps missing legacy telemetry distinct from zero", () => {
     const root = mkdtempSync(join(tmpdir(), "repomind-agent-aggregate-"));
     try {
-      const paths = ["windows.json", "ubuntu.json"].map((name, index) => {
+      const schemas = [7, 4, 5, 6] as const;
+      const paths = schemas.map((schemaVersion, index) => {
+        const name = `report-v${schemaVersion}.json`;
         const report = buildAgentReport({
-          name, runner: "opencode", model: index ? "model-b" : "model-a", repeat: 1, outputDirectory: root,
+          name, runner: "opencode", model: `model-${schemaVersion}`, repeat: 1, outputDirectory: root,
           provenance: { ...TEST_PROVENANCE, os: { ...TEST_PROVENANCE.os, platform: index ? "linux" : "win32" } },
           runs: [reportRun("no-memory", false), reportRun("full-history", false), reportRun("repomind", true)],
         });
         const serialized = JSON.parse(JSON.stringify(report)) as Record<string, unknown>;
-        if (index === 1) {
-          serialized.version = 4;
+        serialized.version = schemaVersion;
+        if (schemaVersion < 7) {
           delete serialized.repoMindLifecycle;
           for (const run of serialized.runs as Array<Record<string, unknown>>) {
             delete run.startMs;
             delete run.agentMs;
             delete run.commitMs;
+            delete run.maintenanceMs;
             delete run.totalLifecycleMs;
             delete run.lifecycle;
+            delete run.contextTelemetry;
+            delete run.maintenanceTelemetry;
+            delete run.quality;
           }
         }
         const path = join(root, name);
@@ -203,13 +292,22 @@ describe("aggregate agent report", () => {
         return path;
       });
       const aggregate = aggregateAgentReports(paths);
-      expect(aggregate).toMatchObject({ reportCount: 2, runCount: 6, integrity: { passed: true } });
-      expect(aggregate.models).toEqual(["model-a", "model-b"]);
+      expect(aggregate).toMatchObject({ version: 2, reportCount: 4, runCount: 12, integrity: { passed: true } });
+      expect(aggregate.reports.map((report) => report.schemaVersion)).toEqual(schemas);
+      expect(aggregate.telemetryCoverage).toEqual({
+        context: { total: 12, full: 0, unavailable: 1, notApplicable: 2, missing: 9 },
+        maintenance: { total: 12, full: 0, unavailable: 1, notApplicable: 2, missing: 9 },
+        quality: { total: 12, full: 0, unavailable: 0, notApplicable: 3, missing: 9 },
+      });
       expect(aggregate.comparisons["no-memory"]?.find((metric) => metric.key === "hiddenSuccess")).toMatchObject({
-        pairs: 2, meanDelta: 1, confidence95: { low: 1, high: 1 }, repoMindWins: 2,
+        pairs: 4, meanDelta: 1, confidence95: { low: 1, high: 1 }, repoMindWins: 4,
       });
       expect(aggregate.reports[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
-      expect(renderAgentAggregateMarkdown(aggregate)).toContain("RepoMind vs full-history");
+      const markdown = renderAgentAggregateMarkdown(aggregate);
+      expect(markdown).toContain("RepoMind vs full-history");
+      expect(markdown).toContain("Telemetry coverage");
+      expect(markdown).toContain("Missing means the source run did not contain the field");
+      expect(markdown).toContain("| report-v4.json | v4 |");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -241,7 +339,14 @@ describe("controlled agent evaluation", () => {
           runnerArgs.push(request.args);
           prompts.push(request.args.at(-1) ?? "");
           const config = JSON.parse(readFileSync(join(request.cwd, "opencode.json"), "utf8")) as { mcp: Record<string, unknown> };
-          const events = [{ type: "step_finish", part: { tokens: { input: 10, output: 2 } } }];
+          const events: Array<Record<string, unknown>> = [];
+          if (request.cwd.includes("host-repomind-1")) {
+            events.push(
+              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "node --input-type=module -e \"broken probe\"" }, output: "failed", metadata: { exit: 1 } } } },
+              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "node --input-type=module -e \"corrected probe\"" }, output: "passed", metadata: { exit: 0 } } } },
+            );
+          }
+          events.push({ type: "step_finish", part: { reason: "stop", tokens: { input: 10, output: 2 } } });
           if (config.mcp.repomind) events.push({
             type: "tool_use",
             part: { tool: "repomind_repo_session_start", state: { status: "completed", output: JSON.stringify({ memories: [{ id: "m1" }] }) } },
@@ -278,7 +383,7 @@ describe("controlled agent evaluation", () => {
         runnerVersion: "fake-opencode 1.0",
         taskBaseCommits: { smoke: commit },
       });
-      expect(report.version).toBe(5);
+      expect(report.version).toBe(7);
       expect(report.repoMindLifecycle).toBe("agent-managed");
       expect(runnerArgs.every((args) => args.includes("--pure"))).toBe(true);
       expect(prompts.some((prompt) => prompt.includes("A failed attempt used the legacy answer."))).toBe(true);
@@ -326,11 +431,47 @@ describe("controlled agent evaluation", () => {
       expect(hostRun.lifecycle).toMatchObject({
         mode: "host-managed", startSucceeded: true, retrievedMemories: 1,
         commitSucceeded: true, commitStatus: "committed",
+        maintenanceAttempted: true, maintenanceStatus: "success",
       });
+      expect(hostRun.contextTelemetry).toMatchObject({
+        availability: "full",
+        context: {
+          promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          l1: { provided: 1, eligible: 1, injected: 1 },
+          l2: { provided: 0, eligible: 0, injected: 0 },
+          l3: { provided: 1, eligible: 1, injected: 0, deduplicated: 1 },
+        },
+      });
+      expect(hostRun.maintenanceTelemetry).toMatchObject({
+        availability: "full", attempted: true, report: { status: "success" },
+      });
+      expect(hostRun.quality).toMatchObject({
+        completion: "recovered",
+        maintenanceEligible: true,
+        commands: { failed: 1, recovered: 1, unrecovered: 0 },
+        authoritativeVerification: { authority: "benchmark-manifest", checks: 2, passed: true, snapshotStable: true },
+      });
+      expect(hostRun.maintenanceMs).toEqual(expect.any(Number));
       expect(hostRun.events.repoMindCalls).toBe(0);
-      expect(hostRun.totalLifecycleMs).toBeCloseTo(hostRun.startMs! + hostRun.agentMs + hostRun.commitMs!, 3);
+      expect(hostRun.totalLifecycleMs).toBeCloseTo(
+        hostRun.startMs! + hostRun.agentMs + hostRun.commitMs! + hostRun.maintenanceMs!,
+        3,
+      );
       expect(prompts.at(-1)).toContain("Hidden rule");
+      expect(prompts.at(-1)).toContain("## Repository Profile (L3)");
+      expect(prompts.at(-1)).toContain("Current L3 sources are already represented in more specific context below.");
       expect(host.integrity).toEqual({ passed: true, failures: [] });
+      const hostCore = new RepositoryMemoryCore(hostRun.repository, {
+        dataDirectory: join(root, "host-output", "data", "host-repomind-1"),
+      });
+      try {
+        const tests = hostCore.context.database.raw.prepare(
+          "SELECT count(*) AS count FROM evidence WHERE kind='test_result'",
+        ).get() as { count: number };
+        expect(Number(tests.count)).toBe(1);
+      } finally {
+        hostCore.close();
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -32,6 +32,17 @@ source Session and Evidence record. Rebuilding unchanged sources is a no-op.
 When another matching Session appears, the candidate is updated and any prior
 approval is reset to `pending`.
 
+A successful `repomind run` Host commit synchronously invokes this generator
+after L2 and L3 maintenance. It creates or refreshes review-required candidates
+under the same eligibility contract. Partial, failed, and abandoned runs do
+not trigger L4 maintenance, and a generator error is recorded separately
+without rolling back the committed Session or changing Host-run success.
+
+This automatic generation is Host-managed only. `skill-rebuild` and
+`repo_skill_candidate_rebuild` remain available; agent-managed sessions,
+direct CLI/MCP commits, and direct Core commits must request candidate rebuilds
+explicitly.
+
 ## Human review
 
 ```bash
@@ -52,6 +63,10 @@ approved/rejected -> pending  (source set changed)
 Every transition is audited. A review reason is mandatory and is passed
 through the same secret-redaction rules as other long-term data. A reviewed
 candidate cannot be reviewed again until new sources reopen it.
+
+Automatic maintenance stops at candidate generation or refresh. RepoMind never
+automatically approves or rejects a candidate, and it never exports, installs,
+registers, or executes one.
 
 ## Safe export
 

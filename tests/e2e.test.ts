@@ -100,7 +100,10 @@ describe("cross-process CLI end-to-end", () => {
       execute: async () => ({
         exitCode: 0,
         signal: null,
-        stdout: `${JSON.stringify({ type: "text", part: { text: "Inspected the daily host run." } })}\n`,
+        stdout: `${[
+          { type: "text", part: { text: "Inspected the daily host run." } },
+          { type: "step_finish", part: { reason: "stop" } },
+        ].map(JSON.stringify).join("\n")}\n`,
         stderr: "",
         durationMs: 5,
         timedOut: false,
@@ -108,6 +111,10 @@ describe("cross-process CLI end-to-end", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
       }),
+    });
+    expect(report).toMatchObject({
+      session: { status: "committed" },
+      quality: { completion: "clean", status: "success" },
     });
     const runs = JSON.parse(cli(repository, data, "runs", "--status", "committed", "--limit", "5")) as Array<{ id: string }>;
     expect(runs).toEqual([expect.objectContaining({ id: report.runId })]);

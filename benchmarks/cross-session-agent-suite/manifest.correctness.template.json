@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "name": "RepoMind cross-session correctness suite",
+  "sequences": [
+    {
+      "id": "corr-release-command",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-release-review",
+          "prompt": "Close the completed release review as a coordination-only change. The approved durable workflow is exactly `node --test && node scripts/check-schema.mjs`: tests must finish before schema validation. Schema-first was rejected because generated artifacts could be stale, and an npm-test-based draft recursed after script reorganization. Implementing the workflow is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/pending/release-review.todo and leave every other tracked file unchanged. Do not copy the decision into repository files. In your final handoff, explicitly preserve the exact approved command, its order, and the rejected alternatives for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "corr-release-command", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/pending/release-review.todo"]
+        },
+        {
+          "id": "consumer-restore-release-command",
+          "prompt": "Restore the package script named verify:release using the most recently approved release verification workflow. Do not change application or test code. Run the resulting workflow and the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "corr-release-command", "{repo}"]
+          }],
+          "allowedChanges": ["package.json"]
+        }
+      ]
+    },
+    {
+      "id": "corr-stale-endpoint",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-jobs-cutover",
+          "prompt": "Close the completed jobs API cutover review as a coordination-only change. The current supported route is exactly /v2/tasks. The /v2/jobs preview was never deployed, and /v1/jobs is retired. Implementing the client update is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/pending/jobs-cutover.todo and leave every other tracked file unchanged. Do not add this decision to repository files. In your final handoff, explicitly preserve the supported route and the status of both obsolete alternatives for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "corr-stale-endpoint", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/pending/jobs-cutover.todo"]
+        },
+        {
+          "id": "consumer-update-jobs-endpoint",
+          "prompt": "Update jobsEndpoint to the currently supported production jobs API route while preserving the exported function name. Add a focused test in test/jobs-endpoint.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "corr-stale-endpoint", "{repo}"]
+          }],
+          "allowedChanges": ["src/client.js", "test/jobs-endpoint.test.js"]
+        }
+      ]
+    },
+    {
+      "id": "corr-error-contract",
+      "baseRepository": "__BASE_REPOSITORY__",
+      "baseCommit": "__BASE_COMMIT__",
+      "stages": [
+        {
+          "id": "producer-record-parser-contract",
+          "prompt": "Close the completed parseConfig API review as a coordination-only change. Malformed JSON must throw a SyntaxError whose code is exactly CONFIG_PARSE_FAILED and whose cause is the original JSON.parse SyntaxError; valid JSON behavior remains unchanged. Implementing the parser contract is deliberately scheduled as a separate follow-up, so do not modify application code, package files, or tests in this task. Run the current tests as-is; if they fail, report the failure rather than fixing it. Delete only ops/pending/parser-review.todo and leave every other tracked file unchanged. Do not add the contract to repository files. In your final handoff, explicitly preserve the error type, code, cause, and successful-parse behavior for the next maintainer.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "producer", "corr-error-contract", "{repo}", "__BASE_COMMIT__"]
+          }],
+          "allowedChanges": ["ops/pending/parser-review.todo"]
+        },
+        {
+          "id": "consumer-restore-parser-contract",
+          "prompt": "Restore parseConfig's current public error contract for malformed JSON without changing successful parsing. Add focused tests in test/parse-config.test.js and run the repository tests.",
+          "publicChecks": [{ "command": "node", "args": ["--test"] }],
+          "hiddenChecks": [{
+            "command": "node",
+            "args": ["__VERIFY__", "consumer", "corr-error-contract", "{repo}"]
+          }],
+          "allowedChanges": ["src/parse-config.js", "test/parse-config.test.js"]
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "minSharedTransferHiddenPassRate": 0.9,
+    "minTransferHiddenPassRateDelta": 0.3,
+    "minSharedRecallRate": 1,
+    "maxIsolatedRecallRate": 0,
+    "minSharedCommitRate": 1
+  }
+}

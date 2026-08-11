@@ -35,6 +35,18 @@ times, and Evidence counts. A matching fingerprint and budget produces an
 `unchanged` result. A changed module increments its L2 version. A requested
 module with no eligible source deletes its derived narrative.
 
+After a successful `repomind run` Host commit, RepoMind synchronously invokes
+the same default rebuild as best-effort derived maintenance. A run with no
+eligible L1 source and no existing narrative to maintain reports L2 as skipped.
+An L2 maintenance error is reported separately and cannot roll back the
+committed Session or change Host-run success. Partial, failed, and abandoned
+runs do not rebuild L2 automatically.
+
+The automatic path is Host-managed only. `module-rebuild` and
+`repo_module_rebuild` remain available, and agent-managed sessions, direct CLI
+commits, MCP commits, and direct Core commits must invoke one of them explicitly
+when they need fresh L2 records.
+
 ## Freshness and provenance
 
 ```bash
@@ -61,9 +73,14 @@ MCP clients use `repo_module_rebuild`, `repo_module_list`, and
 narratives matching the task. Stale narratives remain inspectable but are not
 returned as task context.
 
+`repomind run` combines relevant current narratives with current L3 and ranked
+L1 under its repository context budget. The complete current task and fixed
+Host lifecycle instructions are outside that budget.
+
 ## Current boundary
 
 This first L2 implementation is deterministic. It does not infer undocumented
 module history, use a remote LLM, or replace L1 retrieval. L3 Repository
 Profiles consume its module boundaries through a separate confidence-filtered
-projection; L4 Skill Candidates remain a future layer.
+projection; L4 Skill Candidates are maintained through their own
+review-required workflow.

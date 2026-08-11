@@ -50,10 +50,18 @@ describe("L2 module narratives", () => {
     const first = core.rebuildModuleNarratives({ maxChars: 700 });
     expect(first).toMatchObject({ created: 1, updated: 0, unchanged: 0, deleted: 0 });
     const narrative = first.narratives[0]!;
-    expect(narrative).toMatchObject({ modulePath: "src/storage", sourceCount: 2, budgetChars: 700, version: 1, current: true });
+    expect(narrative).toMatchObject({
+      modulePath: "src/storage",
+      sourceCount: 2,
+      sourceMemoryIds: [architecture.id, command.id],
+      budgetChars: 700,
+      version: 1,
+      current: true,
+    });
     expect(narrative.content.length).toBeLessThanOrEqual(700);
     expect(narrative.content).toContain(architecture.id);
     expect(narrative.content).toContain(command.id);
+    expect(narrative.content.indexOf(architecture.id)).toBeLessThan(narrative.content.indexOf(command.id));
     expect(narrative.content).not.toContain(conflicting.id);
     expect(narrative.content.split("\n").filter((line) => line.startsWith("- ["))
       .every((line) => /\(mem_[^)]+\)$/u.test(line))).toBe(true);

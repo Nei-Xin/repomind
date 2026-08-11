@@ -1,0 +1,14 @@
+Nimbus gateway cutover record
+
+The production cutover is complete. Future gateway retry headers must keep this
+compatibility contract:
+
+- x-gateway-retry-policy is exactly bounded-exponential-v2.
+- x-gateway-retry-limit is the string 4.
+- x-gateway-retry-attempt carries the attempt number as a decimal string.
+- x-request-id carries the caller-provided request id unchanged.
+- The attempt number is an integer from 0 through 4, inclusive.
+
+This temporary cutover record must be removed after the repository owner has
+verified the current test suite. Do not copy the record into repository docs.
+Preserve the durable constraints in the task handoff for the next maintainer.

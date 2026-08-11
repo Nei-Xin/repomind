@@ -20,10 +20,14 @@ function withDataDirectory<T>(dataDirectory: string, action: () => T): T {
 function successfulAgent(text: string, mutate?: () => void): OpenCodeProcessExecutor {
   return async () => {
     mutate?.();
+    const events = [
+      { type: "text", part: { text } },
+      { type: "step_finish", part: { reason: "stop" } },
+    ];
     return {
       exitCode: 0,
       signal: null,
-      stdout: `${JSON.stringify({ type: "text", part: { text } })}\n`,
+      stdout: `${events.map(JSON.stringify).join("\n")}\n`,
       stderr: "",
       durationMs: 10,
       timedOut: false,

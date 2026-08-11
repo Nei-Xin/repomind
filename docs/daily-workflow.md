@@ -55,6 +55,41 @@ Changed, deleted, outside-repository, unknown, or cross-project sources are
 rejected. Reapplying unchanged candidates is idempotent through RepoMind's
 existing memory fingerprint rules.
 
+## Run with bounded layered context
+
+```powershell
+repomind run `
+  --repo D:\path\to\repository `
+  --task "Implement the next repository change" `
+  --context-budget 12000
+```
+
+The default 12,000-character budget applies only to injected repository
+context: the current L3 profile, relevant current L2 narratives, and ranked L1
+memories. RepoMind keeps the full current task and fixed Host lifecycle
+instructions outside the budget, so context pressure cannot silently shorten
+the user's request. The Host report records a summary of what the bounded
+context renderer included, clipped, or omitted. The accepted range is
+1,000-24,000 characters. Windows additionally rejects a complete rendered Host
+prompt above 28,000 characters before process launch because the prompt is
+currently passed through argv. The Host additionally models libuv's Windows
+argument quoting and rejects a complete quoted command line above the 32,767
+character platform boundary.
+
+When this Host-managed run commits successfully, it synchronously rebuilds L2,
+attempts L3, and refreshes L4 candidates. No eligible L3 source is a normal
+skip. Other maintenance errors are recorded independently and do not undo the
+commit or change an otherwise successful run. Partial, failed, and abandoned
+runs do not perform derived maintenance. L4 output always remains subject to
+human review: automatic approval, export, installation, and execution are
+outside the lifecycle.
+
+This behavior is scoped to `repomind run` and the Host-managed library path.
+Agent-managed use, `repomind commit`, and `repo_session_commit` still require
+explicit `module-rebuild`, `profile-rebuild`, and `skill-rebuild` calls (or the
+equivalent MCP tools). Those manual controls remain available for repair,
+administration, and deliberate rebuilds.
+
 ## Inspect daily runs
 
 Every `repomind run` now creates a `host_runs` record linked to its session.
@@ -79,7 +114,9 @@ Run IDs currently equal their RepoMind session IDs. List and detail results
 include task, model, lifecycle status, retrieval count, Agent exit and signal,
 retrieved memory IDs, duration, input/output tokens, Agent-side RepoMind call
 count, output and report paths, failure text, phase timings, redaction counts,
-and timestamps.
+and timestamps. Host-managed reports and persisted metadata also summarize the
+bounded context injection and any successful-commit derived maintenance; a
+maintenance error is diagnostic state, not a replacement run status.
 
 The host registers the run immediately after session retrieval. Normal exits,
 nonzero exits, timeouts, signals, and output setup failures all close both the
@@ -92,11 +129,12 @@ A useful real-repository smoke test is:
 
 1. Bootstrap and confirm only facts that are still authoritative.
 2. Run one task that changes the repository and commits a clear final summary.
-3. Use `repomind runs` to confirm the session committed and no run is left
-   `running`.
+3. Inspect `run.json` to confirm the Session committed, context stayed within
+   its configured repository budget, and post-commit maintenance completed or
+   recorded an explicit skip.
 4. Run a related second task.
-5. Inspect the second `run.json` and verify `retrievedMemories` increased and
-   the prompt behavior reflects the first task's stored solution.
+5. Inspect the second `run.json` and verify its bounded L3/L2/L1 context and
+   prompt behavior reflect the first task's durable results.
 
 The automated `daily-workflow.test.ts` performs this sequence without a model:
 it bootstraps a cold repository, commits the first Host-managed run, and proves

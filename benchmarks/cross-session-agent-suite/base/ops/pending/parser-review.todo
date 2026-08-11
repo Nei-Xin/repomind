@@ -1,0 +1,3 @@
+The configuration parser API review has completed. Remove this temporary marker
+after recording the public error contract in the final task handoff. The marker
+intentionally does not contain the contract itself.

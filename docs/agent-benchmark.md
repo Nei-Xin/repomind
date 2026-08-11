@@ -10,7 +10,7 @@ unversioned tools, MCP servers, or prompt behavior to the controlled arms.
 repomind eval --agent `
   --manifest D:\path\to\manifest.json `
   --runner opencode `
-  --model cliproxyapi/gpt-5.6-terra `
+  --model cliproxyapi/gpt-5.6-luna `
   --lifecycle host-managed `
   --repeat 3 `
   --output D:\path\to\results `
@@ -22,7 +22,11 @@ repomind eval --agent `
 Every task and arm is cloned independently from `baseRepository` and checked
 out at `baseCommit`. Manifest v2 rotates the three execution orders by
 repetition. The RepoMind arm gets an isolated data directory and the manifest
-memories. The full-history arm receives raw history that can contain obsolete
+memories. Before execution, the runner performs deterministic derived
+maintenance so eligible L2 module narratives and the current L3 profile are
+available to the layered Host prompt. A partial or failed seeding-maintenance
+result aborts the run instead of silently evaluating an L1-only setup. The
+full-history arm receives raw history that can contain obsolete
 attempts and noise, but no MCP server. The no-memory arm receives neither.
 Manifest v1 remains supported and retains the original alternating two-arm run.
 
@@ -33,12 +37,16 @@ MCP server is exposed to OpenCode, so session start and commit happen inside
 the model loop. Their direct execution time is nested inside Agent wall time.
 
 `--lifecycle host-managed` keeps RepoMind MCP out of the Agent tool set. The
-runner starts a session before OpenCode, injects the retrieved memories into the
-task prompt, runs the Agent, and commits the session from the host using the
-Agent's final response and observed command/test events. Start, Agent, and
-commit are timed as sequential phases, and all three are included in
-`totalLifecycleMs`. External public and hidden checks run after commit and stay
-outside both the model context and stored memory evidence.
+runner starts a session before OpenCode, injects current L3, relevant current
+L2, and ranked L1 into the task prompt, runs the Agent, and commits the session
+from the host using the Agent's final response and observed command/test
+events. Host-owned public and hidden checks run before commit so they can
+authoritatively classify clean, recovered, partial, and failed outcomes.
+Only public check evidence is persisted; hidden commands and output never
+become reusable Memory. Start, Agent, commit, and successful-commit derived maintenance are
+timed as separate sequential phases; all four are included in
+`totalLifecycleMs`. Checks stay outside the model context, and hidden checks
+stay outside stored memory evidence.
 
 Host-managed mode uses the exported `startHostLifecycle`,
 `hostManagedPrompt`, `analyzeOpenCodeOutcome`, and `commitHostLifecycle`
@@ -101,14 +109,20 @@ The report includes hidden/public pass counts, duration, tokens, file reads,
 tool failures, RepoMind calls, retrieved memories, changed files, and session
 cleanup. It also records the RepoMind version, commit, and worktree state, Node
 and operating system, runner version, manifest SHA-256, and the resolved base
-commit for each task. Report v5 records `startMs`, `agentMs`, `commitMs`,
-`totalLifecycleMs`, and lifecycle success/status telemetry for every run.
+commit for each task. Report v7 records `startMs`, `agentMs`, `commitMs`,
+`maintenanceMs`, `totalLifecycleMs`, L1-L3 candidate/eligible/injected IDs and
+budgets, prompt SHA-256, outcome quality flags, authoritative verification,
+and before/after derived-layer maintenance telemetry. This keeps context,
+recovery decisions, and derived refresh cost visible without persisting the
+full rendered prompt.
 `--strict` fails on experiment-integrity defects: agent crashes, wrong base
 commits, unexpected file changes, cross-arm MCP use, missing or failed
-RepoMind lifecycle operations, phase totals that do not reconcile, or sessions left open after cleanup. A hidden-check failure remains a legitimate
+RepoMind lifecycle operations, a committed Host run that did not attempt
+maintenance, partial/failed maintenance, phase totals that do not reconcile,
+or sessions left open after cleanup. A hidden-check failure remains a legitimate
 task outcome and does not by itself invalidate the experiment.
 
-The report keeps `integrity` and `acceptance` separate. Report schema v5 stores
+The report keeps `integrity` and `acceptance` separate. Report schema v7 stores
 independent paired comparisons against no-memory and full-history. Acceptance criteria are
 declared in the manifest and produce individual measured gates. A configured
 task win means that task's RepoMind hidden pass rate must be strictly higher
@@ -122,7 +136,7 @@ success, wall time, input/output tokens, and file reads.
 
 ## Aggregate reports
 
-Combine report v4 or v5 files from multiple models or operating systems:
+Combine report v4-v7 files from multiple models or operating systems:
 
 ```powershell
 repomind eval --agent-summary `
@@ -132,14 +146,16 @@ repomind eval --agent-summary `
   --json
 ```
 
-The aggregate report hashes every source JSON file and recomputes paired means,
-win/tie/loss counts, and approximate 95% intervals from raw runs. `--strict`
-fails when any source report failed integrity. It does not reinterpret or
-override each experiment's acceptance result.
+Aggregate report v2 hashes every source JSON file, records its schema version,
+and recomputes paired means, win/tie/loss counts, and approximate 95% intervals
+from raw runs. Context, maintenance, and quality coverage distinguish `full`,
+`unavailable`, `notApplicable`, and `missing`; an old report's absent field is
+never treated as a zero measurement. `--strict` fails when any source report
+failed integrity. It does not reinterpret or override acceptance.
 
 ## Offline phase profiles
 
-Attribute the runtime and token cost of an existing report-v4 or report-v5 run without
+Attribute the runtime and token cost of an existing report-v4 through report-v7 run without
 calling the model again:
 
 ```powershell
@@ -155,18 +171,29 @@ default. Use `--raw <dir>` if the JSONL files were moved. It writes
 `profile.json` and `profile.md`, hashes the source report, and validates every
 raw file against the report's turn, token, and tool counts.
 
-The profile reports three different boundaries:
+Profile v2 reports four different boundaries:
 
 - direct RepoMind tool time from each MCP tool's own start/end timestamps;
 - the complete model cycle containing session start, session commit, or another
   RepoMind tool, plus the immediately following model cycle;
 - paired end-to-end deltas in wall time, observed event time, process overhead,
   turns, tool calls, and tokens against no-memory and full-history.
+- Host-managed start, Agent, commit, maintenance, L1-L3 injection, quality,
+  maintenance status, and telemetry coverage without pretending these are MCP calls.
 
 Direct tool time is the storage/MCP execution cost. Surrounding cycles also
 contain model and host orchestration time, so they are diagnostic windows, not
 independent additive causal estimates. Paired end-to-end deltas remain the
 authoritative total cost.
+
+## Cross-Session learning
+
+Use `repomind eval --agent-cross-session` when the treatment under test is
+knowledge learned by an earlier real Agent Session rather than manifest-seeded
+Memory. It compares shared and per-stage-isolated database chains while every
+stage starts in a fresh checkout with the same projectId. See
+[`cross-session-agent-benchmark.md`](cross-session-agent-benchmark.md) for the
+manifest, fixture generator, strictness rules, commands, and interpretation.
 
 ## Rebuild the shipped suite
 

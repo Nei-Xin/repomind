@@ -47,24 +47,57 @@ repomind run `
   --task "Fix invoice quantity arithmetic" `
   --model cliproxyapi/gpt-5.6-terra `
   --timeout 600000 `
-  --max-memories 5
+  --max-memories 5 `
+  --context-budget 12000
 ```
 
 The repository must already be initialized with `repomind init`. `--runner`
-defaults to `opencode`; other runners are rejected in this release. Omit
-`--model` to inherit OpenCode's configured default model. Use `--output <dir>`
+defaults to `opencode`; specify it explicitly when a script must remain pinned
+to OpenCode. Omit `--model` to inherit OpenCode's configured default model. Use `--output <dir>`
 to select an empty artifact directory. Otherwise the command creates a unique
 directory under `~/.repomind/runs/`, or under `REPOMIND_DATA_DIR` when set.
 
+`--context-budget` defaults to 12,000 characters. This is a repository-context
+budget, not a cap on the complete OpenCode prompt: it bounds only the injected
+current L3 profile, relevant current L2 narratives, and ranked L1 memories.
+The Host lifecycle instructions and the user's complete current task remain
+outside that budget and are not truncated. Lower-ranked records may be clipped
+or omitted when the three eligible layers exceed the budget. The accepted
+range is 1,000-24,000 characters. On Windows, the Host also rejects a complete
+rendered prompt above 28,000 characters before spawn because the prompt is
+currently passed through argv. The Host also models libuv's Windows argument
+quoting and rejects a complete quoted command line above the 32,767-character
+platform boundary.
+
 The command performs these phases sequentially:
 
-1. Start a RepoMind session and retrieve up to `--max-memories` memories.
+1. Start a RepoMind session and retrieve ranked L1, relevant current L2, and
+   the current L3 profile when available.
 2. Register a persistent Host-run record linked to that session.
-3. Render the evidence-backed memories into the OpenCode task prompt.
+3. Render the eligible repository layers under `--context-budget`, then append
+   the full lifecycle instructions and current task. Every untrusted L1-L3
+   record line is prefixed as a Markdown blockquote, so a forged heading stays
+   inside quoted data rather than becoming Host structure.
 4. Run OpenCode with JSON events, `--pure`, and a temporary host Agent.
 5. Extract the final response plus observed shell command and test evidence.
-6. Commit a successful, partial, or failed session after a normal process exit
-   and close the Host-run record.
+6. Commit a successful, partial, or failed session after a normal process exit.
+7. Only after a successful commit, synchronously rebuild L2, attempt L3, and
+   refresh L4 candidates.
+8. Close the Host-run record and return the final Host report.
+
+The three derived-maintenance stages are best effort and independently
+reported. An L3 attempt with no eligible source is skipped rather than failed.
+A maintenance failure does not roll back an already committed Session and does
+not change an otherwise successful Host-run outcome. Partial, failed, and
+abandoned runs skip all three stages. L4 maintenance only generates or refreshes
+review-required candidates; it never approves, exports, installs, or executes
+them.
+
+A normal Agent process exit is not sufficient for success. Every observed
+`bash` or `shell` command must have exit code zero; any observed nonzero command
+commits the Session as `partial`, marks the Host report unsuccessful, and skips
+derived maintenance. The Host still does not require that at least one test was
+observed unless an external acceptance harness supplies that policy.
 
 OpenCode configuration is overlaid through `OPENCODE_CONFIG_CONTENT`; the
 repository's `opencode.json` is not rewritten. The overlay disables the
@@ -72,6 +105,11 @@ conventional `mcp.repomind` entry and the host prompt forbids RepoMind calls.
 An observed Agent-side RepoMind call is treated as a lifecycle violation and
 the run cannot be successful. Other OpenCode MCP configuration remains
 available, while external plugins are disabled by `--pure` for reproducibility.
+The dedicated Host Agent also sets OpenCode's `external_directory` permission
+to `deny`, so repository tasks cannot inspect sibling experiment artifacts or
+data directories through OpenCode tools. This is a Host policy boundary, not a
+replacement for an operating-system or container sandbox against a hostile
+process.
 
 In normal terminal mode, Agent text is shown as JSON events arrive and lifecycle
 status is written to stderr. `--json` reserves stdout for one final report and
@@ -92,20 +130,22 @@ The artifact directory contains:
 
 - `events.jsonl`: redacted OpenCode events used for evidence extraction.
 - `stderr.log`: redacted OpenCode stderr.
-- `run.json`: redacted lifecycle, retrieval, Agent metric, and commit report.
+- `run.json`: schema version 3 redacted lifecycle, context-injection, Agent
+  metric, commit, and post-commit maintenance report. It records the L2/L3
+  versions retrieved before execution so post-commit refreshes do not make the
+  injected version ambiguous.
 
 Secret redaction is deterministic and pattern-based; it is not a substitute for
 keeping credentials out of task prompts and repositories. Artifacts are local
 but can still contain non-secret source code and command output.
 
-A normal Agent exit is committed even when its exit code is nonzero, preserving
-failure evidence; the command returns that exit code. A timeout, signal, spawn
-failure, or invalid process completion abandons the session and exits nonzero.
-A normally exited run whose captured stdout was truncated commits as partial
-instead of producing a success memory. `SIGINT` and `SIGTERM` map to exit codes
-130 and 143. In every handled
-path the session ends as committed, partial, failed, or abandoned rather than
-remaining open.
+A normal Agent exit is committed as failed when its exit code is nonzero,
+preserving failure evidence; the command returns that exit code. With Agent exit
+zero, any observed nonzero shell command or truncated stdout produces a partial
+Session instead of successful memories. A timeout, signal, spawn failure, or
+invalid process completion abandons the Session and exits nonzero. `SIGINT` and
+`SIGTERM` map to exit codes 130 and 143. Every handled path ends committed,
+partial, failed, or abandoned rather than remaining open.
 
 Query the persistent run catalog without scanning artifact directories:
 
@@ -116,6 +156,9 @@ repomind run-inspect ses_... --repo D:\path\to\repository --json
 
 The catalog also records output setup failures and interrupted runs. Custom
 `--output` directories remain discoverable through their stored report path.
+The final report and persistent Host-run metadata summarize context injection
+and derived-maintenance outcomes for later diagnosis without redefining the
+Session or run status.
 
 ### Library integration
 
@@ -123,17 +166,25 @@ Hosts that need deterministic lifecycle behavior can keep RepoMind outside the
 model loop. The package exports these OpenCode integration helpers:
 
 - `startHostLifecycle(repository, task, dataDirectory?)` starts retrieval and
-  returns the session, memories, and measured start time.
-- `hostManagedPrompt(task, memories)` renders the retrieved context for the
-  OpenCode task prompt.
+  returns the layered Session Start result and measured start time.
+- The Host context renderer builds a bounded current L3/L2/L1 context and
+  returns aggregate injection information without truncating the task or fixed
+  lifecycle instructions.
 - `analyzeOpenCodeOutcome(jsonl, fallback)` extracts the final response and
   command/test evidence from OpenCode JSON events.
 - `commitHostLifecycle(input)` stores the final Git diff, response, and test or
-  command evidence with a measured commit time.
+  command evidence; successful Host commits also perform best-effort derived
+  maintenance without changing commit success when maintenance fails.
 - `abandonHostLifecycle(repository, sessionId, dataDirectory?)` closes an open
   host session when Agent execution cannot be committed safely.
-- `runOpenCodeHost(options)` implements the complete daily lifecycle and accepts
-  an injectable process executor and `AbortSignal` for host integration.
+- `runOpenCodeHost(options)` implements the complete bounded-context daily
+  lifecycle and accepts an injectable process executor and `AbortSignal` for
+  host integration.
+
+This automatic maintenance belongs to the Host-managed helpers and
+`repomind run`. Calling `commitSession` directly, using `repomind commit`, or
+committing through `repo_session_commit` does not trigger it; those callers can
+invoke the existing CLI or MCP rebuild operations explicitly.
 
 The controlled evaluation runner exercises this real integration with:
 

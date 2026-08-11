@@ -1,11 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
 import type {
   CommitSessionInput,
   CommitSessionResult,
   CorrectMemoryInput,
   CorrectMemoryResult,
+  DerivedMaintenanceError,
+  DerivedMaintenanceResult,
+  DerivedMaintenanceStageResult,
   EvidenceKind,
   ExtractSessionInput,
   ExtractSessionResult,
@@ -109,6 +113,61 @@ const DECLARATIVE_TYPES: ReadonlySet<MemoryType> = new Set([
   "architecture", "convention", "decision", "dependency", "location", "requirement", "risk",
 ]);
 
+const NO_REPOSITORY_PROFILE_SOURCES = "No stable L1 or current L2 sources are available for a repository profile";
+const MAX_VERIFIED_COMMAND_SUMMARY_CHARS = 320;
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 1000) / 1000;
+}
+
+function derivedMaintenanceError(error: unknown): DerivedMaintenanceError {
+  if (error instanceof RepoMindError) {
+    return { code: error.code, message: error.message, details: error.details ?? null };
+  }
+  return {
+    code: "INTERNAL_ERROR",
+    message: error instanceof Error ? error.message : String(error),
+    details: null,
+  };
+}
+
+function runDerivedMaintenanceStage<T>(
+  action: () => T,
+  skippedReason: (result: T) => string | null,
+  skippedError?: (error: unknown) => string | null,
+): DerivedMaintenanceStageResult<T> {
+  const startedAt = performance.now();
+  try {
+    const result = action();
+    const reason = skippedReason(result);
+    return {
+      status: reason === null ? "success" : "skipped",
+      durationMs: elapsedMilliseconds(startedAt),
+      result,
+      error: null,
+      reason,
+    };
+  } catch (error) {
+    const reason = skippedError?.(error) ?? null;
+    if (reason !== null) {
+      return {
+        status: "skipped",
+        durationMs: elapsedMilliseconds(startedAt),
+        result: null,
+        error: null,
+        reason,
+      };
+    }
+    return {
+      status: "failed",
+      durationMs: elapsedMilliseconds(startedAt),
+      result: null,
+      error: derivedMaintenanceError(error),
+      reason: null,
+    };
+  }
+}
+
 function conflictWarning(withMemoryIds: string[]): string {
   const label = withMemoryIds.length === 1 ? "memory" : "memories";
   return `This memory conflicts with ${label} ${withMemoryIds.join(", ")}; verify before relying on either side.`;
@@ -136,6 +195,37 @@ function titleFrom(text: string, fallback: string): string {
   return line.length > 96 ? `${line.slice(0, 93)}...` : line;
 }
 
+function compactVerifiedCommandSummary(value: string): string {
+  const normalized = value
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
+    .replace(/\u0000/gu, "")
+    .replace(/\r\n?/gu, "\n")
+    .trim();
+  const counts = new Map<string, string>();
+  for (const match of normalized.matchAll(/^\s*#?\s*(tests|pass|fail|failed|skipped|cancelled|canceled|todo)\s*[:=]?\s*(\d+)\b/gimu)) {
+    const key = match[1]!.toLowerCase().replace("failed", "fail").replace("canceled", "cancelled");
+    if (!counts.has(key)) counts.set(key, match[2]!);
+  }
+  const ordered = ["tests", "pass", "fail", "skipped", "cancelled", "todo"]
+    .flatMap((key) => counts.has(key) ? [`${key} ${counts.get(key)}`] : []);
+  if (ordered.length) return ordered.join("; ");
+  const compact = normalized.replace(/\s+/gu, " ");
+  if (compact.length <= MAX_VERIFIED_COMMAND_SUMMARY_CHARS) return compact;
+  const marker = " ... ";
+  const headChars = Math.ceil((MAX_VERIFIED_COMMAND_SUMMARY_CHARS - marker.length) * 0.6);
+  const tailChars = MAX_VERIFIED_COMMAND_SUMMARY_CHARS - marker.length - headChars;
+  return `${compact.slice(0, headChars).trimEnd()}${marker}${compact.slice(-tailChars).trimStart()}`;
+}
+
+function verifiedCommandMemoryContent(test: NonNullable<CommitSessionInput["tests"]>[number]): string {
+  const summary = compactVerifiedCommandSummary(test.summary);
+  return [
+    `Command: ${JSON.stringify(test.command)}`,
+    `Result: passed (exit code ${test.exitCode})`,
+    ...(summary ? [`Summary: ${summary}`] : []),
+  ].join("\n");
+}
+
 function extractFiles(status: string): string[] {
   return [...new Set(status.split(/\r?\n/u).filter(Boolean).map((line) => {
     const path = line.slice(3).trim();
@@ -151,8 +241,12 @@ export class RepositoryMemoryCore {
   readonly extractionRunner: LlmRunner | null;
   readonly extractionConfigError: string | null;
 
-  constructor(repositoryPath: string, options: { embeddingProvider?: EmbeddingProvider | null; extractionRunner?: LlmRunner | null } = {}) {
-    this.context = openRepository(repositoryPath);
+  constructor(repositoryPath: string, options: {
+    dataDirectory?: string;
+    embeddingProvider?: EmbeddingProvider | null;
+    extractionRunner?: LlmRunner | null;
+  } = {}) {
+    this.context = openRepository(repositoryPath, undefined, options.dataDirectory);
     let provider: EmbeddingProvider | null = null;
     let configError: string | null = null;
     try {
@@ -179,6 +273,7 @@ export class RepositoryMemoryCore {
 
   startSession(input: StartSessionInput): StartSessionResult {
     if (!input.task.trim()) throw new RepoMindError("INVALID_INPUT", "task must not be empty");
+    const maxMemories = input.maxMemories ?? 5;
     const snapshot = inspectGit(this.context.root);
     const sessionId = `ses_${randomUUID()}`;
     const rawTask = input.task.trim();
@@ -205,7 +300,7 @@ export class RepositoryMemoryCore {
         sessionId,
         repositoryId: this.context.marker.projectId,
         baseline: snapshot,
-        memories: this.search(task, { limit: input.maxMemories ?? 5 }),
+        memories: maxMemories === 0 ? [] : this.search(task, { limit: maxMemories }),
         moduleNarratives: this.searchModuleNarratives(task),
         ...(repositoryProfile?.current ? { repositoryProfile } : {}),
       };
@@ -217,6 +312,7 @@ export class RepositoryMemoryCore {
 
   async startSessionHybrid(input: StartSessionInput): Promise<StartSessionResult> {
     const started = this.startSession(input);
+    if (input.maxMemories === 0) return started;
     try {
       const retrieval = await this.searchHybrid(input.task, { limit: input.maxMemories ?? 5 });
       return {
@@ -252,6 +348,7 @@ export class RepositoryMemoryCore {
     const finalSnapshot = inspectGit(this.context.root);
     const diff = captureDiff(this.context.root, session.baseline_head, finalSnapshot.head);
     const files = extractFiles(finalSnapshot.status);
+    const memoryFiles = files.filter((file) => this.fileFingerprint(file).hash !== null);
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
     return db.transaction(() => {
@@ -267,11 +364,11 @@ export class RepositoryMemoryCore {
         }, finalSnapshot.head));
       }
 
-      const testEvidence = new Map<string, string>();
+      const testEvidence: string[] = [];
       for (const test of input.tests ?? []) {
         const id = this.insertEvidence(input.sessionId, "test_result", JSON.stringify(test), { exitCode: test.exitCode, command: test.command }, finalSnapshot.head);
         evidenceIds.push(id);
-        testEvidence.set(test.command, id);
+        testEvidence.push(id);
       }
       for (const command of input.commands ?? []) {
         evidenceIds.push(this.insertEvidence(input.sessionId, "command_result", JSON.stringify(command), { exitCode: command.exitCode, command: command.command }, finalSnapshot.head));
@@ -285,15 +382,24 @@ export class RepositoryMemoryCore {
         conflicts += outcome.conflicts.length;
       };
       const summaryEvidence = evidenceIds[0];
-      for (const decision of input.decisions ?? []) {
-        track(this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: files }, "extracted", [summaryEvidence!]));
-      }
-      for (const test of (input.tests ?? []).filter((item) => item.exitCode === 0)) {
-        const content = `${test.command}\n${test.summary}`;
-        track(this.storeMemory({ type: "command", title: `Verified command: ${test.command}`, content, confidence: 0.95, tags: ["test", "verified-command"], relatedFiles: files }, "extracted", [testEvidence.get(test.command)!]));
-      }
-      if (input.status === "success" && input.summary.trim()) {
-        track(this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: files }, "extracted", evidenceIds));
+      if (input.status === "success") {
+        for (const decision of input.decisions ?? []) {
+          track(this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: memoryFiles }, "extracted", [summaryEvidence!]));
+        }
+        for (const [index, test] of (input.tests ?? []).entries()) {
+          if (test.exitCode !== 0) continue;
+          track(this.storeMemory({
+            type: "command",
+            title: `Verified command: ${test.command}`,
+            content: verifiedCommandMemoryContent(test),
+            confidence: 0.95,
+            tags: ["test", "verified-command"],
+            relatedFiles: memoryFiles,
+          }, "extracted", [testEvidence[index]!]));
+        }
+        if (input.summary.trim()) {
+          track(this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: memoryFiles }, "extracted", evidenceIds));
+        }
       }
 
       db.raw.prepare(`
@@ -886,6 +992,38 @@ export class RepositoryMemoryCore {
     return new SkillCandidateStore(this.context).rebuild(input);
   }
 
+  maintainDerivedLayers(): DerivedMaintenanceResult {
+    const startedAt = performance.now();
+    const l2 = runDerivedMaintenanceStage(
+      () => this.rebuildModuleNarratives(),
+      (result) => result.created + result.updated + result.unchanged + result.deleted === 0
+        ? "No eligible L1 sources or existing L2 narratives required maintenance."
+        : null,
+    );
+    const l3 = runDerivedMaintenanceStage(
+      () => this.rebuildRepositoryProfile(),
+      () => null,
+      (error) => error instanceof RepoMindError
+        && error.code === "INVALID_INPUT"
+        && error.message === NO_REPOSITORY_PROFILE_SOURCES
+        ? NO_REPOSITORY_PROFILE_SOURCES
+        : null,
+    );
+    const l4 = runDerivedMaintenanceStage(
+      () => this.rebuildSkillCandidates(),
+      (result) => result.created + result.updated + result.unchanged === 0
+        ? "No qualifying L4 workflow required maintenance."
+        : null,
+    );
+    const stages = [l2, l3, l4];
+    const succeeded = stages.filter((stage) => stage.status === "success").length;
+    const failed = stages.filter((stage) => stage.status === "failed").length;
+    const status = failed === 0
+      ? succeeded === 0 ? "skipped" : "success"
+      : succeeded === 0 ? "failed" : "partial";
+    return { status, durationMs: elapsedMilliseconds(startedAt), l2, l3, l4 };
+  }
+
   listSkillCandidates(status?: SkillCandidateStatus): SkillCandidateSummary[] {
     return new SkillCandidateStore(this.context).list(status);
   }
@@ -1148,12 +1286,20 @@ export class RepositoryMemoryCore {
     }));
   }
 
-  /** Resolves a repository-relative path, refusing anything outside the root. */
+  /** Resolves an existing repository-relative path without following links outside the root. */
   private resolveInsideRoot(filePath: string): string | null {
     const absolute = resolve(this.context.root, filePath);
     const fromRoot = relative(this.context.root, absolute);
     if (!fromRoot || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) return null;
-    return absolute;
+    try {
+      const canonical = realpathSync.native(absolute);
+      const canonicalFromRoot = relative(this.context.root, canonical);
+      if (!canonicalFromRoot || canonicalFromRoot === ".." || canonicalFromRoot.startsWith(`..${sep}`) || isAbsolute(canonicalFromRoot)) return null;
+      return canonical;
+    } catch {
+      // Missing and inaccessible related files keep their existing null-fingerprint semantics.
+      return null;
+    }
   }
 
   private fileStat(filePath: string): { size: number; mtimeMs: number } | null {
@@ -1171,7 +1317,7 @@ export class RepositoryMemoryCore {
     const absolute = this.resolveInsideRoot(filePath);
     if (!absolute) return null;
     try {
-      return existsSync(absolute) && statSync(absolute).isFile() ? hash(readFileSync(absolute)) : null;
+      return statSync(absolute).isFile() ? hash(readFileSync(absolute)) : null;
     } catch {
       return null;
     }

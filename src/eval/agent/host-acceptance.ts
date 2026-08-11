@@ -221,6 +221,14 @@ function seedTask(task: AgentTask, repository: string, dataDirectory: string): v
         ...(memory.tags ? { tags: memory.tags } : {}),
         ...(memory.relatedFiles ? { relatedFiles: memory.relatedFiles } : {}),
       });
+      const maintenance = core.maintainDerivedLayers();
+      if (maintenance.status === "partial" || maintenance.status === "failed") {
+        throw new RepoMindError("STORAGE_UNAVAILABLE", `Unable to seed layered Host acceptance context for ${task.id}`, {
+          l2: maintenance.l2.error,
+          l3: maintenance.l3.error,
+          l4: maintenance.l4.error,
+        });
+      }
     } finally {
       core.close();
     }

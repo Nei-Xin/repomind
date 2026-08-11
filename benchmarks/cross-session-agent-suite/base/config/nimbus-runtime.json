@@ -1,0 +1,8 @@
+{
+  "gateway": "nimbus",
+  "retry": {
+    "mode": "bounded-exponential-v2",
+    "minimumAttempt": 0,
+    "maximumAttempt": 4
+  }
+}

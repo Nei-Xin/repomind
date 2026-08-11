@@ -48,8 +48,12 @@ const DEFAULT_BUDGET = 6_000;
 const MIN_BUDGET = 1_000;
 const MAX_BUDGET = 30_000;
 const DEFAULT_MIN_CONFIDENCE = 0.8;
+const PROFILE_RENDER_VERSION = 2;
 const STABLE_TYPES: ReadonlySet<MemoryType> = new Set([
   "architecture", "convention", "decision", "command", "dependency", "requirement", "risk",
+]);
+const PROFILE_MODULE_TYPES: ReadonlySet<MemoryType> = new Set([
+  "architecture", "convention", "decision", "dependency", "requirement", "risk",
 ]);
 
 function sha256(value: string): string {
@@ -81,27 +85,31 @@ function appendBounded(lines: string[], maxChars: number): string {
 }
 
 function moduleStatement(module: StableModule): string {
-  const preferred = module.memories.filter((memory) => ["architecture", "convention", "decision", "requirement"].includes(memory.type));
-  const selected = (preferred.length ? preferred : module.memories).slice(0, 2);
+  const selected = module.memories.slice(0, 2);
   return selected.map((memory) => `[${memory.type}] ${memory.title}: ${clip(memory.content, 180)}`).join("; ");
 }
 
 function fingerprint(memories: StableMemory[], modules: StableModule[], budget: number, minConfidence: number): string {
   return sha256(JSON.stringify({
+    renderVersion: PROFILE_RENDER_VERSION,
     budget,
     minConfidence,
-    memories: memories.map((item) => [item.id, item.fingerprint, item.updatedAt, item.confidence, item.evidenceCount]),
+    memories: memories.map((item) => [item.id, item.fingerprint]),
     modules: modules.map((item) => [item.id, item.modulePath, item.memories.map((memory) => [
-      memory.id, memory.fingerprint, memory.updatedAt, memory.confidence, memory.evidenceCount,
+      memory.id, memory.fingerprint,
     ])]),
   }));
 }
 
 function renderProfile(repositoryName: string, memories: StableMemory[], modules: StableModule[], maxChars: number): string {
   const lines = [`# Repository Profile: ${repositoryName}`];
-  if (modules.length) {
+  const moduleLines = modules.flatMap((module) => {
+    const statement = moduleStatement(module);
+    return statement ? [`- ${module.modulePath}: ${clip(statement)} (${module.id})`] : [];
+  });
+  if (moduleLines.length) {
     lines.push("", "## Modules and responsibilities");
-    for (const module of modules) lines.push(`- ${module.modulePath}: ${clip(moduleStatement(module))} (${module.id})`);
+    lines.push(...moduleLines);
   }
   const groups: Array<[string, MemoryType[]]> = [
     ["Technology and environment", ["dependency", "architecture"]],
@@ -278,7 +286,7 @@ export class RepositoryProfileStore {
     }>;
     const grouped = new Map<string, { memory: StableMemory; modules: Set<string> }>();
     for (const row of rows) {
-      if (Number(row.evidence_count) < 1) continue;
+      if (Number(row.evidence_count) < 1 || !PROFILE_MODULE_TYPES.has(row.type)) continue;
       let source = grouped.get(row.id);
       if (!source) {
         source = {
@@ -316,12 +324,18 @@ export class RepositoryProfileStore {
   }
 
   private summary(row: ProfileRow, current: boolean): RepositoryProfileSummary {
+    const version = this.context.database.raw.prepare(`
+      SELECT memory_ids_json, narrative_ids_json FROM repository_profile_versions
+      WHERE profile_id=? AND version=?
+    `).get(row.id, row.version) as { memory_ids_json: string; narrative_ids_json: string } | undefined;
     return {
       id: row.id,
       title: row.title,
       content: row.content,
       memorySourceCount: Number(row.memory_source_count),
       moduleSourceCount: Number(row.module_source_count),
+      sourceMemoryIds: version ? JSON.parse(version.memory_ids_json) as string[] : [],
+      sourceModuleNarrativeIds: version ? JSON.parse(version.narrative_ids_json) as string[] : [],
       budgetChars: Number(row.budget_chars),
       minConfidence: Number(row.min_confidence),
       version: Number(row.version),

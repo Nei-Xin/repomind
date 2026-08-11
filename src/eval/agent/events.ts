@@ -4,7 +4,10 @@ export interface AgentEventMetrics {
   toolCalls: Record<string, number>;
   failedTools: number;
   failedCommands: number;
+  /** Successful structured file reads. */
   fileReads: number;
+  /** Read tool calls that did not complete successfully. */
+  failedFileReads: number;
   repeatedFileReads: number;
   repoMindCalls: number;
   retrievedMemories: number;
@@ -41,6 +44,7 @@ export function analyzeAgentEvents(jsonl: string): AgentEventMetrics {
   let turns = 0;
   let failedTools = 0;
   let failedCommands = 0;
+  let failedFileReads = 0;
   let retrievedMemories = 0;
   for (const event of events) {
     const part = event.part as Record<string, unknown> | undefined;
@@ -63,8 +67,12 @@ export function analyzeAgentEvents(jsonl: string): AgentEventMetrics {
     if (state.status !== "completed") failedTools += 1;
     if ((tool === "bash" || tool === "shell") && Number(metadata?.exit ?? 0) !== 0) failedCommands += 1;
     if (tool === "read" && typeof input?.filePath === "string") {
-      const path = input.filePath.toLowerCase();
-      reads.set(path, (reads.get(path) ?? 0) + 1);
+      if (state.status === "completed") {
+        const path = input.filePath.toLowerCase();
+        reads.set(path, (reads.get(path) ?? 0) + 1);
+      } else {
+        failedFileReads += 1;
+      }
     }
     if (tool === "repomind_repo_session_start" && typeof state.output === "string") {
       try {
@@ -80,6 +88,7 @@ export function analyzeAgentEvents(jsonl: string): AgentEventMetrics {
     failedTools,
     failedCommands,
     fileReads: [...reads.values()].reduce((sum, count) => sum + count, 0),
+    failedFileReads,
     repeatedFileReads: [...reads.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0),
     repoMindCalls: [...toolCalls].filter(([name]) => name.startsWith("repomind_")).reduce((sum, [, count]) => sum + count, 0),
     retrievedMemories,

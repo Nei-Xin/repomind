@@ -60,6 +60,8 @@ export interface ModuleNarrativeSummary {
   title: string;
   content: string;
   sourceCount: number;
+  /** Ordered L1 provenance used to build this narrative. */
+  sourceMemoryIds: string[];
   budgetChars: number;
   version: number;
   current: boolean;
@@ -100,6 +102,10 @@ export interface RepositoryProfileSummary {
   content: string;
   memorySourceCount: number;
   moduleSourceCount: number;
+  /** Complete ordered L1 provenance for the current profile version. */
+  sourceMemoryIds: string[];
+  /** Ordered L2 provenance for the current profile version. */
+  sourceModuleNarrativeIds: string[];
   budgetChars: number;
   minConfidence: number;
   version: number;
@@ -202,6 +208,31 @@ export interface RebuildSkillCandidatesResult {
   updated: number;
   unchanged: number;
   candidates: SkillCandidateSummary[];
+}
+
+export type DerivedMaintenanceStatus = "success" | "partial" | "failed" | "skipped";
+export type DerivedMaintenanceStageStatus = "success" | "failed" | "skipped";
+
+export interface DerivedMaintenanceError {
+  code: string;
+  message: string;
+  details: Record<string, unknown> | null;
+}
+
+export interface DerivedMaintenanceStageResult<T> {
+  status: DerivedMaintenanceStageStatus;
+  durationMs: number;
+  result: T | null;
+  error: DerivedMaintenanceError | null;
+  reason: string | null;
+}
+
+export interface DerivedMaintenanceResult {
+  status: DerivedMaintenanceStatus;
+  durationMs: number;
+  l2: DerivedMaintenanceStageResult<RebuildModuleNarrativesResult>;
+  l3: DerivedMaintenanceStageResult<RebuildRepositoryProfileResult>;
+  l4: DerivedMaintenanceStageResult<RebuildSkillCandidatesResult>;
 }
 
 export interface ReviewSkillCandidateInput {

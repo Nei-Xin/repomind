@@ -1,5 +1,8 @@
 import type { AgentAcceptanceCriteria } from "./manifest.js";
 import type { AgentEventMetrics } from "./events.js";
+import type { HostContextInjectionStats } from "../../integrations/opencode/context.js";
+import type { HostOutcomeAssessment } from "../../integrations/opencode/lifecycle.js";
+import type { HostRunMaintenanceReport } from "../../integrations/opencode/run.js";
 
 export type AgentArm = "no-memory" | "full-history" | "repomind";
 export type AgentBaselineArm = Exclude<AgentArm, "repomind">;
@@ -18,6 +21,40 @@ export interface CheckResult {
   passed: boolean;
 }
 
+export interface FullAgentContextTelemetry {
+  availability: "full";
+  policy: {
+    version: 1;
+    unit: "utf16-code-units";
+    weights: { l1: 5; l2: 3; l3: 2 };
+  };
+  retrieval: {
+    maxMemories: number;
+    strategy: string | null;
+    fallbackReason: string | null;
+    l1: Array<{ id: string; version: null; type: string; status: string }>;
+    l2: Array<{ id: string; version: number; modulePath: string; current: boolean }>;
+    l3: { id: string; version: number; current: boolean } | null;
+  };
+  context: HostContextInjectionStats;
+}
+
+export type AgentContextTelemetry = FullAgentContextTelemetry | {
+  availability: "not-applicable" | "unavailable";
+  reason: string;
+};
+
+export type AgentMaintenanceTelemetry = {
+  availability: "full";
+  attempted: boolean;
+  trigger: "committed-session" | "session-not-committed";
+  report: HostRunMaintenanceReport | null;
+  reason: string | null;
+} | {
+  availability: "not-applicable" | "unavailable";
+  reason: string;
+};
+
 export interface AgentRunResult {
   taskId: string;
   arm: AgentArm;
@@ -30,6 +67,7 @@ export interface AgentRunResult {
   startMs: number | null;
   agentMs: number;
   commitMs: number | null;
+  maintenanceMs: number | null;
   totalLifecycleMs: number;
   wallDurationMs: number;
   publicChecks: CheckResult[];
@@ -49,9 +87,14 @@ export interface AgentRunResult {
     commitAttempted: boolean;
     commitSucceeded: boolean;
     commitStatus: string | null;
+    maintenanceAttempted: boolean;
+    maintenanceStatus: string | null;
     evidenceCreated: number;
     error: string | null;
   };
+  contextTelemetry: AgentContextTelemetry;
+  maintenanceTelemetry: AgentMaintenanceTelemetry;
+  quality: HostOutcomeAssessment | null;
   events: AgentEventMetrics;
 }
 
@@ -110,16 +153,20 @@ interface ArmSummary {
   meanStartMs: number | null;
   meanAgentMs: number;
   meanCommitMs: number | null;
+  meanMaintenanceMs: number | null;
   meanTotalLifecycleMs: number;
   meanInputTokens: number;
   meanOutputTokens: number;
   meanFileReads: number;
   repoMindCalls: number;
   retrievedMemories: number;
+  fullContextTelemetryRuns: number;
+  fullMaintenanceTelemetryRuns: number;
+  recoveredSessions: number;
 }
 
 export interface AgentEvalReport {
-  version: 5;
+  version: 7;
   name: string;
   generatedAt: string;
   runner: "opencode";
@@ -355,12 +402,16 @@ function summarizeArm(runs: AgentRunResult[]): ArmSummary {
     meanStartMs: presentMean(runs.map((run) => run.startMs)),
     meanAgentMs: round(mean(runs.map((run) => run.agentMs))),
     meanCommitMs: presentMean(runs.map((run) => run.commitMs)),
+    meanMaintenanceMs: presentMean(runs.map((run) => run.maintenanceMs)),
     meanTotalLifecycleMs: round(mean(runs.map((run) => run.totalLifecycleMs))),
     meanInputTokens: round(mean(runs.map((run) => run.events.tokens.input))),
     meanOutputTokens: round(mean(runs.map((run) => run.events.tokens.output))),
     meanFileReads: round(mean(runs.map((run) => run.events.fileReads))),
     repoMindCalls: runs.reduce((sum, run) => sum + run.events.repoMindCalls, 0),
     retrievedMemories: runs.reduce((sum, run) => sum + retrievedMemories(run), 0),
+    fullContextTelemetryRuns: runs.filter((run) => run.contextTelemetry.availability === "full").length,
+    fullMaintenanceTelemetryRuns: runs.filter((run) => run.maintenanceTelemetry.availability === "full").length,
+    recoveredSessions: runs.filter((run) => run.quality?.completion === "recovered").length,
   };
 }
 
@@ -389,13 +440,13 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
     if (run.unexpectedChanges.length) failures.push(`${label}: unexpected changes: ${run.unexpectedChanges.join(", ")}`);
     if ([...run.publicChecks, ...run.hiddenChecks].some((check) => check.exitCode === null)) failures.push(`${label}: a check could not be executed`);
     if (run.openSessionsAfterCleanup) failures.push(`${label}: open RepoMind sessions remain after cleanup`);
-    if ([run.startMs, run.agentMs, run.commitMs, run.totalLifecycleMs].some((value) => value !== null && (!Number.isFinite(value) || value < 0))) {
+    if ([run.startMs, run.agentMs, run.commitMs, run.maintenanceMs, run.totalLifecycleMs].some((value) => value !== null && (!Number.isFinite(value) || value < 0))) {
       failures.push(`${label}: lifecycle timing contains an invalid value`);
     }
     if (run.lifecycle.error) failures.push(`${label}: lifecycle error: ${run.lifecycle.error}`);
     if (run.wallDurationMs !== run.totalLifecycleMs) failures.push(`${label}: wall time does not equal total lifecycle time`);
     if (run.lifecycle.mode === "host-managed") {
-      const components = (run.startMs ?? 0) + run.agentMs + (run.commitMs ?? 0);
+      const components = (run.startMs ?? 0) + run.agentMs + (run.commitMs ?? 0) + (run.maintenanceMs ?? 0);
       if (Math.abs(components - run.totalLifecycleMs) > 2) failures.push(`${label}: lifecycle phases do not add up to total time`);
     }
     if (run.arm === "repomind" && run.lifecycle.mode === "agent-managed" && run.events.repoMindCalls === 0) failures.push(`${label}: RepoMind MCP was not called`);
@@ -403,6 +454,124 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
       if (run.events.repoMindCalls !== 0) failures.push(`${label}: host-managed Agent called RepoMind MCP`);
       if (!run.lifecycle.startSucceeded) failures.push(`${label}: host-managed session start failed`);
       if (!run.lifecycle.commitSucceeded) failures.push(`${label}: host-managed session commit failed`);
+      if (run.lifecycle.commitStatus === "committed" && !run.lifecycle.maintenanceAttempted) {
+        failures.push(`${label}: host-managed derived maintenance was not attempted`);
+      }
+      if (run.lifecycle.maintenanceStatus === "partial" || run.lifecycle.maintenanceStatus === "failed") {
+        failures.push(`${label}: host-managed derived maintenance ${run.lifecycle.maintenanceStatus}`);
+      }
+      if (run.contextTelemetry.availability !== "full") {
+        failures.push(`${label}: full Host context telemetry is unavailable`);
+      } else {
+        const telemetry = run.contextTelemetry;
+        const context = run.contextTelemetry.context;
+        if (context.contextChars > context.budgetChars || context.unusedChars !== context.budgetChars - context.contextChars) {
+          failures.push(`${label}: Host context budget telemetry is inconsistent`);
+        }
+        if (!/^[a-f0-9]{64}$/u.test(context.promptSha256)) failures.push(`${label}: Host prompt hash is invalid`);
+        for (const layer of [context.l1, context.l2, context.l3]) {
+          if (layer.provided !== layer.providedIds.length || layer.eligible !== layer.eligibleIds.length || layer.injected !== layer.injectedIds.length) {
+            failures.push(`${label}: Host context layer counts do not match record ids`);
+          }
+          if (layer.sectionChars > layer.allocatedChars
+            || layer.injected + layer.omitted + layer.deduplicated !== layer.eligible
+            || layer.deduplicated !== layer.deduplicatedIds.length
+            || layer.candidateChars + layer.deduplicatedChars !== layer.sourceChars) {
+            failures.push(`${label}: Host context layer allocation is inconsistent`);
+          }
+          if (new Set(layer.providedIds).size !== layer.providedIds.length
+            || layer.eligibleIds.some((id) => !layer.providedIds.includes(id))
+            || layer.injectedIds.some((id) => !layer.eligibleIds.includes(id))) {
+            failures.push(`${label}: Host context layer record ids are inconsistent`);
+          }
+        }
+        const retrievalIds = {
+          l1: telemetry.retrieval.l1.map((record) => record.id),
+          l2: telemetry.retrieval.l2.map((record) => record.id),
+          l3: telemetry.retrieval.l3 ? [telemetry.retrieval.l3.id] : [],
+        };
+        for (const layer of ["l1", "l2", "l3"] as const) {
+          if (JSON.stringify(retrievalIds[layer]) !== JSON.stringify(context[layer].providedIds)) {
+            failures.push(`${label}: Host ${layer.toUpperCase()} retrieval ids do not match rendered context`);
+          }
+        }
+        if (telemetry.retrieval.l2.some((record) => !Number.isSafeInteger(record.version) || record.version < 1)
+          || (telemetry.retrieval.l3 !== null
+            && (!Number.isSafeInteger(telemetry.retrieval.l3.version) || telemetry.retrieval.l3.version < 1))) {
+          failures.push(`${label}: Host L2/L3 context versions are invalid`);
+        }
+        const l2Versions = new Map(telemetry.retrieval.l2.map((record) => [record.id, record.version]));
+        if (context.l2.injectedIds.some((id) => !l2Versions.has(id))
+          || context.l3.injectedIds.some((id) => telemetry.retrieval.l3?.id !== id)) {
+          failures.push(`${label}: injected Host L2/L3 records have no version telemetry`);
+        }
+      }
+      if (!run.quality) {
+        failures.push(`${label}: Host outcome quality assessment is unavailable`);
+      } else {
+        const checks = [...run.publicChecks, ...run.hiddenChecks];
+        const expectedPassed = !checks.length
+          ? null
+          : checks.some((check) => check.exitCode !== null && check.exitCode !== 0)
+            ? false
+            : checks.some((check) => check.exitCode === null) ? null : true;
+        const verification = run.quality.authoritativeVerification;
+        if (verification.authority !== (checks.length ? "benchmark-manifest" : "none")
+          || verification.checks !== checks.length
+          || verification.passed !== expectedPassed) {
+          failures.push(`${label}: Host authoritative verification telemetry is inconsistent`);
+        }
+        if (checks.length && verification.snapshotStable !== true) {
+          failures.push(`${label}: Host authoritative verification changed the repository snapshot`);
+        }
+        if (run.quality.maintenanceEligible !== (run.quality.status === "success")) {
+          failures.push(`${label}: Host outcome maintenance eligibility is inconsistent`);
+        }
+        const expectedCommitStatus = run.quality.status === "success" ? "committed" : run.quality.status;
+        if (run.lifecycle.commitSucceeded && run.lifecycle.commitStatus !== expectedCommitStatus) {
+          failures.push(`${label}: Host commit status does not match outcome assessment`);
+        }
+        if (run.quality.completion === "recovered"
+          && (run.quality.status !== "success" || run.quality.commands.failed < 1
+            || run.quality.commands.recovered !== run.quality.commands.failed
+            || run.quality.commands.unrecovered !== 0)) {
+          failures.push(`${label}: recovered Host outcome telemetry is inconsistent`);
+        }
+      }
+      if (run.maintenanceTelemetry.availability !== "full") {
+        failures.push(`${label}: full Host maintenance telemetry is unavailable`);
+      } else {
+        const telemetry = run.maintenanceTelemetry;
+        if (telemetry.attempted !== run.lifecycle.maintenanceAttempted) {
+          failures.push(`${label}: Host maintenance attempt telemetry is inconsistent`);
+        }
+        if (run.lifecycle.commitStatus === "committed" && !telemetry.attempted) {
+          failures.push(`${label}: committed Host run has no maintenance telemetry attempt`);
+        }
+        if (telemetry.trigger !== (run.lifecycle.commitStatus === "committed" ? "committed-session" : "session-not-committed")) {
+          failures.push(`${label}: Host maintenance trigger telemetry is inconsistent`);
+        }
+        if (telemetry.attempted !== (telemetry.report !== null)) {
+          failures.push(`${label}: Host maintenance report availability is inconsistent`);
+        }
+        if (telemetry.report) {
+          if (telemetry.report.status !== run.lifecycle.maintenanceStatus
+            || !Number.isFinite(telemetry.report.durationMs) || telemetry.report.durationMs < 0) {
+            failures.push(`${label}: Host maintenance summary telemetry is inconsistent`);
+          }
+          if (telemetry.report.before === null || telemetry.report.after === null || telemetry.report.telemetryErrors.length) {
+            failures.push(`${label}: Host derived-layer before/after telemetry is incomplete`);
+          }
+          for (const [layer, stage] of [["L2", telemetry.report.l2], ["L3", telemetry.report.l3], ["L4", telemetry.report.l4]] as const) {
+            if (!Number.isFinite(stage.durationMs) || stage.durationMs < 0
+              || (stage.status === "success" && (stage.result === null || stage.error !== null || stage.reason !== null))
+              || (stage.status === "failed" && (stage.result !== null || stage.error === null || stage.reason !== null))
+              || (stage.status === "skipped" && (stage.error !== null || stage.reason === null))) {
+              failures.push(`${label}: Host ${layer} maintenance stage telemetry is inconsistent`);
+            }
+          }
+        }
+      }
     }
     if (run.arm === "repomind" && run.lifecycle.mode === "none") failures.push(`${label}: RepoMind lifecycle is missing`);
     if (run.arm === "repomind" && run.lifecycle.mode !== expectedLifecycle) failures.push(`${label}: RepoMind lifecycle does not match report mode ${expectedLifecycle}`);
@@ -415,7 +584,7 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
   };
   const integrity = { passed: failures.length === 0, failures };
   return {
-    version: 5, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
+    version: 7, generatedAt: new Date().toISOString(), name: input.name, runner: input.runner,
     model: input.model, repeat: input.repeat, repoMindLifecycle: input.repoMindLifecycle ?? "agent-managed", outputDirectory: input.outputDirectory,
     provenance: input.provenance, runs: input.runs, arms, comparisons, integrity,
     acceptance: evaluateAcceptance(input.acceptanceCriteria, integrity.passed, comparisons, input.runs),
@@ -445,19 +614,27 @@ function comparisonMarkdown(comparison: PairedComparison): string {
 export function renderAgentMarkdown(report: AgentEvalReport): string {
   const armRows = (["no-memory", "full-history", "repomind"] as const).flatMap((arm) => {
     const value = report.arms[arm];
-    return value ? [`| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanTotalLifecycleMs / 1000).toFixed(1)} s | ${value.meanStartMs === null ? "n/a" : `${value.meanStartMs.toFixed(1)} ms`} | ${value.meanAgentMs.toFixed(1)} ms | ${value.meanCommitMs === null ? "n/a" : `${value.meanCommitMs.toFixed(1)} ms`} | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`] : [];
+    return value ? [`| ${arm} | ${value.hiddenPasses}/${value.runs} | ${value.publicPasses}/${value.runs} | ${(value.meanTotalLifecycleMs / 1000).toFixed(1)} s | ${value.meanStartMs === null ? "n/a" : `${value.meanStartMs.toFixed(1)} ms`} | ${value.meanAgentMs.toFixed(1)} ms | ${value.meanCommitMs === null ? "n/a" : `${value.meanCommitMs.toFixed(1)} ms`} | ${value.meanMaintenanceMs === null ? "n/a" : `${value.meanMaintenanceMs.toFixed(1)} ms`} | ${Math.round(value.meanInputTokens)} | ${Math.round(value.meanOutputTokens)} | ${value.meanFileReads.toFixed(1)} |`] : [];
   }).join("\n");
   const comparisonSections = (["no-memory", "full-history"] as const).flatMap((arm) => {
     const comparison = report.comparisons[arm];
     return comparison ? [comparisonMarkdown(comparison)] : [];
   }).join("\n\n");
   const runs = report.runs.map((run) =>
-    `| ${run.taskId} | ${run.arm}-${run.iteration} | ${run.lifecycle.mode} | ${passed(run.hiddenChecks) ? "pass" : "fail"} | ${passed(run.publicChecks) ? "pass" : "fail"} | ${run.startMs === null ? "n/a" : run.startMs.toFixed(1)} | ${run.agentMs.toFixed(1)} | ${run.commitMs === null ? "n/a" : run.commitMs.toFixed(1)} | ${run.totalLifecycleMs.toFixed(1)} | ${run.events.tokens.input} | ${run.events.fileReads} | ${run.events.repoMindCalls} |`,
+    `| ${run.taskId} | ${run.arm}-${run.iteration} | ${run.lifecycle.mode} | ${passed(run.hiddenChecks) ? "pass" : "fail"} | ${passed(run.publicChecks) ? "pass" : "fail"} | ${run.startMs === null ? "n/a" : run.startMs.toFixed(1)} | ${run.agentMs.toFixed(1)} | ${run.commitMs === null ? "n/a" : run.commitMs.toFixed(1)} | ${run.maintenanceMs === null ? "n/a" : run.maintenanceMs.toFixed(1)} | ${run.totalLifecycleMs.toFixed(1)} | ${run.events.tokens.input} | ${run.events.fileReads} | ${run.events.repoMindCalls} |`,
   ).join("\n");
   const acceptanceRows = report.acceptance.checks.map((check) =>
     `| ${check.id} | ${check.passed ? "yes" : "NO"} | ${String(check.measured)} | ${check.target} | ${check.detail} |`,
   ).join("\n");
   const dirty = report.provenance.repoMindDirty === null ? "unavailable" : String(report.provenance.repoMindDirty);
   const provenanceRows = Object.entries(report.provenance.taskBaseCommits).map(([task, commit]) => `| task:${task} | \`${commit}\` |`).join("\n");
-  return `# RepoMind controlled agent benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepoMind lifecycle: ${report.repoMindLifecycle}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| RepoMind worktree dirty | ${dirty} |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n## Results\n\n| Arm | Hidden checks | Public checks | Mean total | Mean start | Mean Agent | Mean commit | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\n| Task | Run | Lifecycle | Hidden | Public | Start ms | Agent ms | Commit ms | Total ms | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
+  const hostTelemetryRows = report.runs.flatMap((run) => {
+    if (run.contextTelemetry.availability !== "full") return [];
+    const context = run.contextTelemetry.context;
+    const maintenance = run.maintenanceTelemetry.availability === "full"
+      ? run.maintenanceTelemetry.report?.status ?? "not-attempted"
+      : run.maintenanceTelemetry.availability;
+    return [`| ${run.taskId} | ${run.arm}-${run.iteration} | ${context.l1.provided}/${context.l1.eligible}/${context.l1.injected} | ${context.l2.provided}/${context.l2.eligible}/${context.l2.injected} | ${context.l3.provided}/${context.l3.eligible}/${context.l3.injected} | ${context.contextChars}/${context.budgetChars} | ${run.quality?.completion ?? "n/a"} | ${run.quality?.commands.recovered ?? 0}/${run.quality?.commands.unrecovered ?? 0} | ${maintenance} | \`${context.promptSha256}\` |`];
+  }).join("\n");
+  return `# RepoMind controlled agent benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepoMind lifecycle: ${report.repoMindLifecycle}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Provenance\n\n| Field | Value |\n| --- | --- |\n| RepoMind | ${report.provenance.repoMindVersion} / \`${report.provenance.repoMindCommit ?? "not-a-git-checkout"}\` |\n| RepoMind worktree dirty | ${dirty} |\n| Node | ${report.provenance.node} |\n| OS | ${report.provenance.os.platform} ${report.provenance.os.release} ${report.provenance.os.arch} |\n| Runner version | ${report.provenance.runnerVersion ?? "unavailable"} |\n| Manifest SHA-256 | \`${report.provenance.manifestSha256}\` |\n${provenanceRows}\n\n## Results\n\n| Arm | Hidden checks | Public checks | Mean total | Mean start | Mean Agent | Mean commit | Mean maintenance | Mean input tokens | Mean output tokens | Mean file reads |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${armRows}\n\n${comparisonSections}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Host telemetry\n\nL1/L2/L3 cells are provided/eligible/injected records.\n\n${hostTelemetryRows ? `| Task | Run | L1 | L2 | L3 | Context chars | Completion | Recovered/unrecovered | Maintenance | Prompt SHA-256 |\n| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |\n${hostTelemetryRows}` : "No full Host telemetry is available."}\n\n## Runs\n\n| Task | Run | Lifecycle | Hidden | Public | Start ms | Agent ms | Commit ms | Maintenance ms | Total ms | Input tokens | File reads | RepoMind calls |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${runs}\n\n## Integrity failures\n\n${report.integrity.failures.length ? report.integrity.failures.map((failure) => `- ${failure}`).join("\n") : "None."}\n`;
 }
