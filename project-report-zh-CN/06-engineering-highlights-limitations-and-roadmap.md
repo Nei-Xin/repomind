@@ -237,7 +237,9 @@ branch、HEAD、status 和 diff 来自多次 Git 调用，期间仓库可以变�
 
 Prompt 当前作为 argv 参数传给 OpenCode 或 Claude Code。审计曾用大量引号复现“Prompt 低于 28,000 但 quoting 后触发长度问题”；两个 Adapter 都保留 28,000 字符 Prompt guard，并按 libuv Windows quoting 估算 command 和全部 argv 的完整命令行，超过 `32,767` 字符时在 spawn 前拒绝并 abandon Session。17k 引号膨胀用例已进入 Windows 回归。剩余产品约束是任务仍走 argv；stdin/临时文件会从架构上更稳健，也便于处理更长任务。
 
-v0.8 的 72 次和 2026-08-04 RC 的 120 次仍来自旧 L1-only Host 路径。2026-08-11 已在 fresh suite、顺序轮换、固定模型与独立审计条件下完成新的 120-stage 跨 Session实验：correctness 的 shared/isolated hidden 为 15/15 与 0/15；efficiency 的 Host 时长和 total prompt 均值分别下降 18.055% 与 11.854%，但该轮 uplift 由 L1 承担。后续 OpenCode -> Claude 单任务 repeat 5 已在 L1=0 时稳定注入 L2/L3，shared consumer 5/5、isolated 0/5，且独立审计 14/14 通过。剩余问题收敛为多任务外部效度、layered-vs-L1-only 四臂消融、紧预算和 Claude -> OpenCode 反向验证。
+v0.8 的 72 次和 2026-08-04 RC 的 120 次仍来自旧 L1-only Host 路径。2026-08-11 已在 fresh suite、顺序轮换、固定模型与独立审计条件下完成新的 120-stage 跨 Session 实验：correctness 的 shared/isolated hidden 为 15/15 与 0/15；efficiency 的 Host 时长和 total prompt 均值分别下降 18.055% 与 11.854%，但该轮 uplift 由 L1 承担。后续 OpenCode -> Claude 单任务 repeat 5 已在 L1=0 时稳定注入 L2/L3，shared consumer 5/5、isolated 0/5，且独立审计 14/14 通过。
+
+2026-08-12 的 18-run 三臂复核进一步得到 RepoMind/full-history/no-memory hidden `6/6、6/6、2/6`，Integrity 与 Acceptance 全部通过。RepoMind 相对 no-memory 减少 28.2% wall time 和 46.2% file reads；相对 full-history 正确率相同、耗时近似，input token 点估计高 22.1%。本轮实际注入 L1/L2/L3=`1/0/0`，所以它强化了 L1-dominant Host 路径证据，而不是 L2/L3 独立效果证据。
 
 ### 4.9 L2 搜索的 stale 截断顺序
 
@@ -317,6 +319,7 @@ stdout/stderr 各有 20 MiB 捕获上限。审计发现 Host summary 可能接�
 
 - 在固定 8-task 正式 v0.8 环境中，RepoMind 达到 full-history 的 hidden 正确率；
 - 相对 no-memory 同时改善正确率和多项效率指标；
+- 在最新 18-run 正式复核中，RepoMind/full-history/no-memory hidden 为 `6/6、6/6、2/6`，全部完整性和预注册门禁通过；
 - Host-managed 比 Agent-managed 更适合将生命周期移出模型轮次；
 - 同机 OpenCode 与 Claude Code 能延续相同 Project Memory/L4 状态；
 - 10k L1 的本地 cached 检索在门槛内；
@@ -326,6 +329,8 @@ stdout/stderr 各有 20 MiB 捕获上限。审计发现 Host summary 可能接�
 
 - 对所有语言、仓库、模型、OS 都普遍提升；
 - RepoMind 的能力高于完整历史；
+- RepoMind 的成本全面低于完整历史；最新 18-run 中 input token 点估计反而高 `22.1%`，且 full-history 成本差异区间跨 0；
+- 最新 18-run 证明 L2/L3 uplift；该轮实际注入 L1/L2/L3=`1/0/0`；
 - Remote LLM 自动提取永远语义正确；
 - Token 指标可直接跨 Provider 比较或换算成本；
 - 10k 本地 deterministic vector 代表远程语义模型表现；
@@ -350,7 +355,7 @@ stdout/stderr 各有 20 MiB 捕获上限。审计发现 Host summary 可能接�
 
 ### P1：产品稳定性与现有分层能力
 
-1. 对 layered Host context 做 L1-only/full-history/no-memory 对照，按层调优预算而非只调总上限；
+1. 18-run 已完成 L1-dominant 的 no-memory/full-history/RepoMind 三臂复核；后续仅在产品决策需要时执行 L2/L3 独立消融与紧预算对照，并按层调优预算；
 2. 为自动维护提供可观测告警、重试/延迟策略，同时不改变 Commit 成功语义；
 3. 修复 L2 stale 截断；
 4. L4 保留执行顺序、任务/文件语义并加强审批边界；

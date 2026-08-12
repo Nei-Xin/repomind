@@ -37,6 +37,7 @@ RC.1、冻结提交 `6d421dd` 以及 2026-08-11 的实验仍作为历史快照�
 | [11 三阶段 L2/L3 消费实验](11-three-stage-l2-l3-consumption-experiment-20260811.md) | derived-only 第三 Session、五连测、独立审计、上游断流与结论边界 | 分层上下文效果复核、面试答辩 |
 | [12 OpenCode -> Claude Repeat 5](12-opencode-claude-repeat5-20260811.md) | 跨 Agent derived-only 消费、30-stage repeat 5、containment 14/14 审计 | 最新核心效果证据、面试答辩 |
 | [13 RC.2 发布工程审计](13-v1.0.0-rc.2-release-audit.md) | 安装与首次使用修复、跨平台门禁、制品校验、GitHub prerelease | 发布复核、交付说明 |
+| [14 小型三臂 18-run Agent 实验](14-three-arm-18run-experiment-20260812.md) | no-memory/full-history/RepoMind 正式复核、效率指标、分层注入归因与证据哈希 | 最新三臂效果口径、面试答辩 |
 
 ## 3. 一句话结论
 
@@ -73,6 +74,8 @@ RepoMind 将一次 Agent 任务拆成“显式开始 -> 检索历史结论 -> Ag
 2026-08-11 又在冻结提交 `6d421dd` 上完成了新的跨 Session `6 sequences × 2 arms × 2 stages × 5 repeats = 120` 次 OpenCode/Luna 实验。Correctness 与 efficiency cohort 的 Integrity、Acceptance 和独立 Audit 均通过。它验证的是当前 Host 路径，不是对旧三臂实验的重复；详细口径见第 10 篇报告。
 
 2026-08-12 发布的 RC.2 没有重跑真实模型实验，而是完成发布前工程审计：266/266 单测、8/8 Agent fixtures、跨 Session/分层 fixtures、17/17 安装包 smoke、main/tag 五项 CI 和 GitHub prerelease 制品核验。它证明可安装性和工程交付，不新增效果 uplift 结论。
+
+随后在提交 `58ef902` 上完成 `3 tasks × 3 arms × 2 repeats = 18` 次 OpenCode/Luna 小型三臂复核。Integrity 与 Acceptance 9/9 通过；RepoMind/full-history/no-memory hidden 为 `6/6、6/6、2/6`。RepoMind 相对 no-memory 的 wall time、output token、file reads 分别下降 `28.2%、24.5%、46.2%`；相对 full-history 正确率相同、耗时近似，input token 点估计反而高 `22.1%`。本轮实际注入 L1/L2/L3 为 `1/0/0`，不能用于证明 L2/L3 独立 uplift。详见第 14 篇报告。
 
 ## 6. 关键源码入口
 
@@ -111,3 +114,4 @@ RepoMind 将一次 Agent 任务拆成“显式开始 -> 检索历史结论 -> Ag
 - 派生层维护失败独立写入 Run 报告，不回滚已经 committed 的 Session，也不把成功 Host Run 改判失败。没有 L3 来源时记为 skipped。
 - L4 自动维护最多生成或刷新 pending Candidate；不会自动 approve、export、install 或 execute，人工审核边界不变。
 - v0.8 的 72 次和 2026-08-04 RC 120 次实验仍是旧 L1-only Host 路径，不能把它们的数字归因于新实现。2026-08-11 的 120-stage OpenCode 跨 Session 正式实验实际 uplift 由 L1 注入承担；后续三阶段实验已证明 L2/L3 能在 L1=0 的第三 Session 被消费。最新 OpenCode -> Claude repeat 5 中 shared consumer 5/5、isolated 0/5，独立审计 14/14 通过；该证据仍只有一个任务类型，也不是双向四臂消融。
+- 最新 18-run 三臂复核中 RepoMind 与 full-history 均为 hidden `6/6`；RepoMind 相对 full-history 没有稳定成本优势，input token 点估计高 `22.1%`。本轮 L2/L3 虽被发现，但因 provenance 去重未注入，实际上下文仍为 L1-dominant。

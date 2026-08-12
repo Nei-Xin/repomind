@@ -399,6 +399,14 @@ v0.7 让 Agent 主动调用 Start 和 Commit，虽然 hidden 也是 24/24，但�
 
 正确做法是预先定义 infrastructure retry policy 后从新目录重跑整批，或将当前批次保留为 failed 并单独报告敏感性分析。
 
+### Q46A：最新 18-run 对 full-history 的结果是什么？
+
+**参考答案：**
+
+在 OpenCode/Luna、3 个任务、每项 2 次重复的正式三臂复核中，RepoMind/full-history/no-memory hidden 分别为 `6/6、6/6、2/6`，Integrity 与 Acceptance 9/9 全部通过。RepoMind 相对 no-memory 的 wall time、output token、file reads 分别下降 `28.2%`、`24.5%`、`46.2%`，说明历史知识减少了错误和重复探索。
+
+但 RepoMind 并未全面优于 full-history：两者正确率相同、耗时近似，RepoMind input token 点估计高 `22.1%`，成本差异区间跨 0。本轮实际注入 L1/L2/L3=`1/0/0`，L2/L3 因来源去重未注入。因此它证明的是当前精炼 L1 Host 路径，不是 L2/L3 uplift。RepoMind 相对完整历史的产品价值还包括 Evidence 追溯、stale/冲突治理、预算控制和生命周期闭合，不能只用 Prompt 长度评价。
+
 ### Q47：预置 Memory 是否相当于泄露答案？
 
 **参考答案：**

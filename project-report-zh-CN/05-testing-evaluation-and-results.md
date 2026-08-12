@@ -343,6 +343,22 @@ RepoMind 相对 no-memory：
 
 > RC 的 120 次实验因 1 次外部证书错误未通过严格完整性门槛；描述性结果中，RepoMind 在 40 次运行里全部通过隐藏检查，并相对 no-memory 降低约 25.2% 总耗时、16.4% 输入 Token 和 29.6% 文件读取。排除故障配对后，RepoMind 与 full-history 都为 39/39，不能据此声称能力高于完整历史。
 
+### 5.7 2026-08-12 小型三臂复核
+
+为低成本复核当前版本与 full-history 的关系，又在提交 `58ef902` 上执行 `3 tasks × 3 arms × 2 repeats = 18` 次 OpenCode/Luna 实验。18/18 Agent 正常退出、18/18 public checks 通过、无越界修改，Integrity 与预注册 Acceptance 9/9 均通过。
+
+| Arm | Hidden | Public |
+| --- | ---: | ---: |
+| no-memory | 2/6 | 6/6 |
+| full-history | 6/6 | 6/6 |
+| RepoMind | 6/6 | 6/6 |
+
+RepoMind 相对 no-memory 的 wall time、output token、file reads 和 tool calls 分别下降 `28.19%`、`24.52%`、`46.15%`、`32.46%`。Input token 点估计下降 `29.05%`，但 95% 区间跨 0。
+
+RepoMind 相对 full-history 正确率相同，wall time 点估计仅下降 `2.60%`，input token 点估计反而提高 `22.07%`，这些成本区间均跨 0。因此这轮正式复核支持“相对 no-memory 提高历史依赖任务正确率并减少探索”，不支持“RepoMind 全面优于 full-history”。
+
+六个 RepoMind run 均完成 retrieval、Commit 和自动 maintenance；但实际平均注入 L1/L2/L3 为 `1/0/0`，上下文仅 `401/12,000` 字符。L2/L3 已生成并被 Host 发现，随后因来源已由 L1 覆盖而被 provenance-aware dedup。本轮只能归因于精炼 L1，完整命令、证据哈希和逐任务结果见[第 14 篇实验报告](14-three-arm-18run-experiment-20260812.md)。
+
 ## 6. 外部真实仓库 p-limit
 
 在 `sindresorhus/p-limit` 的外部仓库实验中：
@@ -597,7 +613,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 9. 外部 p-limit 只有一个仓库和三个配对；
 10. 云模型会受证书、限流、服务波动和模型目录变化影响；
 11. v0.7/v0.8 的 72 次与 RC 120 次实验都是 L1-only，不能证明 L2/L3 uplift；
-12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑和 OpenCode -> Claude 单任务 repeat 5，但尚未完成 layered-vs-L1-only 四臂消融、Claude -> OpenCode 反向同类验证与多任务外部效度；
+12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑、OpenCode -> Claude 单任务 repeat 5 和 18-run 三臂复核，但尚未完成 layered-vs-L1-only 四臂消融、Claude -> OpenCode 反向同类验证与多任务外部效度；18-run 只有 3 类任务、每项 2 次重复，不能替代这些证据；
 13. 当前 Windows junction、related-file realpath 和 dangling-link 均有本机回归，但仍未覆盖所有平台的挂载点、重解析点和对抗性 TOCTOU 组合；
 14. 新 cross-session report v3 与 Agent report v7 已保存实际注入与去重的 L1/L2/L3 ID、数量和字符数；legacy Agent eval v6 仍缺少这些字段，不能与新结果混合归因；
 15. v4/v5 的兼容仅在 aggregate/profile 路径成立，旧报告直接进入当前 v7 renderer 会失败；
@@ -614,6 +630,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 **更大样本 L1 信号**：RC 120 次 L1-only 实验中 RepoMind 40/40，但因一次 full-history 证书错误导致 Integrity 失败，只能作为观察性证据；敏感性分析显示与 full-history 正确率相同，输入 Token 未必更低。
 **当前跨 Session 正式证据**：2026-08-11 的 120-stage OpenCode/Luna 批次中，shared hidden 为 15/15、isolated 为 0/15；在两臂都正确的另 15 个 pair 中，Host 时长均值下降 18.055%，total prompt 下降 11.854%。独立审计通过；实际 uplift 由 L1 注入承担。
 **最新 L2/L3 跨 Agent 证据**：OpenCode -> Claude 的单任务 repeat 5 中，L1=0 的 shared consumer 使用 L2/L3 得到 hidden 5/5，fresh isolated 为 0/5，30/30 stage clean exit 且独立审计 14/14 通过。
+**最新 full-history 复核**：18-run 三臂实验 Integrity/Acceptance 通过；RepoMind/full-history/no-memory hidden 为 6/6、6/6、2/6。RepoMind 相对 no-memory wall time -28.2%、output token -24.5%、file reads -46.2%；相对 full-history 正确率相同、耗时近似，input token 点估计 +22.1%。实际注入为 L1/L2/L3=`1/0/0`。
 **尚未证明**：L2 与 L3 的独立贡献、紧预算效果、多任务跨 Agent 外部效度，以及 Claude -> OpenCode 的反向正式结果。
 
 这种表述既体现效果，也能承受面试官对实验严谨性的追问。
