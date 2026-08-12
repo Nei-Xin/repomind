@@ -5,10 +5,10 @@
 当前最稳定的日常路径是：
 
 ```text
-OpenCode + repomind run + Host-managed lifecycle
+OpenCode/Claude Code + repomind run + Host-managed lifecycle
 ```
 
-原因：Session Start、上下文注入、OpenCode 执行、事件解析和 Commit 都由宿主完成，不依赖模型记住生命周期协议。Agent-managed MCP 更适合需要任务中二次 search/inspect 的场景，也适合 Claude Code 等没有 Host Adapter 的客户端。
+原因：Session Start、L1-L3 上下文注入、Agent 执行、事件解析、验证、Commit 和派生层维护都由宿主完成，不依赖模型记住生命周期协议。RC.2 已注册 OpenCode 与 Claude Code Adapter；Agent-managed MCP 更适合任务中需要二次 search/inspect，或接入尚无 Host Adapter 的 Codex 等客户端。
 
 本教程使用以下路径作为示例：
 
@@ -25,55 +25,85 @@ RepoMind 源码：D:\data\code\project\repomind
 node --version
 git --version
 opencode.cmd --version
+claude --version
 ```
 
 要求：
 
 - Node.js `>=22.5.0`；
 - Git 可用，目标目录是 Git 仓库；
-- Host-managed 场景安装 OpenCode；
-- 模型 Provider 已能被 OpenCode 正常调用。
+- Host-managed 场景至少安装 OpenCode 或 Claude Code；
+- 所选 Agent 的模型 Provider 已可正常调用。
 
 Node 当前仍可能输出 `SQLite is an experimental feature` warning，这是 Node `node:sqlite` 的运行时提示，不等于 RepoMind 失败。
 
-## 3. 构建 RepoMind
+## 3. 安装 RC.2（普通用户推荐）
+
+从项目自己的 GitHub Release 安装经过验收的 tarball。当前仓库为私有仓库，执行命令的用户必须有该仓库和 Release 资产的访问权限；没有权限时不能把该 URL 当作公开 npm registry 使用：
+
+```powershell
+npm.cmd install --global https://github.com/Nei-Xin/repomind/releases/download/v1.0.0-rc.2/repomind-1.0.0-rc.2.tgz
+repomind --version
+repomind --help
+```
+
+版本应为 `1.0.0-rc.2`。公开 npm 上无作用域的 `repomind` 包属于另一个项目，**不要**使用 `npm install --global repomind` 安装本仓库。
+
+可选校验 Release 同页的 `SHA256SUMS`：
+
+```powershell
+Get-FileHash .\repomind-1.0.0-rc.2.tgz -Algorithm SHA256
+```
+
+期望 tarball SHA-256：
+
+```text
+b4b3dbf5effc2899e33f808baff19550b7a694e0868db8878547f4fd800ed65d
+```
+
+普通用户后文直接使用 `repomind`。只有开发、调试或修改源码时才使用下一节的源码路径。
+
+## 4. 从源码构建（开发者路径）
 
 ```powershell
 Set-Location D:\data\code\project\repomind
 npm.cmd install
 npm.cmd run typecheck
 npm.cmd run build
+npm.cmd link
 ```
 
 确认 CLI：
 
 ```powershell
-node D:\data\code\project\repomind\dist\cli\index.js --help
+node D:\data\code\project\repomind\dist\cli\entry.js --version
+node D:\data\code\project\repomind\dist\cli\entry.js --help
 ```
 
-为什么先 typecheck 再 build：前者确认类型契约，后者生成 MCP、CLI 和 Host Adapter 实际运行的 `dist/`。MCP 配置指向 `dist/cli/index.js`，只改源码不重新 build 不会生效。
+为什么先 typecheck 再 build：前者确认类型契约，后者生成 MCP、CLI 和 Host Adapter 实际运行的 `dist/`。发布 bin 和 MCP 配置应指向轻量入口 `dist/cli/entry.js`；它处理 `--version` 并延迟加载完整 CLI。只改源码不重新 build 不会生效。
 
 为了让后续命令清晰，可以设置会话变量：
 
 ```powershell
-$repoMindCli = "D:\data\code\project\repomind\dist\cli\index.js"
+$repoMindCli = "D:\data\code\project\repomind\dist\cli\entry.js"
 $targetRepo = "D:\data\code\project\repomind-test\yocto-queue-repomind-rc1"
 ```
 
-## 4. 初始化真实仓库
+## 5. 初始化真实仓库
 
 先确认目标：
 
 ```powershell
 git -C $targetRepo status --short
-node $repoMindCli doctor --repo $targetRepo --json
+repomind doctor --repo $targetRepo --runner opencode --json
 ```
 
 初始化一次：
 
 ```powershell
-node $repoMindCli init --repo $targetRepo
-node $repoMindCli status --repo $targetRepo --json
+repomind init --repo $targetRepo
+repomind doctor --repo $targetRepo --runner opencode --json
+repomind status --repo $targetRepo --json
 ```
 
 预期变化：
@@ -87,9 +117,11 @@ node $repoMindCli status --repo $targetRepo --json
 
 不要对已经在使用的项目随意执行 `init --new-id`。新 Project ID 会创建一套全新记忆身份，旧数据库不会自动合并。
 
-## 5. 推荐路径：Host-managed Agent（OpenCode / Claude Code）
+`doctor` 会检查 Git、初始化状态、SQLite/FTS/vector 能力和所选 Agent 可执行文件。使用 Claude 时改为 `--runner claude`；Agent 不在 `PATH` 时增加 `--runner-executable <path>`。`run` 也会在打开 Session 前执行 Agent preflight，因此缺少可执行文件不会留下 open Session。
 
-### 5.1 先检查模型可用性
+## 6. 推荐路径：Host-managed Agent（OpenCode / Claude Code）
+
+### 6.1 先检查模型可用性
 
 ```powershell
 opencode.cmd models cliproxyapi
@@ -104,7 +136,7 @@ opencode.cmd run `
 
 模型目录会变化。仓库外部 120 次实验开始前，原定 `gpt-5.6-terra` 已不可用，后来用 `cliproxyapi/gpt-5.6-luna` 探针确认服务。健康探针只能证明短请求可用，不能保证长任务不会超时。
 
-### 5.2 执行第一次真实任务
+### 6.2 执行第一次真实任务
 
 选择一个会产生可复用知识的任务，而不是“打开 README”这类一次性动作。例如：
 
@@ -135,7 +167,7 @@ Host 依次执行：
 
 为什么使用 `--pure`：避免全局插件、额外 MCP 或 Prompt 修改污染实验与日常生命周期。RepoMind MCP 也会在 Agent 内禁用，防止 Host 和 Agent 重复管理同一 Session。
 
-### 5.3 审计运行结果
+### 6.3 审计运行结果
 
 ```powershell
 node $repoMindCli runs --repo $targetRepo --limit 20 --json
@@ -173,7 +205,7 @@ stderr.log
 run.json
 ```
 
-### 5.4 执行第二个相关任务，验证跨 Session 复用
+### 6.4 执行第二个相关任务，验证跨 Session 复用
 
 ```powershell
 node $repoMindCli run `
@@ -195,7 +227,7 @@ node $repoMindCli run `
 
 为什么一定要第二个任务：第一次运行只能证明“能写记忆”，第二次相关任务才证明“跨会话可召回并影响行为”。
 
-### 5.5 使用同一 Host 生命周期运行 Claude Code
+### 6.5 使用同一 Host 生命周期运行 Claude Code
 
 Claude Code 已接入通用 Host Adapter。先确认 `claude --version` 与 `claude auth status --text` 正常，再把同一命令的 Runner 和模型改为 Claude：
 
@@ -213,7 +245,7 @@ node $repoMindCli run `
 
 Claude Adapter 使用显式工具 allowlist 和 `dontAsk` 模式；日常仓库不会开放 `bypassPermissions`。它要求终止 `result` 明确成功，并将 Bash/PowerShell 的唯一 `tool_use` 与唯一 `tool_result` 配对后才信任 exit code。当前实现与单测已经覆盖该路径，但 2026-08-11 的 120-stage 正式结果只运行了 OpenCode，不能据此声称 Claude 与 OpenCode 的当前分层 Host 效果相同。
 
-## 6. Agent-managed MCP：OpenCode
+## 7. Agent-managed MCP：OpenCode
 
 在目标仓库的 `opencode.json` 中使用 RepoMind build 的绝对路径：
 
@@ -225,7 +257,7 @@ Claude Adapter 使用显式工具 allowlist 和 `dontAsk` 模式；日常仓库�
       "type": "local",
       "command": [
         "node",
-        "D:/data/code/project/repomind/dist/cli/index.js",
+        "D:/data/code/project/repomind/dist/cli/entry.js",
         "mcp"
       ],
       "enabled": true
@@ -255,7 +287,7 @@ opencode.cmd mcp list
 - commit/inspect 始终带 repo_path，以便 MCP 重启后仍可解析。
 ```
 
-## 7. Agent-managed MCP：Claude Code
+## 8. Agent-managed MCP：Claude Code
 
 可以在受信任项目的 `.mcp.json` 中配置 stdio Server。具体配置能力随 Claude Code 版本变化，下面使用仓库 README 所采用的通用 MCP 结构：
 
@@ -265,7 +297,7 @@ opencode.cmd mcp list
     "repomind": {
       "command": "node",
       "args": [
-        "D:/data/code/project/repomind/dist/cli/index.js",
+        "D:/data/code/project/repomind/dist/cli/entry.js",
         "mcp"
       ]
     }
@@ -281,9 +313,9 @@ claude mcp list
 
 并在项目 `CLAUDE.md` 中加入与 OpenCode 相同的 Start/Search/Commit 规则。
 
-仓库中的历史 v0.15 跨 Agent 验收覆盖了 OpenCode 与 Claude Code：OpenCode 产生重复成功 Session，Claude Code 通过独立 MCP 读取、重建、审批并导出 L4；新 OpenCode 来源到达后，候选重新变为 pending。它证明同库互操作与 L4 生命周期，不证明当前 L1-L3 Host 管线已经完成混合 Agent 正式实验，也不应扩展成“所有 Agent 都已验证”。
+仓库中的历史 v0.15 验收覆盖 OpenCode/Claude MCP 互操作与 L4 生命周期；2026-08-11 的 OpenCode -> Claude repeat 5 又证明 Claude 能在 `L1=0` 时消费 OpenCode 产生并由 Host 维护的 L2/L3。准确边界仍是：目前只有一个 durable-decision 任务方向，尚未完成 Claude -> OpenCode 反向同类正式验证、多任务外部效度或所有 Agent 验收。
 
-## 8. Agent-managed MCP：Codex
+## 9. Agent-managed MCP：Codex
 
 根据 [Codex 官方 MCP 文档](https://developers.openai.com/codex/mcp/) 和 [配置参考](https://developers.openai.com/codex/config-reference/)，用户配置使用 `[mcp_servers.<id>]` 表，`enabled_tools` 是可选工具 allowlist。
 
@@ -294,7 +326,7 @@ claude mcp list
 enabled = true
 required = false
 command = "node"
-args = ["D:\\data\\code\\project\\repomind\\dist\\cli\\index.js", "mcp"]
+args = ["D:\\data\\code\\project\\repomind\\dist\\cli\\entry.js", "mcp"]
 startup_timeout_sec = 10.0
 tool_timeout_sec = 60.0
 ```
@@ -305,7 +337,7 @@ tool_timeout_sec = 60.0
 
 边界：仓库提供 Codex 配置示例，但没有保留与 OpenCode+Claude Code 同等的真实 Codex acceptance 产物，因此应说“支持 Codex MCP 接入”，不要说“已完成 Codex 跨 Agent 实测”。
 
-## 9. 当前 24 项 MCP Tool
+## 10. 当前 24 项 MCP Tool
 
 | 分类 | Tool |
 | --- | --- |
@@ -322,9 +354,9 @@ tool_timeout_sec = 60.0
 
 仓库旧的 [`../docs/mcp-integration.md`](../docs/mcp-integration.md) 仍写 7 项工具，属于历史文档；以 [`../src/mcp/server.ts`](../src/mcp/server.ts) 和当前 README 为准。
 
-## 10. 纯 CLI 手动生命周期
+## 11. 纯 CLI 手动生命周期
 
-### 10.1 Start
+### 11.1 Start
 
 ```powershell
 $started = node $repoMindCli start `
@@ -338,14 +370,14 @@ $started.moduleNarratives
 $started.repositoryProfile
 ```
 
-### 10.2 Agent 或人工完成修改和测试
+### 11.2 Agent 或人工完成修改和测试
 
 ```powershell
 npm.cmd test
 $testExitCode = $LASTEXITCODE
 ```
 
-### 10.3 构造 Commit Payload
+### 11.3 构造 Commit Payload
 
 ```powershell
 $commitPayload = [ordered]@{
@@ -378,7 +410,7 @@ node $repoMindCli commit `
 
 用相同 idempotency key 和完全相同 payload 重试会返回原 receipt；同 key 修改 payload 会被拒绝。
 
-## 11. 搜索、检查与手工记录
+## 12. 搜索、检查与手工记录
 
 ```powershell
 node $repoMindCli search "队列 重试" --repo $targetRepo --limit 5 --json
@@ -397,7 +429,7 @@ node $repoMindCli record `
 
 Inspect 时应检查：Evidence ID/kind/preview、related file hash、status reason、relation、Audit，而不只看正文。
 
-## 12. 冷启动 Bootstrap
+## 13. 冷启动 Bootstrap
 
 ```powershell
 $bootstrapFile = "D:\data\code\project\repomind-test\yocto-bootstrap.json"
@@ -426,13 +458,13 @@ node $repoMindCli bootstrap-apply `
 
 为什么只选权威候选：Bootstrap 来源有限，README、CONTRIBUTING、ADR 和 commit subject 不等于当前代码事实。
 
-## 13. L2/L3/L4 维护
+## 14. L2/L3/L4 维护
 
 成功的 Host-managed `repomind run` 已经自动执行一次同步 best-effort 维护。这里的命令仍然必要，因为 `repomind commit`、MCP `repo_session_commit`、Agent-managed 和直接 Core 调用不会隐式维护；它们也用于定向模块重建、调整预算/阈值以及运维复核。
 
 自动维护的失败和 Session Commit 分开：某层失败会记录 error 并继续后续层，不回滚 committed Session，也不把成功 Host Run 改为失败。partial、failed、abandoned Run 不维护。L4 自动阶段只生成或刷新 pending Candidate，绝不自动 approve、export、install 或 execute。
 
-### 13.1 重建 L2
+### 14.1 重建 L2
 
 ```powershell
 node $repoMindCli module-rebuild `
@@ -445,7 +477,7 @@ node $repoMindCli modules --repo $targetRepo --json
 node $repoMindCli module-inspect <l2-id> --repo $targetRepo --json
 ```
 
-### 13.2 重建 L3
+### 14.2 重建 L3
 
 ```powershell
 node $repoMindCli profile-rebuild `
@@ -458,7 +490,7 @@ node $repoMindCli profile --repo $targetRepo --json
 node $repoMindCli profile-inspect --repo $targetRepo --json
 ```
 
-### 13.3 生成和审批 L4
+### 14.3 生成和审批 L4
 
 ```powershell
 node $repoMindCli skill-rebuild --min-sessions 3 --repo $targetRepo --json
@@ -479,7 +511,7 @@ node $repoMindCli skill-export <l4-id> `
 
 导出目标必须不存在。审查时特别恢复真实命令顺序，因为当前 L4 签名和 steps 使用排序后的命令集合。
 
-## 14. 可选向量检索
+## 15. 可选向量检索
 
 离线测试 Provider：
 
@@ -503,7 +535,7 @@ $env:REPOMIND_EMBEDDING_DIMENSIONS = "1536"
 
 远程 Provider 会接收 Memory title/content 和查询文本。不要在禁止仓库内容外发的环境开启。
 
-## 15. 可选远程 LLM 提取
+## 16. 可选远程 LLM 提取
 
 ```powershell
 $env:REPOMIND_EXTRACTION_PROVIDER = "openai-compatible"
@@ -520,9 +552,9 @@ node $repoMindCli extract `
 
 为什么 Commit 后单独执行：确定性 L1 和生命周期不依赖远程服务；只有用户明确允许时，已脱敏且有界的 Evidence 才发送给 Provider。
 
-## 16. 导出、备份与恢复
+## 17. 导出、备份与恢复
 
-### 16.1 逻辑导出/导入
+### 17.1 逻辑导出/导入
 
 ```powershell
 node $repoMindCli export `
@@ -539,7 +571,7 @@ node $repoMindCli import `
 
 确认 Import 使用 replace，不是 merge；执行 `--yes` 会替换目标逻辑数据。先做 dry-run 和 backup。
 
-### 16.2 加密物理备份
+### 17.2 加密物理备份
 
 ```powershell
 $env:REPOMIND_ARCHIVE_PASSPHRASE = Read-Host "Archive passphrase" -MaskInput
@@ -561,7 +593,7 @@ Remove-Item Env:REPOMIND_ARCHIVE_PASSPHRASE
 
 Restore 必须匹配同一 Project ID；加密只保护归档，不保护 live DB 和 pre-restore snapshot。
 
-## 17. 常见问题
+## 18. 常见问题
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
@@ -578,7 +610,7 @@ Restore 必须匹配同一 Project ID；加密只保护归档，不保护 live D
 | 导出被 sensitive gate 阻止 | 发现 credential pattern | 检查内容；只有明确接受风险才用 `--allow-sensitive` |
 | Import/Restore 被拒绝 | 有 open Session/running Run 或 active-work guard | 先结束生命周期，不要强行替换运行中数据库 |
 
-## 18. 最小验收清单
+## 19. 最小验收清单
 
 一次真实接入至少完成：
 

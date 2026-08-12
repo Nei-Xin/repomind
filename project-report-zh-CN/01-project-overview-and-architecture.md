@@ -110,7 +110,7 @@ flowchart LR
 
 需要准确区分：
 
-- **历史互操作验收已实测**：仓库保留了 OpenCode 生成 Session、Claude Code 通过 MCP 读取并处理 L4 候选、再由 OpenCode 新增来源使候选回到 pending 的 v0.15 跨 Agent 验收；这不等于当前分层 Host 已完成混合 Agent 正式实验；
+- **跨 Agent 已分层验证**：历史 v0.15 验收证明 OpenCode/Claude 共享 Project DB 与 L4 生命周期；2026-08-11 的 OpenCode -> Claude repeat 5 又证明 Claude 能在 `L1=0` 时消费由 OpenCode Session 派生的 L2/L3。当前证据仍只有一个任务方向，不等于双向、多任务或所有 Agent 都已验证；
 - **支持接入但仓库内未做同等验收**：Codex 有 MCP 配置和 Agent 指令示例；
 - **未实现**：跨机器自动同步。跨机器需要 export/import 或 backup/restore。
 

@@ -1,5 +1,7 @@
 # 05 测试、评测与效果分析
 
+> **2026-08-12 当前发布说明**：RC.2 在提交 `dfe022f` 上通过 46/46 test files、266/266 tests、17/17 installed-package smoke，以及 main/tag 的 Ubuntu、Windows、macOS、coverage 和 bench。下文 RC.1、2026-08-10 工作树和 `6d421dd` 的数字是历史快照；RC.2 发布证据见 [第 13 篇发布工程审计](13-v1.0.0-rc.2-release-audit.md)。
+
 > **2026-08-11 更新**：冻结提交 `6d421dd` 已完成新的跨 Session `6 sequences × 2 arms × 2 stages × 5 repeats = 120` 次 OpenCode/Luna 正式实验，correctness、efficiency 与独立审计均通过。本文保留此前的历史实验和设计推导；旧版 L1-only 结果与当前 Host 结果的证据边界，以 [第 10 篇正式实验报告](10-cross-session-formal-experiment-20260811.md) 为准。
 
 ## 1. “项目有效”需要拆成哪些问题
@@ -576,7 +578,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 
 正式运行前先完成：
 
-1. 保持当前 45-suite、259-test 完整回归全绿，并将 Windows junction、symlink 与旧 report fixture 纳入后续 CI；
+1. 保持当前 46-suite、266-test 完整回归全绿，并将 Windows junction、symlink、macOS canonical path 与旧 report fixture 纳入后续 CI；
 2. 用 fake runner 验证四臂 prompt 差异和 maintenance 分阶段计时；
 3. 在一个小型真实仓库执行 1 次 preflight，确认 Agent、证书、Token 事件和隐藏检查可用；
 4. 创建全新正式目录，一次性完成计划样本，不覆盖或事后补跑单点；
@@ -595,7 +597,7 @@ Task A 两臂必须产生相同的 L1/Evidence；Task B 的差异只来自 Task 
 9. 外部 p-limit 只有一个仓库和三个配对；
 10. 云模型会受证书、限流、服务波动和模型目录变化影响；
 11. v0.7/v0.8 的 72 次与 RC 120 次实验都是 L1-only，不能证明 L2/L3 uplift；
-12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑和第三 Session 的 L2/L3 消费实验，但尚未完成 layered-vs-L1-only 四臂消融与多任务 OpenCode -> Claude repeat 5；
+12. 当前 cross-session harness 已完成 120-stage 真实 Agent 正式重跑和 OpenCode -> Claude 单任务 repeat 5，但尚未完成 layered-vs-L1-only 四臂消融、Claude -> OpenCode 反向同类验证与多任务外部效度；
 13. 当前 Windows junction、related-file realpath 和 dangling-link 均有本机回归，但仍未覆盖所有平台的挂载点、重解析点和对抗性 TOCTOU 组合；
 14. 新 cross-session report v3 与 Agent report v7 已保存实际注入与去重的 L1/L2/L3 ID、数量和字符数；legacy Agent eval v6 仍缺少这些字段，不能与新结果混合归因；
 15. v4/v5 的兼容仅在 aggregate/profile 路径成立，旧报告直接进入当前 v7 renderer 会失败；

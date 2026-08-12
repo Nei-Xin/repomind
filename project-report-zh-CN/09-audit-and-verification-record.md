@@ -1,5 +1,7 @@
 # 09 本次审计与验证记录
 
+> **2026-08-12 当前发布说明**：本文件第 1-12 节保留 2026-08-10/11 的历史审计记录，不能作为 RC.2 当前数字读取。RC.2 已发布于 `dfe022fb55b1826327eecd45e70a2381f644427a`，当前门禁为 46/46 test files、266/266 tests、17/17 package smoke，并已通过 main/tag 的 Ubuntu、Windows、macOS、coverage 和 bench。完整发布过程、安装制品和 tag CI 重跑边界见 [第 13 篇 RC.2 发布工程审计](13-v1.0.0-rc.2-release-audit.md)。
+
 > **2026-08-11 追加说明**：第 1-10 节保留 2026-08-10 源码审计当时的执行记录。其后已在冻结提交 `6d421dd` 上完成当前 Host 路径的 120-stage OpenCode/Luna 跨 Session 正式实验；correctness、efficiency 的 Integrity、Acceptance 与独立 Audit 均通过。当前代码的完整 Vitest 也已重新执行，45/45 test files、259/259 tests 通过，exit 0，用时约 414.9 秒。新增实验的设计、结果和证据哈希见 [第 10 篇正式实验报告](10-cross-session-formal-experiment-20260811.md)。
 
 ## 1. 记录目的

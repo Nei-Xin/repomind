@@ -158,8 +158,8 @@ Evidence content/metadata value、Session task、Memory 字段、Audit 和导出
 | 主题 | 当前边界 | 影响 |
 | --- | --- | --- |
 | 自动观察 | MCP 看不到宿主其他工具 | 必须 Start/Commit 或使用 Host Adapter |
-| Host Adapter | 已注册 OpenCode 与 Claude Code；Codex 未接入 | 当前 120-stage 正式证据只覆盖 OpenCode，Claude 双向跨 Agent 批次仍待执行 |
-| Host 上下文 | current L3 + relevant current L2 + ranked L1；默认 12k、范围 1k-24k | 预算只约束三个 repository-context section；完整 task/生命周期说明在预算外；新路径已完成 120-stage 跨 Session正式批次，但尚缺 L2/L3 消费与紧预算实验 |
+| Host Adapter | 已注册 OpenCode 与 Claude Code；Codex 未接入 | OpenCode -> Claude 单任务 repeat 5 已通过；反向、多任务与 Codex 同等验收仍缺失 |
+| Host 上下文 | current L3 + relevant current L2 + ranked L1；默认 12k、范围 1k-24k | 预算只约束三个 repository-context section；完整 task/生命周期说明在预算外；L2/L3 已在 `L1=0` 的 Claude consumer 中被验证，尚缺分层消融与紧预算验证 |
 | 分层维护 | 成功 Host Commit 自动 best-effort；其他入口显式 rebuild | partial/failed/abandoned 不维护；失败单独报告，不回滚 Session |
 | 跨 Agent | 同机、同 data dir、同 Project ID | 不是云同步或团队服务 |
 | 多分支 | Memory 状态 project-global | 一个 checkout 可使共享 Memory uncertain |
@@ -333,7 +333,9 @@ stdout/stderr 各有 20 MiB 捕获上限。审计发现 Host summary 可能接�
 - Codex 已完成与 Claude/OpenCode 相同的 acceptance；
 - 跨机器团队实时协作已经实现。
 
-## 6. 建议路线图
+## 6. RC.2 之后的工程优先级
+
+当前项目已发布 RC.2，且定位是工程产品而不是科研项目。短期不再把大规模重复实验作为主线：先用 Release 制品在真实仓库持续使用，只有产品决策需要时才增加实验样本。RC 期间只接受安装、兼容性、正确性、数据安全和安全边界方面的发布阻断修复；普通体验改进与新能力进入后续版本。
 
 ### P0：安全与一致性
 
@@ -344,14 +346,15 @@ stdout/stderr 各有 20 MiB 捕获上限。审计发现 Host summary 可能接�
 5. 评估合法 Project ID 指向已有数据的身份确认策略，并进一步收敛文件系统 TOCTOU；
 6. 将 Host Prompt 移出 argv，消除平台命令行长度这一产品约束；
 7. 为已修复的 realpath、dangling link、失败命令、并发目录、quote expansion 和结构注入保持跨平台回归。
+8. 降低 Windows Vitest worker `onTaskUpdate` 偶发 RPC timeout 对发布门禁的影响；266/266 断言通过仍不应依赖人工判断或盲目重跑。
 
-### P1：发挥现有分层能力
+### P1：产品稳定性与现有分层能力
 
 1. 对 layered Host context 做 L1-only/full-history/no-memory 对照，按层调优预算而非只调总上限；
 2. 为自动维护提供可观测告警、重试/延迟策略，同时不改变 Commit 成功语义；
 3. 修复 L2 stale 截断；
 4. L4 保留执行顺序、任务/文件语义并加强审批边界；
-5. 使用已实现的 Claude Adapter 完成真实双向跨 Agent 验收，并为 Codex 设计 Host Adapter；
+5. 在真实用户任务需要时补 Claude -> OpenCode 反向、多任务验证，并为 Codex 设计 Host Adapter；
 6. 增加 branch/commit-aware Memory view，减少多 worktree 状态互相影响。
 
 ### P2：规模、可操作性和协作

@@ -56,7 +56,7 @@ RepoMind 的目标是把跨 Session 的高价值事实压缩为少量 L1，并�
 
 仓库中的 `.repomind/project.json` 提供稳定 Project ID，真实 SQLite 位于用户数据目录 `~/.repomind/repositories/<projectId>/repomind.db`。同一机器、同一数据目录、相同 marker 的 OpenCode、Claude Code 或其他 MCP Client 打开的是同一项目数据库。
 
-跨 Agent 不是同步对话，而是共享统一的 Session/Evidence/Memory 数据模型。历史 v0.13/v0.15 验收已证明 OpenCode 和 Claude Code 能通过 MCP 共享同一数据库并延续 L4 状态；当前分层 Host 的双向 Claude/OpenCode 正式实验尚未执行。Codex 有 MCP 接入示例，但没有同等 acceptance；跨机器自动同步也尚未实现。
+跨 Agent 不是同步对话，而是共享统一的 Session/Evidence/Memory 数据模型。历史 v0.13/v0.15 验收已证明 OpenCode 和 Claude Code 能通过 MCP 共享同一数据库并延续 L4 状态；OpenCode -> Claude repeat 5 进一步证明 Claude 能在 `L1=0` 时消费 OpenCode 产生并由 Host 自动维护的 L2/L3，shared 5/5、isolated 0/5。当前仍未完成 Claude -> OpenCode 反向同类正式验证、多任务外部效度或 Codex 同等 acceptance；跨机器自动同步也尚未实现。
 
 ### Q7：为什么 marker 放在仓库、数据库放在用户目录？
 
@@ -88,7 +88,7 @@ Host-managed 中 `repomind run` 在模型外 Start，在有界预算下注入 cu
 
 当前已注册 OpenCode 与 Claude Code Adapter，分别解析 OpenCode bash/shell 和 Claude Bash/PowerShell 的已知事件；Codex 尚未接入。所有已观测命令现在都必须成功，但没有测试时仍不强制“至少一个 test”。stdout/stderr 捕获上限为 20 MiB，summary 已另限 12,000 字符。Prompt 仍通过 argv 传递，不过当前同时检查 28,000 字符 Prompt 和按 libuv quoting 计算后的 32,767 字符完整 Windows 命令行。长期仍可改用 stdin/文件，并让 manifest 明确 required build/lint/test。
 
-分层注入已经实现，当前更关键的缺口是效果外部效度：需要用 L1-only 与 layered Host 的同批 A/B 验证 L2/L3 没有增加噪声、Token 或 prompt-too-long 回归；还要通过现有 Claude Adapter 完成真实双向跨 Agent 正式实验，并为 Codex 设计 Host Adapter。
+分层注入和 OpenCode -> Claude 单任务消费已经实现，当前更关键的缺口是效果外部效度：需要用 L1-only 与 layered Host 的同批 A/B 验证 L2/L3 没有增加噪声、Token 或 prompt-too-long 回归；还要完成 Claude -> OpenCode 反向、多任务验证，并为 Codex 设计 Host Adapter。
 
 ## 三、数据模型与生命周期
 
@@ -435,7 +435,7 @@ v0.7 让 Agent 主动调用 Start 和 Commit，虽然 hidden 也是 24/24，但�
 
 从用户价值看，OpenCode -> Claude 的单任务 repeat 5 已证明 L2/L3 能在第三个 Session 被实际消费，但双向、多任务与四臂消融仍未完成；从正确性看，是 required-test policy、Commit CAS 与 branch 语义不够完整；从安全看，marker/DB/related-file 路径已硬化，但远程 Hybrid 原始 query、合法 marker 身份指向和 TOCTOU 仍有边界；从实验看，是外部仓库/模型覆盖仍少。
 
-我会先补第三 Session 的 L2/L3 消费与紧预算实验，再用现有 Claude Adapter 跑双向跨 Agent 正式批次，同时推进隐私、Commit 并发一致性和 Host required-check policy。通用 Adapter 抽象、related-file realpath、失败命令、data-directory 并发、argv quoting、结构标题和零 L1 都已经实现，不应继续冒充未来路线图。
+项目现在不是科研优先，下一步应先做 RC 稳定使用和交付反馈；出现 P0/P1 再发布后续 RC。技术债优先级是 Windows Vitest worker 稳定性、隐私、Commit 并发一致性和 Host required-check policy。多任务、反向跨 Agent 与四臂消融只在产品决策确实需要时再做；通用 Adapter 抽象、related-file realpath、失败命令门禁、data-directory 并发、argv quoting、结构标题和零 L1 都已经实现，不应继续冒充未来路线图。
 
 ### Q52：如果重新设计 L4，你会怎么做？
 

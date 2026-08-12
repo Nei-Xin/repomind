@@ -11,16 +11,16 @@
 
 ## 2. 仓库规模与入口
 
-发布基线与冻结实验快照：
+当前发布基线与历史实验快照：
 
 ```text
-Release baseline: v1.0.0-rc.1 / 05fe873136d578738b14e01edac6f2302e22a70c
-Frozen current snapshot: 6d421ddab90d45a2747f1b25c2d270fb3c306e5e
-Source: 75 TypeScript files / about 15,672 lines
-Tests directory: 46 TypeScript files / 45 test-suite files / about 8,340 lines / 259 tests
-Full Vitest: 45/45 files and 259/259 tests passed on 2026-08-11
+Release baseline: v1.0.0-rc.2 / dfe022fb55b1826327eecd45e70a2381f644427a
+Historical experiment snapshot: 6d421ddab90d45a2747f1b25c2d270fb3c306e5e
+Source: 77 TypeScript files / about 16,006 lines
+Tests directory: 47 TypeScript files / 46 test-suite files / about 8,580 lines / 266 tests
+Full Vitest: 46/46 files and 266/266 tests passed on 2026-08-12
 Schema: 11
-Snapshot additions: layered Host context, derived maintenance, marker path hardening, report v7, cross-session Eval, OpenCode/Claude Host adapters
+RC.2 additions: layered Host context, derived maintenance, marker/database/Agent filesystem containment, report v7, cross-session Eval, OpenCode/Claude Host adapters, first-use diagnostics, package smoke and automated GitHub prerelease
 ```
 
 先执行：
@@ -32,7 +32,8 @@ git rev-parse HEAD
 node --version
 npm.cmd run typecheck
 npm.cmd run build
-node .\dist\cli\index.js --help
+node .\dist\cli\entry.js --version
+node .\dist\cli\entry.js --help
 ```
 
 这样先建立“当前代码能运行、CLI surface 是什么”的基线，再进入实现。
