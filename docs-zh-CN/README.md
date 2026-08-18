@@ -10,6 +10,7 @@
 - [MCP 集成](mcp-integration.md)
 - [OpenCode 集成](opencode-integration.md)
 - [Claude Code 集成](claude-integration.md)
+- [Claude Code 无感交互集成](claude-interactive.md)
 - [Agent 基准测试](agent-benchmark.md)
 - [检索基准](benchmark.md)
 - [故障排查](troubleshooting.md)

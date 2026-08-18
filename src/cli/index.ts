@@ -40,6 +40,9 @@ import { readReviewInput } from "./review-input.js";
 import { stringifyCliJson } from "./json.js";
 import { applyBootstrapBundle, generateBootstrapBundle, loadBootstrapBundle, writeBootstrapBundle } from "../bootstrap.js";
 import { backupRepository, exportRepository, importRepository, restoreRepository } from "../portability/repository-data.js";
+import { startBridgeServer } from "../bridge/server.js";
+import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-hook.js";
+import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
 
@@ -88,6 +91,8 @@ Usage:
   repomind bootstrap [--repo <path>] [--output <new-candidates.json>] [--json]
   repomind bootstrap-apply --input <candidates.json> [--candidate <id[,id...]>] --yes [--repo <path>] [--json]
   repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
+  repomind bridge [--host <address>] [--port <number>]
+  repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
   repomind eval --agent --manifest <path> [--runner opencode] [--model <id>] [--lifecycle agent-managed|host-managed] [--repeat <1-100>] [--output <dir>] [--strict] [--require-acceptance] [--json]
@@ -155,6 +160,9 @@ function parseCliArgs() {
     lifecycle: { type: "string" },
     output: { type: "string" },
     timeout: { type: "string" },
+    host: { type: "string" },
+    port: { type: "string" },
+    "bridge-url": { type: "string" },
     fixtures: { type: "string" },
     arms: { type: "string" },
     budgets: { type: "string" },
@@ -276,6 +284,44 @@ async function main(): Promise<void> {
   assertEncryptionFlags(command);
   if (command === "mcp") {
     await runMcpServer();
+    return;
+  }
+  if (command === "bridge") {
+    const port = values.port === undefined ? 7345 : Number(values.port);
+    const running = await startBridgeServer({
+      host: values.host ?? "127.0.0.1",
+      port,
+      ...(process.env.REPOMIND_BRIDGE_TOKEN ? { token: process.env.REPOMIND_BRIDGE_TOKEN } : {}),
+      ...(process.env.REPOMIND_DATA_DIR ? { dataDirectory: process.env.REPOMIND_DATA_DIR } : {}),
+      onError: (error) => console.error(`[RepoMind Bridge] ${error instanceof Error ? error.message : String(error)}`),
+    });
+    console.error(`[RepoMind Bridge] listening on ${running.url}`);
+    let closing = false;
+    const close = (): void => {
+      if (closing) return;
+      closing = true;
+      void running.close();
+    };
+    process.once("SIGINT", close);
+    process.once("SIGTERM", close);
+    await new Promise<void>((resolve) => running.server.once("close", resolve));
+    process.removeListener("SIGINT", close);
+    process.removeListener("SIGTERM", close);
+    return;
+  }
+  if (command === "claude-hook") {
+    const result = await handleClaudeInteractiveHook({
+      ...(values["bridge-url"] ? { bridgeUrl: values["bridge-url"] } : {}),
+    });
+    if (result) console.log(JSON.stringify(result));
+    return;
+  }
+  if (command === "claude-hook-install") {
+    output(installClaudeInteractiveHooks({
+      repository: repositoryPath(),
+      cliEntry: process.argv[1] ?? fileURLToPath(import.meta.url),
+      bridgeUrl: values["bridge-url"] ?? "http://127.0.0.1:7345",
+    }));
     return;
   }
   if (command === "init") {

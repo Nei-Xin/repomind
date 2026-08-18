@@ -333,4 +333,43 @@ CREATE INDEX skill_candidate_evidence_evidence ON skill_candidate_evidence(evide
 CREATE INDEX skill_candidate_audit_candidate ON skill_candidate_audit_log(candidate_id, created_at);
 `,
   },
+  {
+    version: 12,
+    sql: `
+CREATE TABLE agent_sessions (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  checkout_id TEXT NOT NULL REFERENCES repository_checkouts(id),
+  agent TEXT NOT NULL,
+  external_session_id TEXT NOT NULL,
+  current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  last_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  current_task_event_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('active','ended')),
+  started_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  UNIQUE(repository_id, agent, external_session_id)
+);
+CREATE TABLE activity_events (
+  id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  agent_session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  sequence INTEGER,
+  payload_json TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  received_at INTEGER NOT NULL
+);
+CREATE INDEX agent_sessions_repository_seen
+  ON agent_sessions(repository_id, last_seen_at DESC);
+CREATE INDEX activity_events_repository_session
+  ON activity_events(repository_id, session_id, occurred_at, id);
+CREATE INDEX activity_events_agent_session
+  ON activity_events(agent_session_id, occurred_at, id);
+`,
+  },
 ] as const;

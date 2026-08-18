@@ -235,6 +235,9 @@ export interface DerivedMaintenanceResult {
   l4: DerivedMaintenanceStageResult<RebuildSkillCandidatesResult>;
 }
 
+/** L2/L3 maintenance used by interactive Agent task completion. */
+export type DerivedMemoryMaintenanceResult = Omit<DerivedMaintenanceResult, "l4">;
+
 export interface ReviewSkillCandidateInput {
   candidateId: string;
   action: "approve" | "reject";

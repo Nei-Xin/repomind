@@ -155,6 +155,8 @@ describe("database migrations", () => {
         expect(table("skill_candidate_sessions")).toEqual({ name: "skill_candidate_sessions" });
         expect(table("skill_candidate_evidence")).toEqual({ name: "skill_candidate_evidence" });
         expect(table("skill_candidate_audit_log")).toEqual({ name: "skill_candidate_audit_log" });
+        expect(table("agent_sessions")).toEqual({ name: "agent_sessions" });
+        expect(table("activity_events")).toEqual({ name: "activity_events" });
         expect(versions).toEqual(migrations.map((migration) => ({ version: migration.version })));
       } finally {
         upgraded.close();

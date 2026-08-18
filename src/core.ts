@@ -8,6 +8,7 @@ import type {
   CorrectMemoryInput,
   CorrectMemoryResult,
   DerivedMaintenanceError,
+  DerivedMemoryMaintenanceResult,
   DerivedMaintenanceResult,
   DerivedMaintenanceStageResult,
   EvidenceKind,
@@ -992,7 +993,7 @@ export class RepositoryMemoryCore {
     return new SkillCandidateStore(this.context).rebuild(input);
   }
 
-  maintainDerivedLayers(): DerivedMaintenanceResult {
+  maintainMemoryLayers(): DerivedMemoryMaintenanceResult {
     const startedAt = performance.now();
     const l2 = runDerivedMaintenanceStage(
       () => this.rebuildModuleNarratives(),
@@ -1009,19 +1010,31 @@ export class RepositoryMemoryCore {
         ? NO_REPOSITORY_PROFILE_SOURCES
         : null,
     );
+    const stages = [l2, l3];
+    const succeeded = stages.filter((stage) => stage.status === "success").length;
+    const failed = stages.filter((stage) => stage.status === "failed").length;
+    const status = failed === 0
+      ? succeeded === 0 ? "skipped" : "success"
+      : succeeded === 0 ? "failed" : "partial";
+    return { status, durationMs: elapsedMilliseconds(startedAt), l2, l3 };
+  }
+
+  maintainDerivedLayers(): DerivedMaintenanceResult {
+    const startedAt = performance.now();
+    const memory = this.maintainMemoryLayers();
     const l4 = runDerivedMaintenanceStage(
       () => this.rebuildSkillCandidates(),
       (result) => result.created + result.updated + result.unchanged === 0
         ? "No qualifying L4 workflow required maintenance."
         : null,
     );
-    const stages = [l2, l3, l4];
+    const stages = [memory.l2, memory.l3, l4];
     const succeeded = stages.filter((stage) => stage.status === "success").length;
     const failed = stages.filter((stage) => stage.status === "failed").length;
     const status = failed === 0
       ? succeeded === 0 ? "skipped" : "success"
       : succeeded === 0 ? "failed" : "partial";
-    return { status, durationMs: elapsedMilliseconds(startedAt), l2, l3, l4 };
+    return { status, durationMs: elapsedMilliseconds(startedAt), l2: memory.l2, l3: memory.l3, l4 };
   }
 
   listSkillCandidates(status?: SkillCandidateStatus): SkillCandidateSummary[] {
