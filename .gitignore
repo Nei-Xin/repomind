@@ -6,3 +6,6 @@ coverage/
 *.db-wal
 *.log
 comparison-report.json
+
+# Local test data, external service runtime files, and temporary artifacts
+/tmp/

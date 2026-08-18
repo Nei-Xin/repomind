@@ -51,7 +51,8 @@ node D:\path\to\repomind\dist\cli\entry.js claude-hook-install `
 ## MemoryProxy
 
 RepoMind 的第一阶段适配代码位于已检出的
-`tmp/TencentDB-Agent-Memory/MemoryProxy/src/repomind/client.ts`。按 TencentDB
+`services/memory-proxy/src/repomind/client.ts`。该目录只保留运行所需的
+MemoryProxy 子项目源码，不包含 TencentDB-Agent-Memory 的其他组件。按 TencentDB
 项目的安装文档配置并启动 MemoryProxy，同时设置：
 
 ```powershell
