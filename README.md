@@ -218,8 +218,9 @@ Run the fixed-commit real-repository acceptance with `npm run bench:l2-real`;
 the recorded v0.12 method and results are in
 [`docs/l2-real-repository-acceptance-v0.12.md`](docs/l2-real-repository-acceptance-v0.12.md).
 
-Build the bounded L3 repository profile from stable, evidence-backed L1 facts
-and current L2 module boundaries:
+Build the bounded L3 repository profile from stable, evidence-backed L1 facts,
+carried stale-file facts from the previous profile, and current L2 module
+boundaries:
 
 ```bash
 repomind profile-rebuild --json

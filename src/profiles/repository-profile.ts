@@ -18,9 +18,12 @@ interface StableMemory {
   type: MemoryType;
   title: string;
   content: string;
+  status: "active" | "uncertain";
+  carriedStale: boolean;
   confidence: number;
   fingerprint: string;
   updatedAt: number;
+  lastValidatedAt: number | null;
   evidenceCount: number;
 }
 
@@ -48,7 +51,7 @@ const DEFAULT_BUDGET = 6_000;
 const MIN_BUDGET = 1_000;
 const MAX_BUDGET = 30_000;
 const DEFAULT_MIN_CONFIDENCE = 0.8;
-const PROFILE_RENDER_VERSION = 2;
+const PROFILE_RENDER_VERSION = 3;
 const STABLE_TYPES: ReadonlySet<MemoryType> = new Set([
   "architecture", "convention", "decision", "command", "dependency", "requirement", "risk",
 ]);
@@ -63,6 +66,39 @@ function sha256(value: string): string {
 function clip(value: string, max = 320): string {
   const compact = value.replace(/\s+/gu, " ").trim();
   return compact.length <= max ? compact : `${compact.slice(0, max - 3)}...`;
+}
+
+function normalizedFact(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLocaleLowerCase("en-US");
+}
+
+function preferMemory(left: StableMemory, right: StableMemory): StableMemory {
+  if (left.status !== right.status) return left.status === "active" ? left : right;
+  if (left.updatedAt !== right.updatedAt) return left.updatedAt > right.updatedAt ? left : right;
+  const leftValidated = left.lastValidatedAt ?? 0;
+  const rightValidated = right.lastValidatedAt ?? 0;
+  if (leftValidated !== rightValidated) return leftValidated > rightValidated ? left : right;
+  return left.id.localeCompare(right.id) <= 0 ? left : right;
+}
+
+function deduplicateMemories(memories: StableMemory[]): StableMemory[] {
+  const unique = new Map<string, StableMemory>();
+  for (const memory of memories) {
+    const key = `${memory.type}\u0000${normalizedFact(memory.content)}`;
+    const previous = unique.get(key);
+    unique.set(key, previous ? preferMemory(previous, memory) : memory);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.type.localeCompare(right.type) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
+}
+
+function isStaleFileReason(value: string | null): boolean {
+  if (!value) return false;
+  try {
+    return (JSON.parse(value) as { kind?: unknown }).kind === "stale_files";
+  } catch {
+    return false;
+  }
 }
 
 function moduleFromFile(value: string): string {
@@ -86,7 +122,10 @@ function appendBounded(lines: string[], maxChars: number): string {
 
 function moduleStatement(module: StableModule): string {
   const selected = module.memories.slice(0, 2);
-  return selected.map((memory) => `[${memory.type}] ${memory.title}: ${clip(memory.content, 180)}`).join("; ");
+  return selected.map((memory) => {
+    const freshness = memory.carriedStale ? " [stale: verify against current files]" : "";
+    return `[${memory.type}]${freshness} ${memory.title}: ${clip(memory.content, 180)}`;
+  }).join("; ");
 }
 
 function fingerprint(memories: StableMemory[], modules: StableModule[], budget: number, minConfidence: number): string {
@@ -94,9 +133,9 @@ function fingerprint(memories: StableMemory[], modules: StableModule[], budget: 
     renderVersion: PROFILE_RENDER_VERSION,
     budget,
     minConfidence,
-    memories: memories.map((item) => [item.id, item.fingerprint]),
+    memories: memories.map((item) => [item.id, item.fingerprint, item.status]),
     modules: modules.map((item) => [item.id, item.modulePath, item.memories.map((memory) => [
-      memory.id, memory.fingerprint,
+      memory.id, memory.fingerprint, memory.status,
     ])]),
   }));
 }
@@ -121,7 +160,10 @@ function renderProfile(repositoryName: string, memories: StableMemory[], modules
     const matching = memories.filter((memory) => types.includes(memory.type));
     if (!matching.length) continue;
     lines.push("", `## ${heading}`);
-    for (const memory of matching) lines.push(`- [${memory.type}] ${memory.title}: ${clip(memory.content)} (${memory.id})`);
+    for (const memory of matching) {
+      const freshness = memory.carriedStale ? " [stale: verify against current files]" : "";
+      lines.push(`- [${memory.type}]${freshness} ${memory.title}: ${clip(memory.content)} (${memory.id})`);
+    }
   }
   return appendBounded(lines, maxChars);
 }
@@ -245,26 +287,36 @@ export class RepositoryProfileStore {
   }
 
   private stableMemories(minConfidence: number): StableMemory[] {
+    const previous = this.previousMemorySourceIds();
     const rows = this.context.database.raw.prepare(`
-      SELECT m.id, m.type, m.title, m.content, m.confidence, m.fingerprint, m.updated_at,
+      SELECT m.id, m.type, m.title, m.content, m.status, m.status_reason_json, m.confidence,
+        m.fingerprint, m.updated_at, m.last_validated_at,
         (SELECT count(*) FROM memory_evidence me WHERE me.memory_id=m.id) AS evidence_count
       FROM memories m
-      WHERE m.repository_id=? AND m.status='active' AND m.scope_type='repository' AND m.confidence>=?
+      WHERE m.repository_id=? AND m.status IN ('active','uncertain')
+        AND m.scope_type='repository' AND m.confidence>=?
       ORDER BY m.type, m.title, m.id
     `).all(this.context.marker.projectId, minConfidence) as Array<{
       id: string; type: MemoryType; title: string; content: string; confidence: number;
-      fingerprint: string; updated_at: number; evidence_count: number;
+      status: "active" | "uncertain"; status_reason_json: string | null; fingerprint: string;
+      updated_at: number; last_validated_at: number | null; evidence_count: number;
     }>;
-    return rows.filter((row) => STABLE_TYPES.has(row.type) && Number(row.evidence_count) > 0).map((row) => ({
-      id: row.id,
-      type: row.type,
-      title: row.title,
-      content: row.content,
-      confidence: Number(row.confidence),
-      fingerprint: row.fingerprint,
-      updatedAt: Number(row.updated_at),
-      evidenceCount: Number(row.evidence_count),
-    }));
+    return deduplicateMemories(rows
+      .filter((row) => STABLE_TYPES.has(row.type) && Number(row.evidence_count) > 0)
+      .map((row) => ({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        content: row.content,
+        status: row.status,
+        carriedStale: row.status === "uncertain" && isStaleFileReason(row.status_reason_json),
+        confidence: Number(row.confidence),
+        fingerprint: row.fingerprint,
+        updatedAt: Number(row.updated_at),
+        lastValidatedAt: row.last_validated_at === null ? null : Number(row.last_validated_at),
+        evidenceCount: Number(row.evidence_count),
+      }))
+      .filter((memory) => memory.status === "active" || (memory.carriedStale && previous.has(memory.id))));
   }
 
   private stableModules(minConfidence: number): StableModule[] {
@@ -272,16 +324,18 @@ export class RepositoryProfileStore {
       "SELECT id, module_path FROM module_narratives WHERE repository_id=? ORDER BY module_path",
     ).all(this.context.marker.projectId) as Array<{ id: string; module_path: string }>;
     const knownModules = new Map(modules.map((module) => [module.module_path, module.id]));
+    const previous = this.previousModuleSourceIds();
     const rows = this.context.database.raw.prepare(`
-      SELECT m.id, m.type, m.title, m.content, m.confidence, m.fingerprint, m.updated_at,
-        m.scope_type, m.scope_value, mf.file_path,
+      SELECT m.id, m.type, m.title, m.content, m.status, m.status_reason_json, m.confidence,
+        m.fingerprint, m.updated_at, m.last_validated_at, m.scope_type, m.scope_value, mf.file_path,
         (SELECT count(*) FROM memory_evidence me WHERE me.memory_id=m.id) AS evidence_count
       FROM memories m LEFT JOIN memory_files mf ON mf.memory_id=m.id
-      WHERE m.repository_id=? AND m.status='active' AND m.confidence>=?
+      WHERE m.repository_id=? AND m.status IN ('active','uncertain') AND m.confidence>=?
       ORDER BY m.type, m.title, m.id, mf.file_path
     `).all(this.context.marker.projectId, minConfidence) as Array<{
       id: string; type: MemoryType; title: string; content: string; confidence: number;
-      fingerprint: string; updated_at: number; evidence_count: number; scope_type: string;
+      status: "active" | "uncertain"; status_reason_json: string | null; fingerprint: string;
+      updated_at: number; last_validated_at: number | null; evidence_count: number; scope_type: string;
       scope_value: string | null; file_path: string | null;
     }>;
     const grouped = new Map<string, { memory: StableMemory; modules: Set<string> }>();
@@ -292,8 +346,12 @@ export class RepositoryProfileStore {
         source = {
           memory: {
             id: row.id, type: row.type, title: row.title, content: row.content,
+            status: row.status,
+            carriedStale: row.status === "uncertain" && isStaleFileReason(row.status_reason_json),
             confidence: Number(row.confidence), fingerprint: row.fingerprint,
-            updatedAt: Number(row.updated_at), evidenceCount: Number(row.evidence_count),
+            updatedAt: Number(row.updated_at),
+            lastValidatedAt: row.last_validated_at === null ? null : Number(row.last_validated_at),
+            evidenceCount: Number(row.evidence_count),
           },
           modules: new Set<string>(),
         };
@@ -305,13 +363,40 @@ export class RepositoryProfileStore {
     const byModule = new Map<string, StableMemory[]>();
     for (const source of grouped.values()) {
       for (const modulePath of source.modules) {
-        if (knownModules.has(modulePath)) byModule.set(modulePath, [...(byModule.get(modulePath) ?? []), source.memory]);
+        if (!knownModules.has(modulePath)) continue;
+        if (source.memory.status !== "active"
+          && !(source.memory.carriedStale && previous.get(modulePath)?.has(source.memory.id))) continue;
+        byModule.set(modulePath, [...(byModule.get(modulePath) ?? []), source.memory]);
       }
     }
     return modules.flatMap((module) => {
-      const memories = byModule.get(module.module_path) ?? [];
+      const memories = deduplicateMemories(byModule.get(module.module_path) ?? []);
       return memories.length ? [{ id: module.id, modulePath: module.module_path, memories }] : [];
     });
+  }
+
+  private previousMemorySourceIds(): Set<string> {
+    const rows = this.context.database.raw.prepare(`
+      SELECT ps.memory_id FROM repository_profile_memory_sources ps
+      JOIN repository_profiles p ON p.id=ps.profile_id WHERE p.repository_id=?
+      ORDER BY ps.sort_order
+    `).all(this.context.marker.projectId) as Array<{ memory_id: string }>;
+    return new Set(rows.map((row) => row.memory_id));
+  }
+
+  private previousModuleSourceIds(): Map<string, Set<string>> {
+    const rows = this.context.database.raw.prepare(`
+      SELECT n.module_path, ns.memory_id
+      FROM module_narratives n JOIN module_narrative_sources ns ON ns.narrative_id=n.id
+      WHERE n.repository_id=? ORDER BY n.module_path, ns.sort_order
+    `).all(this.context.marker.projectId) as Array<{ module_path: string; memory_id: string }>;
+    const result = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const ids = result.get(row.module_path) ?? new Set<string>();
+      ids.add(row.memory_id);
+      result.set(row.module_path, ids);
+    }
+    return result;
   }
 
   private currentFingerprint(row: ProfileRow): string {

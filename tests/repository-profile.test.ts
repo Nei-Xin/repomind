@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -165,6 +165,96 @@ describe("L3 repository profile", () => {
       profile: { version: 1, current: true },
     });
     expect(core.inspectRepositoryProfile().versions).toHaveLength(1);
+    core.close();
+  });
+
+  it("merges prior stale-file facts with new facts, deduplicates replacements, and removes invalid sources", () => {
+    const moduleDirectory = join(repository, "src", "storage");
+    const moduleFile = join(moduleDirectory, "index.ts");
+    mkdirSync(moduleDirectory, { recursive: true });
+    writeFileSync(moduleFile, "export const storageMode = 'local';\n");
+
+    const core = new RepositoryMemoryCore(repository);
+    const command = core.record({
+      type: "command",
+      title: "Storage verification",
+      content: "Run npm test for storage changes.",
+      confidence: 0.95,
+      relatedFiles: ["src/storage/index.ts"],
+    });
+    const architecture = core.record({
+      type: "architecture",
+      title: "Storage ownership",
+      content: "The storage module owns local persistence.",
+      confidence: 0.95,
+      scopeType: "module",
+      scopeValue: "src/storage",
+      relatedFiles: ["src/storage/index.ts"],
+    });
+    core.rebuildModuleNarratives();
+    const first = core.rebuildRepositoryProfile().profile;
+    expect(first).toMatchObject({ version: 1, memorySourceCount: 1, moduleSourceCount: 1 });
+
+    writeFileSync(moduleFile, [
+      "export const storageMode = 'local';",
+      "export const transactionMode = 'atomic';",
+      "",
+    ].join("\n"));
+    expect(core.search("storage persistence")[0]).toMatchObject({ id: architecture.id, status: "uncertain" });
+    expect(core.getRepositoryProfile()).toMatchObject({ version: 1, current: false });
+    const dependency = core.record({
+      type: "dependency",
+      title: "SQLite runtime",
+      content: "Storage requires SQLite support in the Node.js runtime.",
+      confidence: 0.95,
+    });
+    const requirement = core.record({
+      type: "requirement",
+      title: "Atomic storage writes",
+      content: "Storage writes must remain atomic.",
+      confidence: 0.95,
+      scopeType: "module",
+      scopeValue: "src/storage",
+      relatedFiles: ["src/storage/index.ts"],
+    });
+    core.rebuildModuleNarratives();
+    const merged = core.rebuildRepositoryProfile().profile;
+    expect(merged).toMatchObject({ version: 2, memorySourceCount: 2, moduleSourceCount: 1 });
+    expect(merged.sourceMemoryIds).toEqual(expect.arrayContaining([
+      command.id, architecture.id, dependency.id, requirement.id,
+    ]));
+    expect(merged.content).toContain("Storage verification");
+    expect(merged.content).toContain("Storage ownership");
+    expect(merged.content).toContain("SQLite runtime");
+    expect(merged.content).toContain("Atomic storage writes");
+    expect(merged.content).toContain("[stale: verify against current files]");
+
+    const replacement = core.record({
+      type: "command",
+      title: "Current storage verification",
+      content: "Run npm  test for storage changes.",
+      confidence: 0.95,
+      relatedFiles: ["src/storage/index.ts"],
+    });
+    const deduplicated = core.rebuildRepositoryProfile().profile;
+    expect(deduplicated).toMatchObject({ version: 3, memorySourceCount: 2, moduleSourceCount: 1 });
+    expect(deduplicated.sourceMemoryIds).toContain(replacement.id);
+    expect(deduplicated.sourceMemoryIds).not.toContain(command.id);
+    expect(deduplicated.content.match(/npm\s+test for storage changes\./gu)).toHaveLength(1);
+
+    core.invalidateMemory({ memoryId: replacement.id, reason: "Use a different storage verification command." });
+    core.invalidateMemory({ memoryId: architecture.id, reason: "The storage module no longer owns persistence." });
+    core.rebuildModuleNarratives();
+    const withoutInvalid = core.rebuildRepositoryProfile().profile;
+    expect(withoutInvalid).toMatchObject({ version: 4, memorySourceCount: 1, moduleSourceCount: 1 });
+    expect(withoutInvalid.sourceMemoryIds).toEqual(expect.arrayContaining([dependency.id, requirement.id]));
+    expect(withoutInvalid.sourceMemoryIds).not.toContain(command.id);
+    expect(withoutInvalid.sourceMemoryIds).not.toContain(replacement.id);
+    expect(withoutInvalid.sourceMemoryIds).not.toContain(architecture.id);
+    expect(withoutInvalid.content).not.toContain("Storage verification");
+    expect(withoutInvalid.content).not.toContain("Storage ownership");
+    expect(withoutInvalid.content).toContain("SQLite runtime");
+    expect(withoutInvalid.content).toContain("Atomic storage writes");
     core.close();
   });
 });

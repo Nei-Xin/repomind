@@ -9,13 +9,19 @@ task-specific L1/L2 retrieval.
 
 Repository facts can contribute when they are active, repository-scoped,
 evidence-backed, one of the stable fact types, and at or above the configured
-confidence threshold. Stable fact types are architecture, convention,
-decision, command, dependency, requirement, and risk.
+confidence threshold. A previously contributing fact that became uncertain
+only because a related file changed is also carried into the next version with
+an explicit `stale: verify against current files` marker. Stable fact types are
+architecture, convention, decision, command, dependency, requirement, and
+risk.
 
 L2 contributes module boundaries. RepoMind projects each narrative back onto
-its active, evidence-backed L1 sources and applies the L3 confidence threshold
-again. The L3 fingerprint therefore ignores a low-confidence L1 even if that
-source caused an L2 narrative version to change.
+its active or carried stale-file L1 sources and applies the L3 confidence
+threshold again. Exact duplicate facts are collapsed by type and normalized
+content, preferring an active and then newer source. Conflict-uncertain,
+superseded, and invalid sources are excluded. The L3 fingerprint therefore
+ignores a low-confidence L1 even if that source caused an L2 narrative version
+to change.
 
 ## Rebuild and inspect
 
