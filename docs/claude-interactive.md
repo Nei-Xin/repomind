@@ -22,10 +22,33 @@ npm.cmd run build
 node D:\path\to\repomind\dist\cli\entry.js init --repo D:\path\to\repository
 ```
 
-Start the loopback-only Bridge and install the project hooks:
+Install MemoryProxy dependencies once, create its local configuration, then use
+the unified service manager from the RepoMind source checkout:
 
 ```powershell
-node D:\path\to\repomind\dist\cli\entry.js bridge
+cd D:\path\to\repomind\services\memory-proxy
+npm.cmd install
+Copy-Item config.example.yaml config.yaml
+cd D:\path\to\repomind
+node .\dist\cli\entry.js services start
+node .\dist\cli\entry.js services status
+```
+
+The manager starts the Bridge at `127.0.0.1:7345` and MemoryProxy at
+`127.0.0.1:8096`, regardless of the host in `config.yaml`. PID state and logs
+live under `REPOMIND_DATA_DIR/services/`, or `~/.repomind/services/` when no
+override is set. Existing `REPOMIND_DATA_DIR` and `REPOMIND_BRIDGE_TOKEN` values
+are inherited, and MemoryProxy receives `REPOMIND_BRIDGE_URL` with the loopback
+Bridge URL when the variable is not already set. Stop only manager-owned
+processes:
+
+```powershell
+node .\dist\cli\entry.js services stop
+```
+
+Install the project hooks separately:
+
+```powershell
 node D:\path\to\repomind\dist\cli\entry.js claude-hook-install `
   --repo D:\path\to\repository `
   --bridge-url http://127.0.0.1:7345
@@ -35,7 +58,8 @@ The installer merges definitions into `.claude/settings.local.json` and is
 idempotent. Set the same `REPOMIND_BRIDGE_TOKEN` in the Bridge, MemoryProxy, and
 Claude environments when bearer authentication is required.
 
-Start the patched Tencent MemoryProxy with:
+For manual service startup instead of `services start`, configure the Bridge
+URL before launching MemoryProxy:
 
 ```powershell
 $env:REPOMIND_BRIDGE_URL = "http://127.0.0.1:7345"

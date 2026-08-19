@@ -99,6 +99,20 @@ repomind search "SQLite loader" --json
 repomind inspect <memory-id> --json
 ```
 
+For transparent Claude Code integration from a source checkout, manage the
+loopback Bridge and the bundled MemoryProxy together:
+
+```powershell
+repomind services start
+repomind services status
+repomind services stop
+```
+
+MemoryProxy must first have its local `config.yaml` and dependencies installed
+under `services/memory-proxy`. See
+[`docs/claude-interactive.md`](docs/claude-interactive.md) for setup and hook
+installation.
+
 Run a coding Agent task with RepoMind managing the complete lifecycle outside
 the model loop. OpenCode remains the default:
 

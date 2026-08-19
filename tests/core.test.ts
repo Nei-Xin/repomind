@@ -422,6 +422,39 @@ describe("repository memory core", () => {
     core.close();
   });
 
+  it("associates extracted memories only with files changed during the session", () => {
+    writeFileSync(join(repository, "unrelated.txt"), "clean unrelated\n", "utf8");
+    writeFileSync(join(repository, "task.txt"), "clean task\n", "utf8");
+    git(repository, "add", "unrelated.txt", "task.txt");
+    git(repository, "commit", "-m", "add task scope fixtures");
+    writeFileSync(join(repository, "unrelated.txt"), "pre-existing unrelated edit\n", "utf8");
+
+    const core = new RepositoryMemoryCore(repository);
+    const started = core.startSession({ task: "Update the task-scoped behavior" });
+    writeFileSync(join(repository, "task.txt"), "task-specific edit\n", "utf8");
+    core.commitSession({
+      sessionId: started.sessionId,
+      idempotencyKey: "task-file-scope-1",
+      status: "success",
+      summary: "Updated the task-scoped behavior.",
+    });
+
+    const linkedFiles = core.context.database.raw.prepare(`
+      SELECT DISTINCT mf.file_path
+      FROM memories m JOIN memory_files mf ON mf.memory_id=m.id
+      WHERE m.source='extracted'
+      ORDER BY mf.file_path
+    `).all() as Array<{ file_path: string }>;
+    expect(linkedFiles).toEqual([{ file_path: "task.txt" }]);
+    const diffEvidence = core.context.database.raw.prepare(
+      "SELECT content, metadata_json FROM evidence WHERE kind='git_diff'",
+    ).get() as { content: string; metadata_json: string };
+    expect(diffEvidence.content).toContain("task-specific edit");
+    expect(diffEvidence.content).not.toContain("pre-existing unrelated edit");
+    expect(JSON.parse(diffEvidence.metadata_json)).toMatchObject({ files: ["task.txt"] });
+    core.close();
+  });
+
   it("disables L1 recall at maxMemories zero while preserving current L2 and L3", async () => {
     const core = new RepositoryMemoryCore(repository);
     const recorded = core.record({

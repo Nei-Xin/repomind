@@ -43,6 +43,7 @@ import { backupRepository, exportRepository, importRepository, restoreRepository
 import { startBridgeServer } from "../bridge/server.js";
 import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-hook.js";
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
+import { servicesStatus, startServices, stopServices, type ServiceManagerOptions } from "../services/manager.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
 
@@ -92,6 +93,7 @@ Usage:
   repomind bootstrap-apply --input <candidates.json> [--candidate <id[,id...]>] --yes [--repo <path>] [--json]
   repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
   repomind bridge [--host <address>] [--port <number>]
+  repomind services start|status|stop [--json]
   repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
@@ -307,6 +309,20 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => running.server.once("close", resolve));
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
+    return;
+  }
+  if (command === "services") {
+    const action = required(positionals[1], "services action");
+    const repoMindRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const options: ServiceManagerOptions = {
+      cliEntry: process.argv[1] ?? fileURLToPath(import.meta.url),
+      repoMindRoot,
+      ...(process.env.REPOMIND_DATA_DIR ? { dataDirectory: process.env.REPOMIND_DATA_DIR } : {}),
+    };
+    if (action === "start") output(await startServices(options));
+    else if (action === "status") output(await servicesStatus(options));
+    else if (action === "stop") output(await stopServices(options));
+    else throw new RepoMindError("INVALID_INPUT", `Unknown services action: ${action}`);
     return;
   }
   if (command === "claude-hook") {

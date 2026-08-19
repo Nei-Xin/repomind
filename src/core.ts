@@ -62,7 +62,13 @@ import { buildExtractionMessages, type ExtractionEvidenceInput } from "./extract
 import type { LlmRunner } from "./extraction/runner.js";
 import { EXTRACTION_JSON_SCHEMA, validateExtractionOutput } from "./extraction/schema.js";
 import { RepoMindError } from "./errors.js";
-import { captureDiff, inspectGit } from "./git/git-inspector.js";
+import {
+  captureDiff,
+  filesChangedBetweenHeads,
+  inspectGit,
+  inspectWorktreeFiles,
+  type GitWorktreeFile,
+} from "./git/git-inspector.js";
 import { openRepository, type RepositoryContext } from "./repository.js";
 import { ModuleNarrativeStore } from "./narratives/module-narratives.js";
 import { RepositoryProfileStore } from "./profiles/repository-profile.js";
@@ -235,6 +241,14 @@ function extractFiles(status: string): string[] {
   }).filter((path) => Boolean(path) && !path.startsWith(".repomind/")))];
 }
 
+function changedWorktreeFiles(baseline: GitWorktreeFile[], final: GitWorktreeFile[]): string[] {
+  const baselineByPath = new Map(baseline.map((file) => [file.path, file]));
+  return final.filter((file) => {
+    const previous = baselineByPath.get(file.path);
+    return !previous || previous.status !== file.status || previous.hash !== file.hash;
+  }).map((file) => file.path);
+}
+
 export class RepositoryMemoryCore {
   readonly context: RepositoryContext;
   readonly embeddingProvider: EmbeddingProvider | null;
@@ -276,6 +290,7 @@ export class RepositoryMemoryCore {
     if (!input.task.trim()) throw new RepoMindError("INVALID_INPUT", "task must not be empty");
     const maxMemories = input.maxMemories ?? 5;
     const snapshot = inspectGit(this.context.root);
+    const worktreeFiles = inspectWorktreeFiles(this.context.root);
     const sessionId = `ses_${randomUUID()}`;
     const rawTask = input.task.trim();
     const task = redactSecrets(rawTask).content;
@@ -293,7 +308,7 @@ export class RepositoryMemoryCore {
       );
       // Passed unredacted so insertEvidence records how many secrets it removed.
       this.insertEvidence(sessionId, "user_requirement", rawTask, {}, null);
-      this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline" }, snapshot.head);
+      this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline", worktreeFiles }, snapshot.head);
     });
     try {
       const repositoryProfile = input.includeRepositoryProfile === false ? null : this.getRepositoryProfile();
@@ -347,8 +362,25 @@ export class RepositoryMemoryCore {
     if (session.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
 
     const finalSnapshot = inspectGit(this.context.root);
-    const diff = captureDiff(this.context.root, session.baseline_head, finalSnapshot.head);
-    const files = extractFiles(finalSnapshot.status);
+    const finalWorktreeFiles = inspectWorktreeFiles(this.context.root);
+    const baselineEvidence = db.raw.prepare(`
+      SELECT metadata_json FROM evidence
+      WHERE session_id=? AND kind='git_snapshot'
+      ORDER BY created_at, id LIMIT 1
+    `).get(input.sessionId) as { metadata_json: string } | undefined;
+    const baselineMetadata = baselineEvidence
+      ? JSON.parse(baselineEvidence.metadata_json) as { worktreeFiles?: GitWorktreeFile[] }
+      : {};
+    const hasWorktreeBaseline = baselineMetadata.worktreeFiles !== undefined;
+    const files = hasWorktreeBaseline
+      ? [...new Set([
+        ...changedWorktreeFiles(baselineMetadata.worktreeFiles!, finalWorktreeFiles),
+        ...filesChangedBetweenHeads(this.context.root, session.baseline_head, finalSnapshot.head),
+      ])].sort()
+      : extractFiles(finalSnapshot.status);
+    const diff = hasWorktreeBaseline
+      ? captureDiff(this.context.root, session.baseline_head, finalSnapshot.head, 65_536, files)
+      : captureDiff(this.context.root, session.baseline_head, finalSnapshot.head);
     const memoryFiles = files.filter((file) => this.fileFingerprint(file).hash !== null);
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
