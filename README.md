@@ -199,7 +199,8 @@ The queue refreshes file hashes before listing work and classifies uncertain
 memories as `stale`, `conflict`, or `other`. Validated, corrected, invalidated,
 or conflict-reconciled memories leave the queue on the next review.
 
-Build bounded L2 narratives from active, evidence-backed L1 memories:
+Build bounded L2 narratives from active, evidence-backed L1 memories and
+explicitly marked stale-file sources carried from the previous L2 version:
 
 ```bash
 repomind module-rebuild --json

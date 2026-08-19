@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -108,6 +108,63 @@ describe("L2 module narratives", () => {
     expect(core.listModuleNarratives()[0]).toMatchObject({ id: narrative.id, current: false });
     expect(core.rebuildModuleNarratives({ modules: ["src/cli"] })).toMatchObject({ deleted: 1, narratives: [] });
     expect(core.listModuleNarratives()).toEqual([]);
+    core.close();
+  });
+
+  it("carries prior stale-file facts forward, deduplicates replacements, and removes invalid sources", () => {
+    const moduleDirectory = join(repository, "src", "math");
+    const moduleFile = join(moduleDirectory, "index.ts");
+    mkdirSync(moduleDirectory, { recursive: true });
+    writeFileSync(moduleFile, "export const subtract = (a: number, b: number) => a - b;\n");
+
+    const core = new RepositoryMemoryCore(repository);
+    const subtract = core.record({
+      type: "solution",
+      title: "Subtract operation",
+      content: "The math module exports subtract(a, b).",
+      relatedFiles: ["src/math/index.ts"],
+    });
+    const first = core.rebuildModuleNarratives().narratives[0]!;
+    expect(first).toMatchObject({ modulePath: "src/math", sourceMemoryIds: [subtract.id], version: 1 });
+
+    writeFileSync(moduleFile, [
+      "export const subtract = (a: number, b: number) => a - b;",
+      "export const multiply = (a: number, b: number) => a * b;",
+      "",
+    ].join("\n"));
+    expect(core.search("subtract operation")[0]).toMatchObject({ id: subtract.id, status: "uncertain" });
+    const multiply = core.record({
+      type: "solution",
+      title: "Multiply operation",
+      content: "The math module exports multiply(a, b).",
+      relatedFiles: ["src/math/index.ts"],
+    });
+
+    const merged = core.rebuildModuleNarratives().narratives[0]!;
+    expect(merged).toMatchObject({ version: 2, sourceCount: 2 });
+    expect(merged.sourceMemoryIds).toEqual(expect.arrayContaining([subtract.id, multiply.id]));
+    expect(merged.content).toContain("subtract(a, b)");
+    expect(merged.content).toContain("multiply(a, b)");
+    expect(merged.content).toContain("[stale: verify against current files]");
+
+    const replacement = core.record({
+      type: "solution",
+      title: "Current subtract operation",
+      // L1 treats internal whitespace as fingerprint-significant; L2 normalizes it for fact deduplication.
+      content: "The math module exports  subtract(a, b).",
+      relatedFiles: ["src/math/index.ts"],
+    });
+    const deduplicated = core.rebuildModuleNarratives().narratives[0]!;
+    expect(deduplicated).toMatchObject({ version: 3, sourceCount: 2 });
+    expect(deduplicated.sourceMemoryIds).toEqual(expect.arrayContaining([replacement.id, multiply.id]));
+    expect(deduplicated.sourceMemoryIds).not.toContain(subtract.id);
+    expect(deduplicated.content.match(/subtract\(a, b\)/gu)).toHaveLength(1);
+
+    core.invalidateMemory({ memoryId: replacement.id, reason: "subtract is no longer exported" });
+    const withoutInvalid = core.rebuildModuleNarratives().narratives[0]!;
+    expect(withoutInvalid).toMatchObject({ version: 4, sourceCount: 1, sourceMemoryIds: [multiply.id] });
+    expect(withoutInvalid.content).not.toContain("subtract(a, b)");
+    expect(withoutInvalid.content).toContain("multiply(a, b)");
     core.close();
   });
 

@@ -17,6 +17,8 @@ interface SourceMemory {
   type: MemoryType;
   title: string;
   content: string;
+  status: "active" | "uncertain";
+  carriedStale: boolean;
   confidence: number;
   fingerprint: string;
   updatedAt: number;
@@ -42,7 +44,7 @@ interface NarrativeRow {
 const DEFAULT_BUDGET = 4_000;
 const MIN_BUDGET = 500;
 const MAX_BUDGET = 20_000;
-const NARRATIVE_RENDER_VERSION = 2;
+const NARRATIVE_RENDER_VERSION = 3;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -68,8 +70,36 @@ function clip(value: string, max = 280): string {
 function sourceFingerprint(sources: SourceMemory[]): string {
   return sha256(JSON.stringify({
     renderVersion: NARRATIVE_RENDER_VERSION,
-    sources: sources.map((source) => [source.id, source.fingerprint]),
+    sources: sources.map((source) => [
+      source.id,
+      source.fingerprint,
+      source.status,
+    ]),
   }));
+}
+
+function normalizedFact(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLocaleLowerCase("en-US");
+}
+
+function preferSource(left: SourceMemory, right: SourceMemory): SourceMemory {
+  if (left.status !== right.status) return left.status === "active" ? left : right;
+  if (left.updatedAt !== right.updatedAt) return left.updatedAt > right.updatedAt ? left : right;
+  const leftValidated = left.lastValidatedAt ?? 0;
+  const rightValidated = right.lastValidatedAt ?? 0;
+  if (leftValidated !== rightValidated) return leftValidated > rightValidated ? left : right;
+  return left.id.localeCompare(right.id) <= 0 ? left : right;
+}
+
+function deduplicateSources(sources: SourceMemory[]): SourceMemory[] {
+  const unique = new Map<string, SourceMemory>();
+  for (const source of sources) {
+    const key = `${source.type}\u0000${normalizedFact(source.content)}`;
+    const previous = unique.get(key);
+    unique.set(key, previous ? preferSource(previous, source) : source);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.type.localeCompare(right.type) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
 }
 
 function renderNarrative(modulePath: string, sources: SourceMemory[], maxChars: number): string {
@@ -90,7 +120,10 @@ function renderNarrative(modulePath: string, sources: SourceMemory[], maxChars: 
       || left.id.localeCompare(right.id));
     if (!matching.length) continue;
     blocks.push("", `## ${heading}`);
-    for (const source of matching) blocks.push(`- [${source.type}] ${source.title}: ${clip(source.content)} (${source.id})`);
+    for (const source of matching) {
+      const freshness = source.carriedStale ? " [stale: verify against current files]" : "";
+      blocks.push(`- [${source.type}]${freshness} ${source.title}: ${clip(source.content)} (${source.id})`);
+    }
   }
   const included: string[] = [];
   for (const line of blocks) {
@@ -235,14 +268,15 @@ export class ModuleNarrativeStore {
   private sourceRows(): SourceMemory[] {
     const rows = this.context.database.raw.prepare(`
       SELECT m.id, m.type, m.title, m.content, m.confidence, m.fingerprint, m.scope_type, m.scope_value,
-        m.updated_at, m.last_validated_at, mf.file_path,
+        m.status, m.status_reason_json, m.updated_at, m.last_validated_at, mf.file_path,
         (SELECT count(*) FROM memory_evidence me WHERE me.memory_id=m.id) AS evidence_count
       FROM memories m LEFT JOIN memory_files mf ON mf.memory_id=m.id
-      WHERE m.repository_id=? AND m.status='active'
+      WHERE m.repository_id=? AND m.status IN ('active','uncertain')
       ORDER BY m.id, mf.file_path
     `).all(this.context.marker.projectId) as Array<{
       id: string; type: MemoryType; title: string; content: string; confidence: number; fingerprint: string;
-      scope_type: string; scope_value: string | null; updated_at: number; last_validated_at: number | null;
+      scope_type: string; scope_value: string | null; status: "active" | "uncertain";
+      status_reason_json: string | null; updated_at: number; last_validated_at: number | null;
       file_path: string | null; evidence_count: number;
     }>;
     const grouped = new Map<string, SourceMemory>();
@@ -252,6 +286,8 @@ export class ModuleNarrativeStore {
       if (!source) {
         source = {
           id: row.id, type: row.type, title: row.title, content: row.content, confidence: Number(row.confidence),
+          status: row.status,
+          carriedStale: row.status === "uncertain" && this.isStaleFileReason(row.status_reason_json),
           fingerprint: row.fingerprint, updatedAt: Number(row.updated_at),
           lastValidatedAt: row.last_validated_at === null ? null : Number(row.last_validated_at),
           evidenceCount: Number(row.evidence_count), files: [], modules: [],
@@ -264,16 +300,46 @@ export class ModuleNarrativeStore {
     for (const source of grouped.values()) {
       if (!source.modules.length) source.modules = [...new Set(source.files.map(moduleFromFile))];
     }
-    return [...grouped.values()].filter((source) => source.modules.length).sort((a, b) =>
+    return [...grouped.values()].filter((source) =>
+      source.modules.length && (source.status === "active" || source.carriedStale)).sort((a, b) =>
       a.type.localeCompare(b.type) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
   }
 
   private sourcesByModule(): Map<string, SourceMemory[]> {
+    const previous = this.previousSourceIdsByModule();
     const result = new Map<string, SourceMemory[]>();
     for (const source of this.sourceRows()) {
-      for (const modulePath of source.modules) result.set(modulePath, [...(result.get(modulePath) ?? []), source]);
+      for (const modulePath of source.modules) {
+        if (source.carriedStale && !previous.get(modulePath)?.has(source.id)) continue;
+        result.set(modulePath, [...(result.get(modulePath) ?? []), source]);
+      }
+    }
+    for (const [modulePath, sources] of result) result.set(modulePath, deduplicateSources(sources));
+    return result;
+  }
+
+  private previousSourceIdsByModule(): Map<string, Set<string>> {
+    const rows = this.context.database.raw.prepare(`
+      SELECT n.module_path, ns.memory_id
+      FROM module_narratives n JOIN module_narrative_sources ns ON ns.narrative_id=n.id
+      WHERE n.repository_id=? ORDER BY n.module_path, ns.sort_order
+    `).all(this.context.marker.projectId) as Array<{ module_path: string; memory_id: string }>;
+    const result = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const ids = result.get(row.module_path) ?? new Set<string>();
+      ids.add(row.memory_id);
+      result.set(row.module_path, ids);
     }
     return result;
+  }
+
+  private isStaleFileReason(value: string | null): boolean {
+    if (!value) return false;
+    try {
+      return (JSON.parse(value) as { kind?: unknown }).kind === "stale_files";
+    } catch {
+      return false;
+    }
   }
 
   private currentFingerprints(): Map<string, string> {

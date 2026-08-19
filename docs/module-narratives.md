@@ -6,13 +6,22 @@ or treated as a narrative.
 
 ## Source eligibility
 
-A memory can contribute only when it is:
+A memory can contribute when it is:
 
 - in the same repository;
-- `active` rather than uncertain, superseded, or invalid;
+- `active`, or a previously contributing memory that became `uncertain` only
+  because one of its related files changed;
 - linked to at least one Evidence row; and
 - assigned to a module explicitly or linked to a file whose parent directory
   identifies the module.
+
+Previously contributing stale-file memories are carried forward with an
+explicit `stale: verify against current files` marker. A conflict-uncertain,
+superseded, or invalid memory is never carried forward. Exact duplicate facts
+are collapsed by type and normalized content, preferring an active and then
+newer source. This lets additive tasks retain earlier module knowledge without
+silently treating stale provenance as current truth. Invalidating or
+superseding a source removes its content on the next rebuild.
 
 An explicit `module` scope wins over file-derived modules. Otherwise, one L1
 memory may support multiple modules when its Evidence-related files cross
@@ -30,8 +39,9 @@ The default budget is 4,000 characters. Accepted values are 500 through
 technical decisions, failures and verification, and current risks. Every
 conclusion includes its source Memory ID.
 
-RepoMind hashes the ordered source IDs, L1 fingerprints, update/validation
-times, and Evidence counts. A matching fingerprint and budget produces an
+RepoMind hashes the ordered source IDs, L1 fingerprints, and source status.
+Evidence-link additions and validation timestamps alone do not change the
+derived version. A matching fingerprint and budget produces an
 `unchanged` result. A changed module increments its L2 version. A requested
 module with no eligible source deletes its derived narrative.
 
