@@ -94,5 +94,8 @@ describe("deterministic stable-memory extraction", () => {
       expect.objectContaining({ type: "decision", content: "非整数输入抛出 TypeError。" }),
       expect.objectContaining({ type: "decision", content: "负数和超额预留抛出 RangeError。" }),
     ]));
+    expect(candidates).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "architecture", content: expect.stringContaining("请完成") }),
+    ]));
   });
 });
