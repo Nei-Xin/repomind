@@ -57,6 +57,7 @@ import type {
 import { embeddingProviderFromEnvironment } from "./embedding/config.js";
 import type { EmbeddingProvider } from "./embedding/provider.js";
 import { extractionRunnerFromEnvironment } from "./extraction/config.js";
+import { extractDeterministicMemories } from "./extraction/deterministic.js";
 import { equivalentExtractionContent } from "./extraction/dedup.js";
 import { buildExtractionMessages, type ExtractionEvidenceInput } from "./extraction/prompt.js";
 import type { LlmRunner } from "./extraction/runner.js";
@@ -356,8 +357,8 @@ export class RepositoryMemoryCore {
     }
 
     const session = db.raw.prepare(
-      "SELECT status, baseline_head FROM sessions WHERE id=? AND repository_id=?",
-    ).get(input.sessionId, this.context.marker.projectId) as { status: string; baseline_head: string | null } | undefined;
+      "SELECT status, baseline_head, task FROM sessions WHERE id=? AND repository_id=?",
+    ).get(input.sessionId, this.context.marker.projectId) as { status: string; baseline_head: string | null; task: string } | undefined;
     if (!session) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
     if (session.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
 
@@ -416,6 +417,23 @@ export class RepositoryMemoryCore {
       };
       const summaryEvidence = evidenceIds[0];
       if (input.status === "success") {
+        const userRequirementEvidence = db.raw.prepare(`
+          SELECT id FROM evidence WHERE session_id=? AND kind='user_requirement'
+          ORDER BY created_at, id LIMIT 1
+        `).get(input.sessionId) as { id: string } | undefined;
+        for (const candidate of extractDeterministicMemories({
+          task: session.task,
+          summary: input.summary,
+          changedFiles: memoryFiles,
+        })) {
+          const evidenceId = candidate.type === "requirement"
+            ? userRequirementEvidence?.id ?? summaryEvidence!
+            : summaryEvidence!;
+          track(this.storeMemory({
+            ...candidate,
+            tags: ["automatic", candidate.type],
+          }, "extracted", [evidenceId]));
+        }
         for (const decision of input.decisions ?? []) {
           track(this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: memoryFiles }, "extracted", [summaryEvidence!]));
         }

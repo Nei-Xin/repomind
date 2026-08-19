@@ -22,6 +22,7 @@ export * from "./activity/context.js";
 export * from "./bridge/server.js";
 export * from "./integrations/claude/interactive-hook.js";
 export * from "./integrations/claude/hook-installer.js";
+export * from "./integrations/claude/interactive-setup.js";
 export * from "./integrations/claude/events.js";
 export * from "./integrations/claude/adapter.js";
 export * from "./integrations/agent-host/types.js";

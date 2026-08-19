@@ -10,6 +10,7 @@ export interface InstallClaudeHooksOptions {
   cliEntry: string;
   nodeExecutable?: string;
   bridgeUrl?: string;
+  proxyUrl?: string;
 }
 
 export interface InstallClaudeHooksResult {
@@ -17,6 +18,15 @@ export interface InstallClaudeHooksResult {
   command: string;
   added: number;
   unchanged: number;
+  proxyEnvironment: { configured: boolean; changed: boolean; value: string | null };
+}
+
+export interface InspectClaudeHooksResult {
+  path: string;
+  installed: number;
+  expected: number;
+  missingEvents: string[];
+  proxyEnvironment: { configured: boolean; value: string | null; expected: string | null };
 }
 
 interface HookDefinition {
@@ -86,9 +96,53 @@ export function installClaudeInteractiveHooks(options: InstallClaudeHooksOptions
   }
 
   settings.hooks = hooks;
+  const environment = objectValue(settings.env);
+  const currentProxy = typeof environment.ANTHROPIC_BASE_URL === "string"
+    ? environment.ANTHROPIC_BASE_URL
+    : null;
+  const proxyChanged = options.proxyUrl !== undefined && currentProxy !== options.proxyUrl;
+  if (options.proxyUrl !== undefined) {
+    environment.ANTHROPIC_BASE_URL = options.proxyUrl;
+    settings.env = environment;
+  }
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.repomind-${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
   renameSync(temporary, path);
-  return { path, command, added, unchanged };
+  return {
+    path,
+    command,
+    added,
+    unchanged,
+    proxyEnvironment: {
+      configured: options.proxyUrl === undefined ? currentProxy !== null : true,
+      changed: proxyChanged,
+      value: options.proxyUrl ?? currentProxy,
+    },
+  };
+}
+
+export function inspectClaudeInteractiveHooks(options: InstallClaudeHooksOptions): InspectClaudeHooksResult {
+  const root = locateGitRoot(options.repository);
+  const path = join(root, ".claude", "settings.local.json");
+  const settings = loadSettings(path);
+  const hooks = objectValue(settings.hooks);
+  const command = hookCommand(options);
+  const missingEvents = EVENTS.filter((event) => {
+    const existing = Array.isArray(hooks[event.name]) ? hooks[event.name] as HookDefinition[] : [];
+    return !existing.some((definition) => definition.hooks?.some((hook) => hook.command === command));
+  }).map((event) => event.name);
+  const environment = objectValue(settings.env);
+  const value = typeof environment.ANTHROPIC_BASE_URL === "string" ? environment.ANTHROPIC_BASE_URL : null;
+  return {
+    path,
+    installed: EVENTS.length - missingEvents.length,
+    expected: EVENTS.length,
+    missingEvents,
+    proxyEnvironment: {
+      configured: options.proxyUrl === undefined ? value !== null : value === options.proxyUrl,
+      value,
+      expected: options.proxyUrl ?? null,
+    },
+  };
 }

@@ -103,6 +103,10 @@ For transparent Claude Code integration from a source checkout, manage the
 loopback Bridge and the bundled MemoryProxy together:
 
 ```powershell
+repomind claude setup --repo D:\path\to\repository
+repomind doctor claude --repo D:\path\to\repository
+
+# Individual service controls remain available:
 repomind services start
 repomind services status
 repomind services stop

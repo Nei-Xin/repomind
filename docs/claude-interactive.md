@@ -13,7 +13,31 @@ Claude Code --Anthropic API--> MemoryProxy --turn events--+
                               +--> RepositoryMemoryCore / SQLite
 ```
 
-## Setup
+## Daily setup
+
+From the RepoMind source checkout, one idempotent command initializes the target
+repository, installs or repairs its Claude hooks, configures the project-local
+MemoryProxy route, and starts both local services:
+
+```powershell
+node .\dist\cli\entry.js claude setup --repo D:\path\to\repository
+```
+
+Then use native interactive Claude Code normally from the target repository:
+
+```powershell
+claude
+```
+
+Inspect the complete interactive chain without changing it:
+
+```powershell
+node .\dist\cli\entry.js doctor claude --repo D:\path\to\repository
+```
+
+The detailed manual steps below remain available for troubleshooting.
+
+## Manual setup
 
 Build and initialize the target repository:
 

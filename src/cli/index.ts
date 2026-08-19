@@ -43,6 +43,11 @@ import { backupRepository, exportRepository, importRepository, restoreRepository
 import { startBridgeServer } from "../bridge/server.js";
 import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-hook.js";
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
+import {
+  claudeInteractiveStatus,
+  DEFAULT_CLAUDE_PROXY_URL,
+  setupClaudeInteractive,
+} from "../integrations/claude/interactive-setup.js";
 import { servicesStatus, startServices, stopServices, type ServiceManagerOptions } from "../services/manager.js";
 
 const MEMORY_TYPES = ["architecture", "convention", "decision", "command", "failure", "solution", "dependency", "location", "requirement", "risk"] as const;
@@ -67,7 +72,7 @@ Usage:
   repomind skill-inspect <l4-id> [--repo <path>] [--json]
   repomind skill-review <l4-id> --action approve|reject --reason <text> [--repo <path>] [--json]
   repomind skill-export <l4-id> --output <new-SKILL.md> [--repo <path>] [--json]
-  repomind doctor [--repo <path>] [--json]
+  repomind doctor [opencode|claude] [--repo <path>] [--json]
   repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
@@ -94,6 +99,7 @@ Usage:
   repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
   repomind bridge [--host <address>] [--port <number>]
   repomind services start|status|stop [--json]
+  repomind claude setup|status [--repo <path>] [--proxy-url <url>] [--json]
   repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
@@ -165,6 +171,7 @@ function parseCliArgs() {
     host: { type: "string" },
     port: { type: "string" },
     "bridge-url": { type: "string" },
+    "proxy-url": { type: "string" },
     fixtures: { type: "string" },
     arms: { type: "string" },
     budgets: { type: "string" },
@@ -243,6 +250,14 @@ function repositoryPath(): string {
   return values.repo ?? process.cwd();
 }
 
+function serviceManagerOptions(): ServiceManagerOptions {
+  return {
+    cliEntry: process.argv[1] ?? fileURLToPath(import.meta.url),
+    repoMindRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+    ...(process.env.REPOMIND_DATA_DIR ? { dataDirectory: process.env.REPOMIND_DATA_DIR } : {}),
+  };
+}
+
 function agentHostRunner(value: string | undefined): RegisteredAgentHostId {
   const runner = value ?? "opencode";
   if (!isRegisteredAgentHostId(runner)) throw new RepoMindError("INVALID_INPUT", `Unsupported --runner ${runner}`);
@@ -313,16 +328,24 @@ async function main(): Promise<void> {
   }
   if (command === "services") {
     const action = required(positionals[1], "services action");
-    const repoMindRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const options: ServiceManagerOptions = {
-      cliEntry: process.argv[1] ?? fileURLToPath(import.meta.url),
-      repoMindRoot,
-      ...(process.env.REPOMIND_DATA_DIR ? { dataDirectory: process.env.REPOMIND_DATA_DIR } : {}),
-    };
+    const options = serviceManagerOptions();
     if (action === "start") output(await startServices(options));
     else if (action === "status") output(await servicesStatus(options));
     else if (action === "stop") output(await stopServices(options));
     else throw new RepoMindError("INVALID_INPUT", `Unknown services action: ${action}`);
+    return;
+  }
+  if (command === "claude") {
+    const action = required(positionals[1], "claude action");
+    const options = {
+      ...serviceManagerOptions(),
+      repository: repositoryPath(),
+      proxyUrl: values["proxy-url"] ?? DEFAULT_CLAUDE_PROXY_URL,
+      ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
+    };
+    if (action === "setup") output(await setupClaudeInteractive(options));
+    else if (action === "status") output(await claudeInteractiveStatus(options));
+    else throw new RepoMindError("INVALID_INPUT", `Unknown claude action: ${action}`);
     return;
   }
   if (command === "claude-hook") {
@@ -538,7 +561,15 @@ async function main(): Promise<void> {
     if (values["runner-executable"] && !values.runner) {
       throw new RepoMindError("INVALID_INPUT", "--runner-executable requires --runner with doctor");
     }
-    const selectedRunners = values.runner ? [agentHostRunner(values.runner)] : [...REGISTERED_AGENT_HOST_IDS];
+    const positionalRunner = positionals[1];
+    if (positionalRunner && !isRegisteredAgentHostId(positionalRunner)) {
+      throw new RepoMindError("INVALID_INPUT", `Unsupported doctor target ${positionalRunner}`);
+    }
+    if (values.runner && positionalRunner && values.runner !== positionalRunner) {
+      throw new RepoMindError("INVALID_INPUT", "doctor positional target and --runner must match");
+    }
+    const requestedRunner = values.runner ?? positionalRunner;
+    const selectedRunners = requestedRunner ? [agentHostRunner(requestedRunner)] : [...REGISTERED_AGENT_HOST_IDS];
     const checks: Record<string, unknown> = {
       node: process.version,
       sqlite: true,
@@ -589,6 +620,19 @@ async function main(): Promise<void> {
       ...(checks.git ? [] : ["Run this command inside a Git repository."]),
       ...(checks.git && !checks.initialized ? ["Run 'repomind init' in the repository."] : []),
     ];
+    if (requestedRunner === "claude" && checks.git) {
+      const interactiveClaude = await claudeInteractiveStatus({
+        ...serviceManagerOptions(),
+        repository: probeRoot,
+        proxyUrl: values["proxy-url"] ?? DEFAULT_CLAUDE_PROXY_URL,
+        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
+      });
+      checks.interactiveClaude = interactiveClaude;
+      checks.nextSteps = [...new Set([
+        ...(checks.nextSteps as string[]),
+        ...interactiveClaude.nextSteps,
+      ])];
+    }
     output(checks);
     return;
   }

@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startBridgeServer, type RunningBridgeServer } from "../src/bridge/server.js";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { handleClaudeInteractiveHook } from "../src/integrations/claude/interactive-hook.js";
-import { installClaudeInteractiveHooks } from "../src/integrations/claude/hook-installer.js";
+import {
+  inspectClaudeInteractiveHooks,
+  installClaudeInteractiveHooks,
+} from "../src/integrations/claude/hook-installer.js";
 import { initializeRepository } from "../src/repository.js";
 import { createTestRepository } from "./helpers.js";
 
@@ -227,6 +230,85 @@ describe("interactive RepoMind Bridge", () => {
     });
   });
 
+  it("promotes explicit interactive task facts into L1, L2, and L3 for later sessions", async () => {
+    const fixture = initializedFixture();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const common = {
+      schemaVersion: 1,
+      agent: "claude",
+      agentSessionId: "claude-stable-memory-1",
+      repositoryPath: fixture.repository,
+    } as const;
+
+    await post(bridge.url, "/v1/tasks/start", {
+      ...common,
+      eventId: "stable:start:1",
+      task: "存储写入必须保持事务性。请更新 src/storage 模块。",
+    });
+    mkdirSync(join(fixture.repository, "src", "storage"), { recursive: true });
+    writeFileSync(join(fixture.repository, "src", "storage", "index.ts"), "export const transactional = true;\n", "utf8");
+    const finished = await post<{
+      status: string;
+      maintenance: { l2: { status: string }; l3: { status: string } } | null;
+    }>(bridge.url, "/v1/tasks/finish", {
+      ...common,
+      eventId: "stable:finish:1",
+      summary: "采用 SQLite 事务作为唯一写入边界，src/storage 模块负责持久化。",
+    });
+    expect(finished).toMatchObject({
+      status: "committed",
+      maintenance: { l2: { status: "success" }, l3: { status: "success" } },
+    });
+
+    const core = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
+    try {
+      const memories = core.context.database.raw.prepare(`
+        SELECT type, scope_type, scope_value FROM memories
+        WHERE repository_id=? AND type IN ('requirement','decision','architecture') ORDER BY type
+      `).all(core.context.marker.projectId);
+      expect(memories).toEqual([
+        { type: "architecture", scope_type: "module", scope_value: "src/storage" },
+        { type: "decision", scope_type: "module", scope_value: "src/storage" },
+        { type: "requirement", scope_type: "module", scope_value: "src/storage" },
+      ]);
+      const evidenceKinds = core.context.database.raw.prepare(`
+        SELECT m.type, e.kind FROM memories m
+        JOIN memory_evidence me ON me.memory_id=m.id JOIN evidence e ON e.id=me.evidence_id
+        WHERE m.repository_id=? AND m.type IN ('requirement','decision','architecture') ORDER BY m.type
+      `).all(core.context.marker.projectId);
+      expect(evidenceKinds).toEqual([
+        { type: "architecture", kind: "agent_summary" },
+        { type: "decision", kind: "agent_summary" },
+        { type: "requirement", kind: "user_requirement" },
+      ]);
+      expect(core.listModuleNarratives()[0]?.content).toContain("存储写入必须保持事务性");
+      expect(core.getRepositoryProfile()?.content).toContain("SQLite");
+    } finally {
+      core.close();
+    }
+
+    const recalled = await post<{ context: string }>(bridge.url, "/v1/tasks/start", {
+      schemaVersion: 1,
+      agent: "claude",
+      agentSessionId: "claude-stable-memory-2",
+      repositoryPath: fixture.repository,
+      eventId: "stable:start:2",
+      task: "存储模块的写入约束和边界是什么？",
+    });
+    expect(recalled.context).toContain("存储写入必须保持事务性");
+    expect(recalled.context).toContain("src/storage");
+
+    await post(bridge.url, "/v1/tasks/abort", {
+      schemaVersion: 1,
+      agent: "claude",
+      agentSessionId: "claude-stable-memory-2",
+      repositoryPath: fixture.repository,
+      eventId: "stable:abort:2",
+      reason: "test cleanup",
+    });
+  });
+
   it("keeps the interactive task committed when L2/L3 maintenance fails", async () => {
     const fixture = initializedFixture();
     const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
@@ -272,26 +354,45 @@ describe("interactive RepoMind Bridge", () => {
     const fixture = initializedFixture();
     const settingsPath = join(fixture.repository, ".claude", "settings.local.json");
     mkdirSync(join(fixture.repository, ".claude"), { recursive: true });
-    writeFileSync(settingsPath, JSON.stringify({ permissions: { allow: ["PowerShell(npm run *)"] } }), "utf8");
+    writeFileSync(settingsPath, JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: "https://old-proxy.example.invalid" },
+      permissions: { allow: ["PowerShell(npm run *)"] },
+    }), "utf8");
     const first = installClaudeInteractiveHooks({
       repository: fixture.repository,
       cliEntry: join(process.cwd(), "dist", "cli", "entry.js"),
       bridgeUrl: "http://127.0.0.1:7345",
+      proxyUrl: "http://127.0.0.1:8096/claude-code/default",
     });
     const second = installClaudeInteractiveHooks({
       repository: fixture.repository,
       cliEntry: join(process.cwd(), "dist", "cli", "entry.js"),
       bridgeUrl: "http://127.0.0.1:7345",
+      proxyUrl: "http://127.0.0.1:8096/claude-code/default",
     });
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      env: { ANTHROPIC_BASE_URL: string };
       permissions: { allow: string[] };
       hooks: Record<string, unknown[]>;
     };
     expect(first.added).toBe(7);
+    expect(first.proxyEnvironment).toMatchObject({ configured: true, changed: true });
     expect(second).toMatchObject({ added: 0, unchanged: 7 });
+    expect(settings.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8096/claude-code/default");
     expect(settings.permissions.allow).toEqual(["PowerShell(npm run *)"]);
     expect(Object.keys(settings.hooks).sort()).toEqual([
       "PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit",
     ].sort());
+    expect(inspectClaudeInteractiveHooks({
+      repository: fixture.repository,
+      cliEntry: join(process.cwd(), "dist", "cli", "entry.js"),
+      bridgeUrl: "http://127.0.0.1:7345",
+      proxyUrl: "http://127.0.0.1:8096/claude-code/default",
+    })).toMatchObject({
+      installed: 7,
+      expected: 7,
+      missingEvents: [],
+      proxyEnvironment: { configured: true },
+    });
   });
 });
