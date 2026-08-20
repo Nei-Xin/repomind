@@ -113,4 +113,47 @@ describe("deterministic stable-memory extraction", () => {
       scopeValue: "src/rate-limit",
     });
   });
+
+  it("merges same-subject decision bullets before conflict handling", () => {
+    const decisions = extractDeterministicMemories({
+      task: "更新窗口校验规则。",
+      summary: [
+        "`windowMs` 规则已经修改：",
+        "- 允许任意正的有限数，包括小数。",
+        "- 为零或负数时抛出 `RangeError`。",
+        "- 为非数字或非有限值时抛出 `TypeError`。",
+      ].join("\n"),
+      changedFiles: ["src/rate-limit/index.js"],
+    }).filter((item) => item.type === "decision");
+
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        title: "Technical decision: windowMs validation",
+        content: [
+          "`windowMs`: 允许任意正的有限数，包括小数。",
+          "`windowMs`: 为零或负数时抛出 `RangeError`。",
+          "`windowMs`: 为非数字或非有限值时抛出 `TypeError`。",
+        ].join("\n"),
+      }),
+    ]);
+  });
+
+  it("keeps every fact in a long same-subject decision list", () => {
+    const decisions = extractDeterministicMemories({
+      task: "回顾窗口校验规则。",
+      summary: [
+        "当前 `windowMs` 的有效校验规则是：",
+        "- 正的有限数：允许，包括正小数。",
+        "- 零：抛出 `RangeError`。",
+        "- 负数：抛出 `RangeError`。",
+        "- 非数字（如字符串）：抛出 `TypeError`。",
+        "- 非有限值（`NaN`、`Infinity`、`-Infinity`）：抛出 `TypeError`。",
+      ].join("\n"),
+      changedFiles: [],
+    }).filter((item) => item.type === "decision");
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.content).toContain("正的有限数：允许，包括正小数");
+    expect(decisions[0]!.content).toContain("非有限值（`NaN`、`Infinity`、`-Infinity`）：抛出 `TypeError`");
+  });
 });

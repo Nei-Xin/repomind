@@ -363,7 +363,9 @@ describe("repository memory core", () => {
         .run("Technical decision: `windowMs` 为零、负数或小数抛出 `RangeError`", "`windowMs` 为零、负数或小数抛出 `RangeError`。");
 
       const second = core.startSession({ task: "Revise the windowMs validation rule" });
-      writeFileSync(firstFile, "windowMs accepts fractional values.\n", "utf8");
+      const moduleFile = join(repository, "src", "rate-limit", "index.js");
+      mkdirSync(join(repository, "src", "rate-limit"), { recursive: true });
+      writeFileSync(moduleFile, "windowMs accepts fractional values.\n", "utf8");
       core.commitSession({
         sessionId: second.sessionId,
         idempotencyKey: "decision-replacement-2",
@@ -371,10 +373,28 @@ describe("repository memory core", () => {
         summary: "`windowMs` 现在允许正的有限数，包括小数。\n零和负数仍抛出 `RangeError`。",
       });
 
+      const recall = core.startSession({ task: "Only answer from recalled memory" });
+      core.commitSession({
+        sessionId: recall.sessionId,
+        idempotencyKey: "decision-recall",
+        status: "success",
+        summary: "`windowMs` 为零和负数时抛出 `RangeError`。",
+      });
+
       const decisions = core.search("windowMs", { types: ["decision"], limit: 20 });
+      expect(decisions).toHaveLength(2);
       expect(decisions).toEqual(expect.arrayContaining([
-        expect.objectContaining({ content: "`windowMs` 现在允许正的有限数，包括小数。", status: "active" }),
-        expect.objectContaining({ content: "`windowMs` 为零、负数或小数抛出 `RangeError`。", status: "uncertain" }),
+        expect.objectContaining({
+          content: expect.stringContaining("`windowMs` 现在允许正的有限数，包括小数。"),
+          status: "active",
+          scopeType: "module",
+          scopeValue: "src/rate-limit",
+        }),
+        expect.objectContaining({
+          content: "`windowMs` 为零、负数或小数抛出 `RangeError`。",
+          status: "uncertain",
+          scopeType: "repository",
+        }),
       ]));
     } finally {
       core.close();

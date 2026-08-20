@@ -204,8 +204,27 @@ function titleFrom(text: string, fallback: string): string {
 }
 
 function decisionSubject(title: string, content: string): string | null {
-  const subject = `${title} ${content}`.match(/`([A-Za-z][A-Za-z0-9_.-]*)`/u)?.[1];
-  return subject ? subject.toLocaleLowerCase("en-US") : null;
+  const excluded = new Set(["nan", "infinity", "true", "false", "null", "undefined"]);
+  for (const match of `${title} ${content}`.matchAll(/`([A-Za-z][A-Za-z0-9_.-]*)`/gu)) {
+    const subject = match[1]!;
+    if (!/Error$/u.test(subject) && !excluded.has(subject.toLocaleLowerCase("en-US"))) {
+      return subject.toLocaleLowerCase("en-US");
+    }
+  }
+  return null;
+}
+
+function memoryScopesOverlap(
+  leftType: string,
+  leftValue: string | null,
+  rightType: string,
+  rightValue: string | null,
+): boolean {
+  if (leftType === "repository" || rightType === "repository") return true;
+  if (leftType === rightType) return leftValue === rightValue;
+  const moduleValue = leftType === "module" ? leftValue : rightValue;
+  const pathValue = leftType === "path" ? leftValue : rightValue;
+  return Boolean(moduleValue && pathValue && (pathValue === moduleValue || pathValue.startsWith(`${moduleValue}/`)));
 }
 
 function compactVerifiedCommandSummary(value: string): string {
@@ -388,6 +407,10 @@ export class RepositoryMemoryCore {
       ? captureDiff(this.context.root, session.baseline_head, finalSnapshot.head, 65_536, files)
       : captureDiff(this.context.root, session.baseline_head, finalSnapshot.head);
     const memoryFiles = files.filter((file) => this.fileFingerprint(file).hash !== null);
+    const hasRepositoryActivity = memoryFiles.length > 0 || Number((db.raw.prepare(`
+      SELECT count(*) AS count FROM activity_events
+      WHERE session_id=? AND event_type IN ('tool_call','tool_result')
+    `).get(input.sessionId) as { count: number }).count) > 0;
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
     return db.transaction(() => {
@@ -426,11 +449,12 @@ export class RepositoryMemoryCore {
           SELECT id FROM evidence WHERE session_id=? AND kind='user_requirement'
           ORDER BY created_at, id LIMIT 1
         `).get(input.sessionId) as { id: string } | undefined;
-        for (const candidate of extractDeterministicMemories({
+        const candidates = extractDeterministicMemories({
           task: session.task,
           summary: input.summary,
           changedFiles: memoryFiles,
-        })) {
+        }).filter((candidate) => candidate.type === "requirement" || hasRepositoryActivity);
+        for (const candidate of candidates) {
           const evidenceId = candidate.type === "requirement"
             ? userRequirementEvidence?.id ?? summaryEvidence!
             : summaryEvidence!;
@@ -1552,20 +1576,28 @@ export class RepositoryMemoryCore {
       : null;
     const findConflicts = (excludeId: string): Array<{ id: string; status: string; status_reason_json: string | null }> => {
       if (!DECLARATIVE_TYPES.has(input.type)) return [];
-      const rows = db.prepare(`
-        SELECT id, title, content, status, status_reason_json FROM memories
-        WHERE repository_id=? AND type=? AND scope_type=? AND scope_value IS ?
-          AND status IN ('active','uncertain')${extractedDecisionSubject ? "" : " AND lower(trim(title))=?"} AND id<>?
-      `).all(
-        this.context.marker.projectId,
-        input.type,
-        scopeType,
-        scopeValue,
-        ...(extractedDecisionSubject ? [] : [title.toLowerCase()]),
-        excludeId,
-      ) as Array<{ id: string; title: string; content: string; status: string; status_reason_json: string | null }>;
+      const rows = (extractedDecisionSubject
+        ? db.prepare(`
+            SELECT id, title, content, status, status_reason_json, scope_type, scope_value FROM memories
+            WHERE repository_id=? AND type=? AND status IN ('active','uncertain') AND id<>?
+          `).all(this.context.marker.projectId, input.type, excludeId)
+        : db.prepare(`
+            SELECT id, title, content, status, status_reason_json, scope_type, scope_value FROM memories
+            WHERE repository_id=? AND type=? AND scope_type=? AND scope_value IS ?
+              AND status IN ('active','uncertain') AND lower(trim(title))=? AND id<>?
+          `).all(this.context.marker.projectId, input.type, scopeType, scopeValue, title.toLowerCase(), excludeId)) as Array<{
+            id: string;
+            title: string;
+            content: string;
+            status: string;
+            status_reason_json: string | null;
+            scope_type: string;
+            scope_value: string | null;
+          }>;
       const matching = extractedDecisionSubject
-        ? rows.filter((row) => decisionSubject(row.title, row.content) === extractedDecisionSubject)
+        ? rows.filter((row) =>
+            decisionSubject(row.title, row.content) === extractedDecisionSubject
+            && memoryScopesOverlap(scopeType, scopeValue, row.scope_type, row.scope_value))
         : rows;
       return options.ignoreConflictsWith ? matching.filter((row) => row.id !== options.ignoreConflictsWith) : matching;
     };
