@@ -203,6 +203,11 @@ function titleFrom(text: string, fallback: string): string {
   return line.length > 96 ? `${line.slice(0, 93)}...` : line;
 }
 
+function decisionSubject(title: string, content: string): string | null {
+  const subject = `${title} ${content}`.match(/`([A-Za-z][A-Za-z0-9_.-]*)`/u)?.[1];
+  return subject ? subject.toLocaleLowerCase("en-US") : null;
+}
+
 function compactVerifiedCommandSummary(value: string): string {
   const normalized = value
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
@@ -1542,15 +1547,27 @@ export class RepositoryMemoryCore {
     const content = redactSecrets(input.content).content.trim();
     const scopeType = input.scopeType ?? "repository";
     const scopeValue = input.scopeValue ?? null;
+    const extractedDecisionSubject = source === "extracted" && input.type === "decision"
+      ? decisionSubject(title, content)
+      : null;
     const findConflicts = (excludeId: string): Array<{ id: string; status: string; status_reason_json: string | null }> => {
       if (!DECLARATIVE_TYPES.has(input.type)) return [];
       const rows = db.prepare(`
-        SELECT id, status, status_reason_json FROM memories
+        SELECT id, title, content, status, status_reason_json FROM memories
         WHERE repository_id=? AND type=? AND scope_type=? AND scope_value IS ?
-          AND status IN ('active','uncertain') AND lower(trim(title))=? AND id<>?
-      `).all(this.context.marker.projectId, input.type, scopeType, scopeValue, title.toLowerCase(), excludeId) as
-        Array<{ id: string; status: string; status_reason_json: string | null }>;
-      return options.ignoreConflictsWith ? rows.filter((row) => row.id !== options.ignoreConflictsWith) : rows;
+          AND status IN ('active','uncertain')${extractedDecisionSubject ? "" : " AND lower(trim(title))=?"} AND id<>?
+      `).all(
+        this.context.marker.projectId,
+        input.type,
+        scopeType,
+        scopeValue,
+        ...(extractedDecisionSubject ? [] : [title.toLowerCase()]),
+        excludeId,
+      ) as Array<{ id: string; title: string; content: string; status: string; status_reason_json: string | null }>;
+      const matching = extractedDecisionSubject
+        ? rows.filter((row) => decisionSubject(row.title, row.content) === extractedDecisionSubject)
+        : rows;
+      return options.ignoreConflictsWith ? matching.filter((row) => row.id !== options.ignoreConflictsWith) : matching;
     };
 
     const existing = db.prepare("SELECT id, status FROM memories WHERE repository_id=? AND fingerprint=?")
@@ -1626,7 +1643,10 @@ export class RepositoryMemoryCore {
         options.auditReason ?? `${source} memory created`,
         now,
       );
-    if (conflicting.length) this.markConflicts(id, conflicting);
+    if (conflicting.length) {
+      const preferNewExtractedDecision = source === "extracted" && input.type === "decision";
+      this.markConflicts(id, conflicting, { leaveNewActive: preferNewExtractedDecision });
+    }
     return { id, stored: true, reactivated: false, conflicts: conflicting.map((row) => row.id) };
   }
 
@@ -1669,24 +1689,30 @@ export class RepositoryMemoryCore {
     return { id: memory.id, stored: false, reactivated: false, conflicts: [] };
   }
 
-  private markConflicts(newMemoryId: string, conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>): void {
+  private markConflicts(
+    newMemoryId: string,
+    conflicting: Array<{ id: string; status: string; status_reason_json: string | null }>,
+    options: { leaveNewActive?: boolean } = {},
+  ): void {
     const db = this.context.database.raw;
     const now = Date.now();
     const conflictIds = [...new Set(conflicting.map((memory) => memory.id))];
     const newReason: MemoryStatusReason = { kind: "conflict", withMemoryIds: conflictIds };
-    db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
-      .run(stableJson(newReason), now, newMemoryId);
-    db.prepare(`
-      INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
-      VALUES (?, ?, 'memory_conflict_detected', ?, ?, ?, ?)
-    `).run(
-      `aud_${randomUUID()}`,
-      newMemoryId,
-      JSON.stringify({ status: "active" }),
-      JSON.stringify({ status: "uncertain", statusReason: newReason }),
-      conflictWarning(conflictIds),
-      now,
-    );
+    if (!options.leaveNewActive) {
+      db.prepare("UPDATE memories SET status='uncertain', status_reason_json=?, updated_at=? WHERE id=?")
+        .run(stableJson(newReason), now, newMemoryId);
+      db.prepare(`
+        INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+        VALUES (?, ?, 'memory_conflict_detected', ?, ?, ?, ?)
+      `).run(
+        `aud_${randomUUID()}`,
+        newMemoryId,
+        JSON.stringify({ status: "active" }),
+        JSON.stringify({ status: "uncertain", statusReason: newReason }),
+        conflictWarning(conflictIds),
+        now,
+      );
+    }
     for (const other of conflicting) {
       const previousReason = parseStatusReason(other.status_reason_json);
       const previousConflictIds = previousReason?.kind === "conflict" ? previousReason.withMemoryIds : [];

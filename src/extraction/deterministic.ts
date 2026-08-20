@@ -22,7 +22,7 @@ export interface DeterministicMemoryCandidate {
 const MAX_SENTENCE_CHARS = 400;
 const MAX_CANDIDATES_PER_TYPE = 3;
 const REQUIREMENT_SIGNAL = /(?:必须|不得|禁止|只能|需要保持|要求(?:使用|保持|提供|支持))|\b(?:must(?:\s+not)?|is required to|are required to|should remain)\b/iu;
-const DECISION_SIGNAL = /(?:决定|采用|选择|统一使用|抛出(?:\s|`)*[A-Za-z]+Error|抛出.+异常)|\b(?:decided to|chosen|use\s+.+\s+instead of\s+|throws?\s+(?:an?\s+)?[A-Za-z]*Error)\b/iu;
+const DECISION_SIGNAL = /(?:决定|采用|选择|统一使用|不再(?:要求|需要)|允许(?:正|使用|输入|小数)|改为|改成|改用|抛出(?:\s|`)*[A-Za-z]+Error|抛出.+异常)|\b(?:decided to|chosen|use\s+.+\s+instead of\s+|allows?\s+.+|changes?\s+to\s+|throws?\s+(?:an?\s+)?[A-Za-z]*Error)\b/iu;
 const ARCHITECTURE_SIGNAL = /(?:负责|由.+(?:处理|负责)|唯一入口)|\b(?:owns|is responsible for|single entry point)\b/iu;
 const COMPONENT_SIGNAL = /(?:模块|组件|服务|层|包)|\b(?:module|component|service|layer|package)\b|(?:^|\s|[`(])(?:src|lib|app|packages)\/[A-Za-z0-9_.\-/]+/iu;
 const PATH_PATTERN = /(?:src|lib|app|packages)\/[A-Za-z0-9_.\-/]+/giu;
@@ -53,6 +53,10 @@ function titleFor(type: StableMemoryType, content: string): string {
     architecture: "Architecture boundary",
   };
   const compact = content.replace(/\s+/gu, " ").replace(/[。！？!?；;]+$/u, "").trim();
+  if (type === "decision") {
+    const subject = compact.match(/`([A-Za-z][A-Za-z0-9_.-]*)`/u)?.[1];
+    if (subject) return `${labels[type]}: ${subject} validation`;
+  }
   const clipped = compact.length > 72 ? `${compact.slice(0, 69)}...` : compact;
   return `${labels[type]}: ${clipped}`;
 }

@@ -98,4 +98,19 @@ describe("deterministic stable-memory extraction", () => {
       expect.objectContaining({ type: "architecture", content: expect.stringContaining("请完成") }),
     ]));
   });
+
+  it("extracts a changed validation decision and gives it a stable subject title", () => {
+    const [decision] = extractDeterministicMemories({
+      task: "更新窗口校验规则。",
+      summary: "`windowMs` 现在允许正的有限数，包括小数。",
+      changedFiles: ["src/rate-limit/index.js"],
+    }).filter((item) => item.type === "decision");
+
+    expect(decision).toMatchObject({
+      title: "Technical decision: windowMs validation",
+      content: "`windowMs` 现在允许正的有限数，包括小数。",
+      scopeType: "module",
+      scopeValue: "src/rate-limit",
+    });
+  });
 });

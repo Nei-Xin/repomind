@@ -347,6 +347,40 @@ describe("repository memory core", () => {
     second.close();
   });
 
+  it("keeps a newer extracted decision active while making its old subject conflict uncertain", () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const firstFile = join(repository, "README.txt");
+      const first = core.startSession({ task: "Define the windowMs validation rule" });
+      writeFileSync(firstFile, "windowMs rejects invalid values.\n", "utf8");
+      core.commitSession({
+        sessionId: first.sessionId,
+        idempotencyKey: "decision-replacement-1",
+        status: "success",
+        summary: "`windowMs` 为零、负数或小数抛出 `RangeError`。",
+      });
+      core.context.database.raw.prepare("UPDATE memories SET title=? WHERE content=?")
+        .run("Technical decision: `windowMs` 为零、负数或小数抛出 `RangeError`", "`windowMs` 为零、负数或小数抛出 `RangeError`。");
+
+      const second = core.startSession({ task: "Revise the windowMs validation rule" });
+      writeFileSync(firstFile, "windowMs accepts fractional values.\n", "utf8");
+      core.commitSession({
+        sessionId: second.sessionId,
+        idempotencyKey: "decision-replacement-2",
+        status: "success",
+        summary: "`windowMs` 现在允许正的有限数，包括小数。\n零和负数仍抛出 `RangeError`。",
+      });
+
+      const decisions = core.search("windowMs", { types: ["decision"], limit: 20 });
+      expect(decisions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: "`windowMs` 现在允许正的有限数，包括小数。", status: "active" }),
+        expect.objectContaining({ content: "`windowMs` 为零、负数或小数抛出 `RangeError`。", status: "uncertain" }),
+      ]));
+    } finally {
+      core.close();
+    }
+  });
+
   it("keeps full test Evidence while deduplicating compact verified-command memories", () => {
     const core = new RepositoryMemoryCore(repository);
     const commit = (key: string, duration: string): void => {
