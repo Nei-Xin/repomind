@@ -27,16 +27,17 @@ opencode
 
 For every root-session user message, the plugin starts a RepoMind task, retrieves
 relevant current L1-L3 context, and injects it as an untrusted synthetic text
-part before model dispatch. Root-session tool calls, results, and failures are
-recorded automatically. `session.idle` captures the last assistant response,
+part before model dispatch. Root-session and delegated child-session tool calls,
+results, and failures are recorded automatically against the root task while
+preserving the originating Session ID. Root `session.idle` captures the last assistant response,
 commits Git, command, and test evidence, then performs the existing best-effort
 L2/L3/L4 maintenance. Bridge failures are logged and do not prevent OpenCode
 from continuing.
 
-The first interactive version deliberately ignores child-session activity and
-child `session.idle` events. It therefore cannot mistake a child completion for
-the end of the root task, but commands run only by a child Agent are not yet
-included in task evidence.
+Child-session user messages do not create separate RepoMind tasks, and child
+`session.idle` or deletion events do not finish or abort the root task. Nested
+child sessions resolve through their parent chain, so commands and tests run by
+delegated Agents remain part of the root task evidence.
 
 The generated project plugin imports the installed RepoMind implementation by
 absolute file URL. Re-run `repomind opencode setup` after moving or updating the

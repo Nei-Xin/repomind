@@ -110,9 +110,10 @@ opencode
 ```
 
 The plugin retrieves and injects L1-L3 context for each root-session user
-message, records root-session tool activity, and commits the task when OpenCode
-becomes idle. Successful commits maintain L2, L3, and L4. This path does not
-use MemoryProxy and does not require the model to call RepoMind MCP tools. If
+message, records root and delegated child-session tool activity against the
+same task, and commits only when the root OpenCode Session becomes idle.
+Successful commits maintain L2, L3, and L4. This path does not use MemoryProxy
+and does not require the model to call RepoMind MCP tools. If
 the repository still enables the older RepoMind MCP configuration, `status`
 warns because the two Agent-managed lifecycles should not be used together.
 See [`docs/opencode-integration.md`](docs/opencode-integration.md).

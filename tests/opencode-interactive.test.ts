@@ -52,7 +52,11 @@ describe("OpenCode transparent interactive integration", () => {
     const client = {
       session: {
         get: async ({ path }: { path: { id: string } }) => ({
-          data: path.id.startsWith("child-") ? { id: path.id, parentID: "root-1" } : { id: path.id },
+          data: path.id === "grandchild-1"
+            ? { id: path.id, parentID: "child-1" }
+            : path.id.startsWith("child-")
+              ? { id: path.id, parentID: "root-1" }
+              : { id: path.id },
         }),
         messages: async ({ path }: { path: { id: string } }) => ({
           data: [{
@@ -89,16 +93,38 @@ describe("OpenCode transparent interactive integration", () => {
 
     writeFileSync(join(fixture.repository, "README.txt"), "Run npm test -- invoice\n", "utf8");
     await plugin["tool.execute.before"](
-      { tool: "shell", sessionID: "root-1", callID: "call-1" },
+      { tool: "shell", sessionID: "grandchild-1", callID: "call-1" },
       { args: { command: "npm test -- invoice" } },
     );
     await plugin["tool.execute.after"](
-      { tool: "shell", sessionID: "root-1", callID: "call-1", args: { command: "npm test -- invoice" } },
+      { tool: "shell", sessionID: "grandchild-1", callID: "call-1", args: { command: "npm test -- invoice" } },
       { title: "Run tests", output: "Tests: 1 passed", metadata: { exit: 0 } },
     );
+    await plugin.event({ event: {
+      type: "message.part.updated",
+      properties: { part: {
+        sessionID: "child-1",
+        callID: "call-failure",
+        tool: "read",
+        state: { status: "error", input: { filePath: "missing.txt" }, error: "File not found" },
+      } },
+    } });
+    await plugin.event({ event: { type: "session.idle", properties: { sessionID: "grandchild-1" } } });
+    await plugin.event({ event: { type: "session.idle", properties: { sessionID: "child-1" } } });
+    await plugin.event({ event: {
+      type: "session.deleted",
+      properties: { info: { id: "child-1", parentID: "root-1" } },
+    } });
+    const openCore = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
+    try {
+      expect(openCore.context.database.raw.prepare(
+        "SELECT status FROM sessions WHERE client_session_id='root-1'",
+      ).get()).toEqual({ status: "open" });
+    } finally {
+      openCore.close();
+    }
     assistantBySession.set("root-1", "Documented npm test -- invoice as the verification command.");
     await plugin.event({ event: { type: "session.idle", properties: { sessionID: "root-1" } } });
-    await plugin.event({ event: { type: "session.idle", properties: { sessionID: "child-1" } } });
 
     const second = userMessage("root-2", "message-2", "Which invoice verification command should I run?");
     await plugin["chat.message"]({ sessionID: "root-2", messageID: "message-2" }, second);
@@ -126,8 +152,22 @@ describe("OpenCode transparent interactive integration", () => {
         { source: "opencode-plugin", event_type: "assistant_message", count: 1 },
         { source: "opencode-plugin", event_type: "session_event", count: 1 },
         { source: "opencode-plugin", event_type: "tool_call", count: 1 },
+        { source: "opencode-plugin", event_type: "tool_failure", count: 1 },
         { source: "opencode-plugin", event_type: "tool_result", count: 1 },
         { source: "opencode-plugin", event_type: "user_message", count: 2 },
+      ]);
+      const delegated = core.context.database.raw.prepare(`
+        SELECT event_type,payload_json FROM activity_events
+        WHERE event_type IN ('tool_call','tool_result','tool_failure')
+        ORDER BY event_type
+      `).all() as Array<{ event_type: string; payload_json: string }>;
+      expect(delegated.map((row) => ({
+        eventType: row.event_type,
+        originSessionId: JSON.parse(row.payload_json).originSessionId,
+      }))).toEqual([
+        { eventType: "tool_call", originSessionId: "grandchild-1" },
+        { eventType: "tool_failure", originSessionId: "child-1" },
+        { eventType: "tool_result", originSessionId: "grandchild-1" },
       ]);
       const tests = core.context.database.raw.prepare(`
         SELECT metadata_json FROM evidence e
@@ -138,7 +178,7 @@ describe("OpenCode transparent interactive integration", () => {
         { command: "npm test -- invoice", exitCode: 0 },
       ]);
       const childSessions = core.context.database.raw.prepare(
-        "SELECT COUNT(*) AS count FROM agent_sessions WHERE external_session_id='child-1'",
+        "SELECT COUNT(*) AS count FROM agent_sessions WHERE external_session_id IN ('child-1','grandchild-1')",
       ).get();
       expect(childSessions).toEqual({ count: 0 });
     } finally {

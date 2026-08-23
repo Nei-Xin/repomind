@@ -129,6 +129,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
     const repositoryPath = input.worktree || input.directory;
     const activeTasks = new Map<string, ActiveTask>();
     const queues = new Map<string, Promise<void>>();
+    const sessionRoots = new Map<string, string>();
 
     const warn = async (message: string): Promise<void> => {
       options.onWarning?.(message);
@@ -182,12 +183,39 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
       timestamp: Date.now(),
     });
 
-    const isRootSession = async (sessionID: string): Promise<boolean> => {
-      const response = await input.client.session.get({
-        path: { id: sessionID },
-        query: { directory: repositoryPath },
-      });
-      return !stringValue(objectValue(response.data).parentID);
+    const resolveRootSession = async (sessionID: string): Promise<string> => {
+      const cached = sessionRoots.get(sessionID);
+      if (cached) return cached;
+      const path: string[] = [];
+      const visited = new Set<string>();
+      let current = sessionID;
+      while (path.length < 32) {
+        const knownRoot = sessionRoots.get(current);
+        if (knownRoot) {
+          for (const id of path) sessionRoots.set(id, knownRoot);
+          return knownRoot;
+        }
+        if (visited.has(current)) throw new Error(`OpenCode session parent cycle detected at ${current}`);
+        visited.add(current);
+        path.push(current);
+        const response = await input.client.session.get({
+          path: { id: current },
+          query: { directory: repositoryPath },
+        });
+        const parentID = stringValue(objectValue(response.data).parentID);
+        if (!parentID) {
+          for (const id of path) sessionRoots.set(id, current);
+          return current;
+        }
+        current = parentID;
+      }
+      throw new Error(`OpenCode session parent chain is too deep for ${sessionID}`);
+    };
+
+    const forgetSessionTree = (rootSessionID: string): void => {
+      for (const [sessionID, root] of sessionRoots) {
+        if (sessionID === rootSessionID || root === rootSessionID) sessionRoots.delete(sessionID);
+      }
     };
 
     const record = async (
@@ -242,7 +270,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
       "chat.message": async (chat, output) => {
         await enqueue(chat.sessionID, async () => {
           try {
-            if (!(await isRootSession(chat.sessionID))) return;
+            if (await resolveRootSession(chat.sessionID) !== chat.sessionID) return;
             const task = promptText(output.parts);
             if (!task) return;
             const messageID = chat.messageID ?? stringValue(output.message.id) ?? String(Date.now());
@@ -279,33 +307,41 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
       },
 
       "tool.execute.before": async (tool, output) => {
-        if (!activeTasks.has(tool.sessionID)) return;
-        await enqueue(tool.sessionID, async () => {
-          try {
+        try {
+          const rootSessionID = await resolveRootSession(tool.sessionID);
+          if (!activeTasks.has(rootSessionID)) return;
+          await enqueue(rootSessionID, async () => {
             await record(
-              tool.sessionID,
+              rootSessionID,
               eventId("tool-call", tool.sessionID, tool.callID),
               "tool_call",
-              { toolName: tool.tool, toolInput: output.args, toolUseId: tool.callID },
+              {
+                toolName: tool.tool,
+                toolInput: output.args,
+                toolUseId: tool.callID,
+                originSessionId: tool.sessionID,
+              },
             );
-          } catch (error) {
-            await warn(`OpenCode tool call was not recorded: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        });
+          });
+        } catch (error) {
+          await warn(`OpenCode tool call was not recorded: ${error instanceof Error ? error.message : String(error)}`);
+        }
       },
 
       "tool.execute.after": async (tool, output) => {
-        if (!activeTasks.has(tool.sessionID)) return;
-        await enqueue(tool.sessionID, async () => {
-          try {
+        try {
+          const rootSessionID = await resolveRootSession(tool.sessionID);
+          if (!activeTasks.has(rootSessionID)) return;
+          await enqueue(rootSessionID, async () => {
             await record(
-              tool.sessionID,
+              rootSessionID,
               eventId("tool-result", tool.sessionID, tool.callID),
               "tool_result",
               {
                 toolName: tool.tool,
                 toolInput: tool.args,
                 toolUseId: tool.callID,
+                originSessionId: tool.sessionID,
                 toolResponse: {
                   ...objectValue(output.metadata),
                   title: output.title ?? null,
@@ -313,10 +349,10 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
                 },
               },
             );
-          } catch (error) {
-            await warn(`OpenCode tool result was not recorded: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        });
+          });
+        } catch (error) {
+          await warn(`OpenCode tool result was not recorded: ${error instanceof Error ? error.message : String(error)}`);
+        }
       },
 
       event: async ({ event }) => {
@@ -327,58 +363,77 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
           const state = objectValue(part.state);
           const sessionID = stringValue(part.sessionID);
           const callID = stringValue(part.callID);
-          if (!sessionID || !callID || state.status !== "error" || !activeTasks.has(sessionID)) return;
-          await enqueue(sessionID, async () => {
-            try {
+          if (!sessionID || !callID || state.status !== "error") return;
+          try {
+            const rootSessionID = await resolveRootSession(sessionID);
+            if (!activeTasks.has(rootSessionID)) return;
+            await enqueue(rootSessionID, async () => {
               await record(
-                sessionID,
+                rootSessionID,
                 eventId("tool-failure", sessionID, callID),
                 "tool_failure",
                 {
                   toolName: part.tool ?? null,
                   toolInput: state.input ?? null,
                   toolUseId: callID,
+                  originSessionId: sessionID,
                   error: state.error ?? "OpenCode tool execution failed",
                   metadata: state.metadata ?? null,
                 },
               );
-            } catch (error) {
-              await warn(`OpenCode tool failure was not recorded: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          });
+            });
+          } catch (error) {
+            await warn(`OpenCode tool failure was not recorded: ${error instanceof Error ? error.message : String(error)}`);
+          }
           return;
         }
 
         if (value.type === "session.idle") {
           const sessionID = stringValue(properties.sessionID);
-          if (!sessionID || !activeTasks.has(sessionID)) return;
-          await enqueue(sessionID, async () => {
-            try {
-              await finish(sessionID);
-            } catch (error) {
-              await warn(`OpenCode task finish skipped: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          });
+          if (!sessionID) return;
+          try {
+            const rootSessionID = await resolveRootSession(sessionID);
+            if (rootSessionID !== sessionID || !activeTasks.has(rootSessionID)) return;
+            await enqueue(rootSessionID, async () => {
+              await finish(rootSessionID);
+            });
+          } catch (error) {
+            await warn(`OpenCode task finish skipped: ${error instanceof Error ? error.message : String(error)}`);
+          }
           return;
         }
 
         if (value.type === "session.deleted") {
           const info = objectValue(properties.info);
           const sessionID = stringValue(info.id);
-          const active = sessionID ? activeTasks.get(sessionID) : undefined;
-          if (!sessionID || !active) return;
-          await enqueue(sessionID, async () => {
-            try {
+          if (!sessionID) return;
+          try {
+            const parentID = stringValue(info.parentID);
+            const rootSessionID = parentID
+              ? await resolveRootSession(parentID)
+              : sessionRoots.get(sessionID) ?? await resolveRootSession(sessionID);
+            if (rootSessionID !== sessionID) {
+              sessionRoots.delete(sessionID);
+              return;
+            }
+            const active = activeTasks.get(rootSessionID);
+            if (!active) {
+              forgetSessionTree(rootSessionID);
+              return;
+            }
+            await enqueue(rootSessionID, async () => {
               await postBridge("/v1/tasks/abort", {
-                ...common(sessionID),
-                eventId: eventId("abort", sessionID, active.messageID),
+                ...common(rootSessionID),
+                eventId: eventId("abort", rootSessionID, active.messageID),
                 reason: "OpenCode session was deleted before its active task finished.",
               });
-              activeTasks.delete(sessionID);
-            } catch (error) {
-              await warn(`OpenCode task abort skipped: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          });
+              activeTasks.delete(rootSessionID);
+              forgetSessionTree(rootSessionID);
+            });
+          } catch (error) {
+            sessionRoots.delete(sessionID);
+            await warn(`OpenCode task abort skipped: ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
       },
     };
