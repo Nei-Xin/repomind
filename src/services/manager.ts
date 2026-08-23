@@ -311,12 +311,23 @@ async function stopRecord(record: ServiceRecord, definition: ServiceDefinition):
 }
 
 export async function startServices(options: ServiceManagerOptions): Promise<ServicesResult> {
+  return startSelectedServices(options, ["bridge", "memoryProxy"]);
+}
+
+export async function startBridgeService(options: ServiceManagerOptions): Promise<ServicesResult> {
+  return startSelectedServices(options, ["bridge"]);
+}
+
+async function startSelectedServices(
+  options: ServiceManagerOptions,
+  selected: readonly ServiceName[],
+): Promise<ServicesResult> {
   const state = readState(options.dataDirectory);
   const serviceDefinitions = definitions(options);
-  validateProxy(serviceDefinitions.memoryProxy);
+  if (selected.includes("memoryProxy")) validateProxy(serviceDefinitions.memoryProxy);
   const started: ServiceName[] = [];
   try {
-    for (const name of ["bridge", "memoryProxy"] as const) {
+    for (const name of selected) {
       const definition = serviceDefinitions[name];
       const existing = state.services[name];
       if (existing && ownedProcess(existing, definition)) {

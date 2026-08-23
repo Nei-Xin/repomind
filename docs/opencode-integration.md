@@ -1,6 +1,66 @@
 # OpenCode Integration
 
-RepoMind can run as a project-local stdio MCP server in OpenCode. Build RepoMind first:
+## Transparent interactive lifecycle
+
+Build and link RepoMind from a source checkout, or install a release package:
+
+```powershell
+npm.cmd run build
+npm.cmd link
+```
+
+Set up a target repository once:
+
+```powershell
+repomind opencode setup --repo D:\path\to\repository
+repomind opencode status --repo D:\path\to\repository
+```
+
+`setup` initializes RepoMind, installs the managed project plugin at
+`.opencode/plugins/repomind.js`, and starts only the loopback RepoMind Bridge at
+`127.0.0.1:7345`. MemoryProxy is not involved. After setup, use the normal
+interactive CLI from the target repository:
+
+```powershell
+opencode
+```
+
+For every root-session user message, the plugin starts a RepoMind task, retrieves
+relevant current L1-L3 context, and injects it as an untrusted synthetic text
+part before model dispatch. Root-session tool calls, results, and failures are
+recorded automatically. `session.idle` captures the last assistant response,
+commits Git, command, and test evidence, then performs the existing best-effort
+L2/L3/L4 maintenance. Bridge failures are logged and do not prevent OpenCode
+from continuing.
+
+The first interactive version deliberately ignores child-session activity and
+child `session.idle` events. It therefore cannot mistake a child completion for
+the end of the root task, but commands run only by a child Agent are not yet
+included in task evidence.
+
+The generated project plugin imports the installed RepoMind implementation by
+absolute file URL. Re-run `repomind opencode setup` after moving or updating the
+RepoMind installation. `repomind opencode status` checks the repository marker,
+plugin target, Bridge health, and OpenCode executable.
+
+Do not combine this transparent lifecycle with Agent-managed RepoMind MCP calls.
+The plugin disables an existing `mcp.repomind` entry in OpenCode's effective
+in-process configuration, and `status` warns until the redundant project entry
+is removed or disabled explicitly:
+
+```json
+{
+  "mcp": {
+    "repomind": {
+      "enabled": false
+    }
+  }
+}
+```
+
+## MCP-managed lifecycle
+
+RepoMind can also run as a project-local stdio MCP server in OpenCode. Build RepoMind first:
 
 ```powershell
 npm.cmd run build
@@ -32,7 +92,9 @@ OpenCode should report `repomind` as connected. Start OpenCode from the reposito
 
 For consistent tool usage, apply the workflow in `examples/opencode/AGENTS.md` to the target repository's agent instructions.
 
-RepoMind cannot observe OpenCode's other tools automatically. The agent must explicitly start and commit a RepoMind session.
+In MCP-managed mode, RepoMind cannot observe OpenCode's other tools automatically.
+The Agent must explicitly start and commit a RepoMind session. Use this mode
+only when the transparent project plugin is not installed.
 
 ## Host-managed lifecycle
 

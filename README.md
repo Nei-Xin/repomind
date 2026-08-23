@@ -99,6 +99,24 @@ repomind search "SQLite loader" --json
 repomind inspect <memory-id> --json
 ```
 
+For transparent interactive OpenCode use, install the project plugin and start
+the loopback Bridge once, then launch OpenCode normally:
+
+```powershell
+repomind opencode setup --repo D:\path\to\repository
+repomind opencode status --repo D:\path\to\repository
+cd D:\path\to\repository
+opencode
+```
+
+The plugin retrieves and injects L1-L3 context for each root-session user
+message, records root-session tool activity, and commits the task when OpenCode
+becomes idle. Successful commits maintain L2, L3, and L4. This path does not
+use MemoryProxy and does not require the model to call RepoMind MCP tools. If
+the repository still enables the older RepoMind MCP configuration, `status`
+warns because the two Agent-managed lifecycles should not be used together.
+See [`docs/opencode-integration.md`](docs/opencode-integration.md).
+
 For transparent Claude Code integration from a source checkout, manage the
 loopback Bridge and the bundled MemoryProxy together:
 

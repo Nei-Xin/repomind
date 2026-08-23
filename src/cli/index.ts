@@ -33,6 +33,10 @@ import {
   type RegisteredAgentHostId,
 } from "../integrations/agent-host/registry.js";
 import { validateHostContextBudget } from "../integrations/opencode/context.js";
+import {
+  openCodeInteractiveStatus,
+  setupOpenCodeInteractive,
+} from "../integrations/opencode/interactive-setup.js";
 import { redactSecrets } from "../security/redaction.js";
 import { createAgentTextRenderer } from "./agent-text-renderer.js";
 import { readCommitInput } from "./commit-input.js";
@@ -100,6 +104,7 @@ Usage:
   repomind bridge [--host <address>] [--port <number>]
   repomind services start|status|stop [--json]
   repomind claude setup|status [--repo <path>] [--proxy-url <url>] [--json]
+  repomind opencode setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
@@ -346,6 +351,18 @@ async function main(): Promise<void> {
     if (action === "setup") output(await setupClaudeInteractive(options));
     else if (action === "status") output(await claudeInteractiveStatus(options));
     else throw new RepoMindError("INVALID_INPUT", `Unknown claude action: ${action}`);
+    return;
+  }
+  if (command === "opencode") {
+    const action = required(positionals[1], "opencode action");
+    const options = {
+      ...serviceManagerOptions(),
+      repository: repositoryPath(),
+      ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
+    };
+    if (action === "setup") output(await setupOpenCodeInteractive(options));
+    else if (action === "status") output(await openCodeInteractiveStatus(options));
+    else throw new RepoMindError("INVALID_INPUT", `Unknown opencode action: ${action}`);
     return;
   }
   if (command === "claude-hook") {

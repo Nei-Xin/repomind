@@ -12,6 +12,7 @@ import type {
 import { RepoMindError } from "../errors.js";
 import type {
   AbortInteractiveTaskRequest,
+  CodingAgent,
   FinishInteractiveTaskRequest,
   RecordActivityRequest,
   RecallInteractiveContextRequest,
@@ -85,6 +86,18 @@ function agentSessionId(repositoryId: string, agent: string, externalId: string)
   return `ags_${hash(`${repositoryId}\0${agent}\0${externalId}`).slice(0, 32)}`;
 }
 
+function interactiveClientName(agent: CodingAgent): string {
+  return `${agent}-interactive`;
+}
+
+function interactiveActivitySource(agent: CodingAgent): "claude-hook" | "opencode-plugin" {
+  return agent === "claude" ? "claude-hook" : "opencode-plugin";
+}
+
+function agentDisplayName(agent: CodingAgent): string {
+  return agent === "claude" ? "Claude" : "OpenCode";
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -98,8 +111,8 @@ function integerValue(value: unknown): number | null {
 function commandExitCode(eventType: string, response: unknown): number {
   if (eventType === "tool_failure") return 1;
   const payload = objectValue(response);
-  for (const source of [payload, objectValue(payload.result)]) {
-    for (const field of ["exitCode", "exit_code", "code"]) {
+  for (const source of [payload, objectValue(payload.result), objectValue(payload.metadata)]) {
+    for (const field of ["exitCode", "exit_code", "exit", "code"]) {
       const value = integerValue(source[field]);
       if (value !== null) return value;
     }
@@ -128,7 +141,7 @@ function commandEvidence(rows: readonly ActivityRow[]): Array<TestEvidenceInput 
     if (row.event_type !== "tool_result" && row.event_type !== "tool_failure") continue;
     const payload = objectValue(JSON.parse(row.payload_json) as unknown);
     const toolName = String(payload.toolName ?? payload.tool_name ?? "").toLowerCase();
-    if (toolName !== "bash" && toolName !== "powershell") continue;
+    if (toolName !== "bash" && toolName !== "powershell" && toolName !== "shell") continue;
     const input = objectValue(payload.toolInput ?? payload.tool_input);
     const command = typeof input.command === "string" ? input.command.trim() : "";
     if (!command) continue;
@@ -194,7 +207,7 @@ export class InteractiveActivityStore {
 
     const started = this.core.startSession({
       task: input.task,
-      clientName: "claude-interactive",
+      clientName: interactiveClientName(input.agent),
       clientSessionId: input.agentSessionId,
       maxMemories: input.maxMemories ?? 5,
     });
@@ -209,7 +222,7 @@ export class InteractiveActivityStore {
         agent: input.agent,
         agentSessionId: input.agentSessionId,
         repositoryPath: input.repositoryPath,
-        source: "claude-hook",
+        source: interactiveActivitySource(input.agent),
         type: "user_message",
         timestamp: input.timestamp,
         payload: { text: input.task, taskStartEventId: input.eventId },
@@ -244,7 +257,12 @@ export class InteractiveActivityStore {
       "SELECT session_id FROM activity_events WHERE id=? AND repository_id=?",
     ).get(input.eventId, this.core.context.marker.projectId) as { session_id: string | null } | undefined;
     const sessionId = current.current_session_id ?? prior?.session_id ?? null;
-    if (!sessionId) throw new RepoMindError("SESSION_NOT_OPEN", `Claude session ${input.agentSessionId} has no active task`);
+    if (!sessionId) {
+      throw new RepoMindError(
+        "SESSION_NOT_OPEN",
+        `${agentDisplayName(input.agent)} session ${input.agentSessionId} has no active task`,
+      );
+    }
 
     this.insertActivity(registered.agentSessionId, sessionId, {
       schemaVersion: 1,
@@ -252,7 +270,7 @@ export class InteractiveActivityStore {
       agent: input.agent,
       agentSessionId: input.agentSessionId,
       repositoryPath: input.repositoryPath,
-      source: "claude-hook",
+      source: interactiveActivitySource(input.agent),
       type: "session_event",
       timestamp: input.timestamp,
       payload: { kind: "task_finish", summary: input.summary, requestedStatus: input.status ?? null },
@@ -261,7 +279,8 @@ export class InteractiveActivityStore {
     const observed = commandEvidence(activities);
     const failedCommands = observed.filter((command) => command.exitCode !== 0);
     const status = input.status ?? (failedCommands.length ? "partial" : "success");
-    const summary = input.summary.trim() || "Claude completed the interactive task without a textual final summary.";
+    const summary = input.summary.trim()
+      || `${agentDisplayName(input.agent)} completed the interactive task without a textual final summary.`;
     const result = this.core.commitSession({
       sessionId,
       idempotencyKey: `interactive:${input.eventId}`,
@@ -303,7 +322,7 @@ export class InteractiveActivityStore {
       agent: input.agent,
       agentSessionId: input.agentSessionId,
       repositoryPath: input.repositoryPath,
-      source: "claude-hook",
+      source: interactiveActivitySource(input.agent),
       type: "session_event",
       timestamp: input.timestamp,
       payload: { kind: "task_abort", reason: input.reason },
