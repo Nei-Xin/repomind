@@ -461,17 +461,17 @@ export interface ProxyConfig {
    */
   systemUsers: SystemUserEntry[];
   /**
-   * 运维口 shared secret，仅供 `/v3/instance/proxy-destroy` 之类的管控接口。
+   * 运维口 shared secret，供 `/v3/admin/*`、`/v3/session/*` 和销毁接口使用。
    *
    * 语义与 core gateway 的 `server.apiKey` 一致
    * （`tdai-memory-openclaw-plugin/src/gateway/server.ts:1078`）：
-   *   - 空字符串（默认）= 鉴权关闭，路由公开可访问；启动时打 WARN 提醒
+   *   - 空字符串（默认）= 运维接口失败关闭并返回 503
    *   - 非空 = 请求必须带 `Authorization: Bearer <apiKey>`，用常量时间比对
    *
    * env 覆盖：`TDAI_PROXY_ADMIN_API_KEY`。
    *
    * 注意：这个 key **不**参与租户 `verifyUserKey` 流程，跟 upstream.apiKey /
-   * tdai.apiKey 也没关系。仅门禁 proxy 侧的运维口。
+   * tdai.apiKey 也没关系。仅门禁 proxy 侧的运维和会话管理接口。
    */
   admin: {
     apiKey: string;
@@ -844,6 +844,10 @@ export interface RawYamlConfig {
   admin?: {
     apiKey?: string;
   };
+  memCommand?: {
+    enabled?: boolean;
+    allowedCommands?: string[];
+  };
   repomind?: {
     enabled?: boolean;
     bridgeUrl?: string;
@@ -861,6 +865,7 @@ export interface RequestLogEntry {
   sessionKey?: string; // conversationId || keyId — per-conversation isolation key
   upstreamUrl: string;
   stream: boolean;
+  traceId?: string;
   temperature?: number;
   maxTokens?: number;
   routedFrom?: string;     // original model if routing was applied

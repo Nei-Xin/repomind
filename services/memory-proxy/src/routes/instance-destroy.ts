@@ -8,7 +8,7 @@
  *
  * 请求：
  *   { "instance_id": "<spaceId>" }
- * Header 可选：Authorization: Bearer <admin.apiKey>
+ * Header 必需：Authorization: Bearer <admin.apiKey>
  *
  * 响应 200：
  *   {

@@ -15,8 +15,8 @@
 #   DOCKER_BUILDKIT=1 docker build -t memory-proxy:latest .
 #
 # 说明: 运行时用 tsx 直接执行 TypeScript（不预编译）。tsx 是 devDependency，
-# 因此镜像内保留 dev 依赖；optional 依赖（better-sqlite3 / cos-nodejs-sdk-v5 /
-# cost-guard）保留，用于 sqlite / cos 存储后端与 CostGuard 智能路由。
+# 因此镜像内保留 dev 依赖；optional 依赖（better-sqlite3 /
+# cos-nodejs-sdk-v5）保留。私有 cost-guard 扩展由内部构建环境另行提供。
 # ──────────────────────────────────────────────────────────────────────
 
 # ──────────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ RUN npm install -g npm@11 --no-audit --no-fund
 # 先复制包元数据以最大化 Docker layer cache。
 COPY package.json package-lock.json ./
 
-# 安装全部依赖（保留 dev：tsx 运行时需要；保留 optional：sqlite/cos/cost-guard）。
+# 安装全部依赖（保留 dev：tsx 运行时需要；保留 optional：sqlite/cos）。
 # 使用 BuildKit npm cache mount 大幅加速重复构建。
 RUN --mount=type=cache,id=proxy-npm-cache,target=/root/.npm \
     npm install \
@@ -77,7 +77,7 @@ WORKDIR /app
 # 非 root 运行（安全基线）
 RUN groupadd -r app && useradd -r -g app -u 10001 -m app
 
-# 从 builder 拷贝整个 /app（含 node_modules 里指向 packages/cost-guard 的 file: 软链）
+# 从 builder 拷贝整个 /app。
 COPY --from=deps-builder /app /app
 
 # 数据 / 日志目录（可作为 K8s PVC 挂载）

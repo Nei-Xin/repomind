@@ -420,8 +420,9 @@ Windows, and macOS. See [`docs/release-readiness-v0.17.md`](docs/release-readine
 
 ## Scope
 
-RepoMind v1.0.0-rc.2 is the current release candidate for the local
-single-user v1.0 product. It includes deterministic L2 Module Narratives, an
+RepoMind v1.0.0-rc.3 is the current source release candidate for the local
+single-user v1.0 product; v1.0.0-rc.2 remains the latest published artifact.
+It includes deterministic L2 Module Narratives, an
 evidence-backed L3 Repository Profile, and the first versioned export,
 replace-import, backup, and restore loop. It also includes a rebuildable
 10,000-L1 scale acceptance runner and deterministic, review-required L4 Skill
@@ -443,8 +444,10 @@ evaluation runs. See
 `REPOMIND_PROJECT_PLAN.md` and `REPOMIND_FINAL_PRODUCT_SPEC.md` for the staged
 roadmap.
 
-The RC freezes database Schema 11, logical export format 2, physical backup
-format 1, and encrypted envelope format 1. Promotion to v1.0.0 requires clean
+The published RC.2 freezes database Schema 11. The RC.3 source advances to
+Schema 12 for transparent Agent activity capture while retaining logical
+export format 2, physical backup format 1, and encrypted envelope format 1.
+Promotion to v1.0.0 requires clean
 main-branch and annotated-tag CI plus the documented stability period. See
 [`docs/release-readiness-v1.0.md`](docs/release-readiness-v1.0.md).
 

@@ -2,8 +2,10 @@
 
 ## Decision
 
-`v1.0.0-rc.2` is the current release candidate for RepoMind's local,
-single-user product. It preserves the v1.0 storage and portability contracts
+`v1.0.0-rc.2` is the latest published release candidate for RepoMind's local,
+single-user product. The current source is preparing `v1.0.0-rc.3`, which adds
+Schema 12 Agent activity capture and must be published as a distinct immutable
+artifact. RC.2 preserves the v1.0 storage and portability contracts
 while adding the registered OpenCode/Claude Host lifecycle and the
 release-blocking installation corrections found after RC.1. All 28
 final-product criteria in section 24 of

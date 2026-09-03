@@ -1,5 +1,5 @@
 /**
- * ProxyStorage 工厂 —— 单例 + 降级链。
+ * ProxyStorage 工厂 —— 单例、COS 失败关闭与本地后端降级链。
  *
  * 见 docs/design/2026-07-09-redis-to-cos-migration-plan.md §3.2.
  *
@@ -83,15 +83,16 @@ let _cosBackend: CosLikeBackend | null = null;
 /**
  * kernel-sts COS 装配入口 —— 从 cost-guard submodule dynamic import。
  * `initProxyStorage()` 时填一次，之后 tryCreate.case("cos") 用它装配。
- * null 表示 submodule 未加载或不可用 —— cos 分支会走降级链。
+ * null 表示 submodule 未加载或不可用 —— cos 分支会失败关闭。
  */
 let _kernelStsFactory: ((opts: KernelStsCosOptions) => CosLikeBackend) | null = null;
+const COST_GUARD_MODULE = "@context-proxy/cost-guard";
 
 /**
  * 进程启动时调用一次 —— 做 cost-guard 的 dynamic import 后走同步 getProxyStorage。
  *
- * cost-guard 不可用（开源用户无 submodule / 内部环境镜像构建漏做 submodule update）
- * 时静默跳过 —— getProxyStorage 里 cos 分支会抛错，走降级链 (sqlite → fs → memory)。
+ * cost-guard 不可用（开源用户未安装私有扩展 / 内部镜像漏装扩展）时，
+ * getProxyStorage 的 cos 分支会抛错并阻止服务启动。
  *
  * 见 docs/design/2026-07-11-cos-submodule-extraction-plan.md §4.2 决策 3。
  */
@@ -99,7 +100,7 @@ export async function initProxyStorage(config: StorageConfig): Promise<ProxyStor
   if (_instance) return _instance;
   if (config.backend === "cos") {
     try {
-      const mod = await import("@context-proxy/cost-guard");
+      const mod = await import(/* @vite-ignore */ COST_GUARD_MODULE);
       if (typeof mod.openKernelStsCosBackend === "function") {
         _kernelStsFactory = mod.openKernelStsCosBackend as (opts: KernelStsCosOptions) => CosLikeBackend;
       } else {
@@ -107,7 +108,7 @@ export async function initProxyStorage(config: StorageConfig): Promise<ProxyStor
       }
     } catch (err) {
       console.warn(
-        `${TAG} cost-guard submodule unavailable — cos backend will fall back: ${
+        `${TAG} cost-guard extension unavailable — cos backend will fail closed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

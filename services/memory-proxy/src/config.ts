@@ -492,7 +492,7 @@ export function buildConfig(overrides: CliOverrides = {}): ProxyConfig {
       .filter((u) => u.userId !== ""),
     admin: {
       // Precedence: env > yaml > default("")。跟 core `TDAI_GATEWAY_API_KEY`
-      // 的运维习惯对齐；空字符串表示鉴权关闭（默认公开可访问，启动时告警）。
+      // 的运维习惯对齐；空字符串表示运维接口失败关闭并返回 503。
       apiKey:
         (process.env.TDAI_PROXY_ADMIN_API_KEY ?? "").trim() ||
         yaml.admin?.apiKey ||

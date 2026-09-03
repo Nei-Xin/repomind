@@ -8,6 +8,21 @@ period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
 
+### Changed
+
+- Advances the source version to `1.0.0-rc.3`; the published
+  `v1.0.0-rc.2` artifact remains immutable.
+- Adds database Schema 12 for transparent Agent session and activity capture.
+- Adds transparent OpenCode and Claude integrations, local service management,
+  and automatic aggregation of delegated OpenCode child-session activity.
+- Refines deterministic extraction and L2/L3 derived-memory maintenance.
+
+### Security
+
+- MemoryProxy administration and session-management HTTP endpoints now fail
+  closed when no administrator key is configured and consistently require the
+  configured Bearer token.
+
 ## [1.0.0-rc.2] - 2026-08-12
 
 ### Added

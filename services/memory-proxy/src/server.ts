@@ -15,6 +15,7 @@ import { hasAnalyseMarker, hasCostGuardMarker } from "./routes/whitelist.js";
 import { tryActivateStorage, tryActivateRedis } from "./injection/index.js";
 import { getEffectiveBackend } from "./storage/factory.js";
 import type { ProxyConfig } from "./types.js";
+import { VERSION } from "./version.js";
 
 export function createApp(config: ProxyConfig): Hono {
   const app = new Hono();
@@ -87,7 +88,7 @@ export function createApp(config: ProxyConfig): Hono {
     const degraded = wantsShared && eff.effective !== eff.requested;
     const body = {
       status: degraded ? "degraded" : "ok",
-      version: "0.2.0",
+      version: VERSION,
       upstream: config.upstream.url,
       opik: config.opik.enabled ? config.opik.url : "disabled",
       costGuard: config.costGuard.enabled ? "enabled" : "disabled",

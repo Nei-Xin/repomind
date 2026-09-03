@@ -111,16 +111,14 @@ export function captureDiff(
     const range = [baselineHead ?? emptyTree, finalHead].filter((value): value is string => Boolean(value));
     const committed = git(repositoryRoot, ["diff", "--no-ext-diff", "--unified=3", ...range, "--", ...pathspecs], true);
     if (committed) sections.push({ source: "committed", content: committed });
-    if (!files) for (const name of sensitiveNames(repositoryRoot, range)) excluded.add(name);
+    for (const name of sensitiveNames(repositoryRoot, range)) excluded.add(name);
   }
   const working = git(repositoryRoot, ["diff", "--no-ext-diff", "--unified=3", "--", ...pathspecs], true);
   const staged = git(repositoryRoot, ["diff", "--cached", "--no-ext-diff", "--unified=3", "--", ...pathspecs], true);
   if (working) sections.push({ source: "working", content: working });
   if (staged) sections.push({ source: "staged", content: staged });
-  if (!files) {
-    for (const name of sensitiveNames(repositoryRoot, [])) excluded.add(name);
-    for (const name of sensitiveNames(repositoryRoot, ["--cached"])) excluded.add(name);
-  }
+  for (const name of sensitiveNames(repositoryRoot, [])) excluded.add(name);
+  for (const name of sensitiveNames(repositoryRoot, ["--cached"])) excluded.add(name);
   const content = sections.map((section) => `--- ${section.source} ---\n${section.content}`).join("\n\n");
   const sources = sections.map((section) => section.source);
   const excludedFiles = [...excluded].sort();

@@ -64,8 +64,8 @@ initAuth(config.auth);
 initSystemUsers(config.systemUsers);
 
 // ── Initialize ProxyStorage (dynamic import cost-guard for kernel-sts COS) ──
-// 必须 await —— dynamic import 是 async 的；不 await 直接进 createApp 会
-// 让首个 cos 请求 fallback 到 sqlite（backend 已经拿到但 _kernelStsFactory null）
+// 必须 await —— dynamic import 是 async 的；不 await 直接进 createApp 会让
+// COS 因 _kernelStsFactory 尚未初始化而失败关闭。
 await initProxyStorage(config.storage);
 const effectiveStorage = getEffectiveBackend();
 if (config.storage.enabled && config.storage.backend === "cos" && effectiveStorage.effective !== "cos") {

@@ -50,7 +50,7 @@ describe("cross-process CLI end-to-end", () => {
       env: environment,
     });
     expect(version).toMatchObject({ status: 0, stderr: "" });
-    expect(version.stdout.trim()).toBe("1.0.0-rc.2");
+    expect(version.stdout.trim()).toBe("1.0.0-rc.3");
 
     const beforeInit = JSON.parse(execFileSync(process.execPath, [
       CLI, "doctor", "--repo", repository, "--runner", "opencode",

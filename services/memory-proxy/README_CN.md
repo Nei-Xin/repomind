@@ -1,10 +1,10 @@
 # MemoryProxy
 
-MemoryProxy 是一个**透明的 LLM 请求代理**：把编码 Agent（Claude Code / CodeBuddy 等）原本直连大模型的请求，改为先经过它中转。它在转发前后自动完成会话初始化、记忆注入、对话回流等动作，让 Agent **无需改动一行代码**就能用上 [MemoryCore](../MemoryCore/README_CN.md) 提供的团队记忆、Skill 和 Knowledge。
+MemoryProxy 是一个**透明的 LLM 请求代理**：把编码 Agent（Claude Code / CodeBuddy 等）原本直连大模型的请求，改为先经过它中转。它在转发前后自动完成会话初始化、记忆注入、对话回流等动作，让 Agent **无需改动一行代码**就能用上外部 MemoryCore 服务提供的团队记忆、Skill 和 Knowledge。
 
 对客户端和上游模型来说，它是“透明”的——不改变任何协议，原样转发 OpenAI `/v1/chat/completions` 和 Anthropic `/v1/messages`，只是在中转的这一进一出里，顺手做了这些事：**会话初始化、上下文注入、对话回流、鉴权与用量上报**。
 
-> 一句话分工：MemoryProxy 管“接入与转发”，MemoryCore 管“记忆的存储与处理”。Proxy 自身不落记忆数据，所有 Memory / Skill / Knowledge 读写都经 MemoryCore Gateway（默认 `:8420`）完成。整体产品定位见仓库根 [README_CN.md](../README_CN.md)。
+> 一句话分工：MemoryProxy 管“接入与转发”，MemoryCore 管“记忆的存储与处理”。Proxy 自身不落记忆数据，所有 Memory / Skill / Knowledge 读写都经 MemoryCore Gateway（默认 `:8420`）完成。整体产品定位见仓库根 [README.md](../../README.md)。
 
 ## 它在整个体系里的位置
 
@@ -250,7 +250,7 @@ PROXY_DB_PATH                # sqlite 后端 db 路径（storage.sqlite.dbPath �
 
 Key 布局统一为 `proxy_cache/{ttl|nottl}/{spaceId}/{userId}/{agentSource}/{sessionId}/...`；`ttl/` 只放热缓存（可重建），`nottl/` 放 binding 等必须持久化的业务态。
 
-降级链：`cos → sqlite → fs → memory`。任一后端 init 失败自动降级，`/health` 端点会暴露 `storage.effective` 作为观测锚点。
+COS 采用失败关闭：私有适配器、Shark 或 STS 初始化不可用时直接启动失败，不会降级到进程本地状态。本地后端保留 `sqlite → fs → memory` 降级链，`/health` 会暴露 `storage.effective` 作为观测锚点。
 
 ## Docker
 

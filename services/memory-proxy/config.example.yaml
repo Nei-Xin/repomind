@@ -155,8 +155,9 @@ rateLimit:
 #   - 离线/私有部署： backend=fs
 #   - 兜底 / 测试：   backend=memory
 #
-# 【降级链】cos → sqlite → fs → memory；任一后端 init 失败自动降级，
-#          /health 会暴露 storage.effective（生产观测告警锚点）
+# 【失败语义】cos 初始化失败时直接终止启动，避免生产多节点悄悄退到本地状态。
+#            本地后端保留 sqlite → fs → memory 降级链；/health 会暴露
+#            storage.effective（生产观测告警锚点）。
 #
 # 【回滚】任意阶段改成 enabled=false 无需重启即可回到 Redis 路径。
 #
@@ -334,15 +335,14 @@ auth:
 
 
 # ── Admin / Ops 端点鉴权（服务级 shared secret） ─────────────────────────────
-# 作用范围：仅 `/v3/instance/proxy-destroy` 这类运维口（shark 销毁实例时清 proxy
-# 侧 COS 缓存）。跟上面 auth.* 的租户 verifyUserKey 完全独立 —— 那个是租户维度
-# 的 x-tdai-user-key 校验；这个是给运维/系统服务用的 shared secret。
+# 作用范围：`/v3/admin/*`、`/v3/session/*` 与
+# `/v3/instance/proxy-destroy`。跟上面 auth.* 的租户 verifyUserKey 完全独立
+# —— 那个是租户维度的 x-tdai-user-key 校验；这个是给运维/系统服务用的
+# shared secret。
 #
 # 行为（语义对齐 core gateway 的 server.apiKey，参考 openclaw-plugin
 # gateway/server.ts:1076-1089）：
-#   - apiKey 为空（默认）        = 鉴权关闭，运维口公开可访问；启动时无告警
-#                                 （生产靠网络隔离 + apigw 兜底，跟 core 当前
-#                                 生产 `TDAI_GATEWAY_API_KEY` 也没启用同款做法）
+#   - apiKey 为空（默认）        = 运维与会话管理接口失败关闭，返回 503
 #   - apiKey 非空                = 请求必须带 `Authorization: Bearer <apiKey>`
 #                                 常量时间比对（crypto.timingSafeEqual）
 #
@@ -355,8 +355,8 @@ auth:
 #
 # 优先级：env TDAI_PROXY_ADMIN_API_KEY > yaml admin.apiKey > 默认 ""
 admin:
-  apiKey: ""               # 空 = 运维口公开（等价于不配）。生产建议通过
-                           # env TDAI_PROXY_ADMIN_API_KEY 注入，避免落 git
+  apiKey: ""               # 空 = 运维接口禁用。生产通过 env
+                           # TDAI_PROXY_ADMIN_API_KEY 注入，避免落 git
 
 
 # ── System users（内部服务账号：命中即全链路透传） ─────────────────────────────

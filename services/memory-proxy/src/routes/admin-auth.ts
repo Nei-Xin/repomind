@@ -1,11 +1,11 @@
 import type { Context } from "hono";
 import { timingSafeEqual } from "node:crypto";
 
-export type AdminAuthResult = "ok" | "missing" | "invalid";
+export type AdminAuthResult = "ok" | "unconfigured" | "missing" | "invalid";
 
 /** Shared Bearer authentication for proxy administration endpoints. */
 export function checkAdminAuth(c: Context, expected: string): AdminAuthResult {
-  if (!expected) return "ok";
+  if (!expected) return "unconfigured";
 
   const header = c.req.header("authorization") ?? c.req.header("Authorization") ?? "";
   if (!header.startsWith("Bearer ")) return "missing";
@@ -20,6 +20,9 @@ export function checkAdminAuth(c: Context, expected: string): AdminAuthResult {
 }
 
 export function adminAuthError(c: Context, result: Exclude<AdminAuthResult, "ok">): Response {
+  if (result === "unconfigured") {
+    return c.json({ code: 503, message: "Administration API is disabled: admin API key is not configured" }, 503);
+  }
   const message = result === "missing"
     ? "Unauthorized: missing Bearer token"
     : "Unauthorized: invalid token";

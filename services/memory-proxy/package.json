@@ -1,6 +1,6 @@
 {
   "name": "context-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight LLM request forwarding proxy with JSONL logging and Opik tracing",
   "type": "module",
   "scripts": {
