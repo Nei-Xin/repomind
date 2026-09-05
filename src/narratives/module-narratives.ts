@@ -218,14 +218,24 @@ export class ModuleNarrativeStore {
     if (!query.trim() || !Number.isInteger(limit) || limit < 1 || limit > 20) return [];
     const expression = buildMatchExpression(query);
     if (!expression) return [];
-    const rows = this.context.database.raw.prepare(`
+    const candidates = this.context.database.raw.prepare(`
       SELECT n.* FROM module_narrative_fts f
       JOIN module_narratives n ON n.id=f.narrative_id
       WHERE f.repository_id=? AND module_narrative_fts MATCH ?
-      ORDER BY bm25(module_narrative_fts), n.updated_at DESC LIMIT ?
-    `).all(this.context.marker.projectId, expression, limit) as unknown as NarrativeRow[];
+      ORDER BY bm25(module_narrative_fts), n.updated_at DESC, n.id LIMIT ? OFFSET ?
+    `);
     const current = this.currentFingerprints();
-    return rows.map((row) => this.summary(row, current.get(row.module_path) === row.source_fingerprint));
+    const results: ModuleNarrativeSummary[] = [];
+    const batchSize = Math.max(20, limit);
+    for (let offset = 0; ; offset += batchSize) {
+      const rows = candidates.all(this.context.marker.projectId, expression, batchSize, offset) as unknown as NarrativeRow[];
+      for (const row of rows) {
+        if (current.get(row.module_path) !== row.source_fingerprint) continue;
+        results.push(this.summary(row, true));
+        if (results.length === limit) return results;
+      }
+      if (rows.length < batchSize) return results;
+    }
   }
 
   inspect(id: string): ModuleNarrativeDetails {

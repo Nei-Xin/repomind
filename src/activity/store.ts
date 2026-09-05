@@ -108,7 +108,7 @@ function integerValue(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-function commandExitCode(eventType: string, response: unknown): number {
+function commandExitCode(eventType: string, response: unknown): number | null {
   if (eventType === "tool_failure") return 1;
   const payload = objectValue(response);
   for (const source of [payload, objectValue(payload.result), objectValue(payload.metadata)]) {
@@ -121,9 +121,8 @@ function commandExitCode(eventType: string, response: unknown): number {
     const match = /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?\s*[:=]?\s*(-?\d+)\b/iu.exec(response);
     if (match?.[1] !== undefined) return Number.parseInt(match[1], 10);
   }
-  // Claude emits PostToolUse only after a successful tool invocation;
-  // failures arrive through PostToolUseFailure.
-  return 0;
+  // A completed tool invocation does not establish the command's exit code.
+  return null;
 }
 
 function isTestCommand(command: string): boolean {
@@ -135,8 +134,8 @@ function boundedSummary(value: unknown): string {
   return text.replace(/\u0000/gu, "").slice(0, 2_000);
 }
 
-function commandEvidence(rows: readonly ActivityRow[]): Array<TestEvidenceInput & { isTest: boolean }> {
-  const commands: Array<TestEvidenceInput & { isTest: boolean }> = [];
+function commandEvidence(rows: readonly ActivityRow[]): Array<Omit<TestEvidenceInput, "exitCode"> & { exitCode: number | null; isTest: boolean }> {
+  const commands: ReturnType<typeof commandEvidence> = [];
   for (const row of rows) {
     if (row.event_type !== "tool_result" && row.event_type !== "tool_failure") continue;
     const payload = objectValue(JSON.parse(row.payload_json) as unknown);
@@ -277,8 +276,12 @@ export class InteractiveActivityStore {
     });
     const activities = this.activitiesForSession(sessionId);
     const observed = commandEvidence(activities);
-    const failedCommands = observed.filter((command) => command.exitCode !== 0);
-    const status = input.status ?? (failedCommands.length ? "partial" : "success");
+    const requestedStatus = input.status ?? "success";
+    const status = requestedStatus === "success" && observed.some((command) => command.exitCode !== 0)
+      ? "partial"
+      : requestedStatus;
+    // Unknown results remain in L0 activity; only known exits become command/test evidence.
+    const knownResults = observed.filter((command): command is TestEvidenceInput & { isTest: boolean } => command.exitCode !== null);
     const summary = input.summary.trim()
       || `${agentDisplayName(input.agent)} completed the interactive task without a textual final summary.`;
     const result = this.core.commitSession({
@@ -286,8 +289,8 @@ export class InteractiveActivityStore {
       idempotencyKey: `interactive:${input.eventId}`,
       status,
       summary,
-      tests: observed.filter((command) => command.isTest).map(({ isTest: _isTest, ...command }) => command),
-      commands: observed.filter((command) => !command.isTest).map(({ isTest: _isTest, ...command }) => command),
+      tests: knownResults.filter((command) => command.isTest).map(({ isTest: _isTest, ...command }) => command),
+      commands: knownResults.filter((command) => !command.isTest).map(({ isTest: _isTest, ...command }) => command),
       ...(status === "success" ? {} : { remainingWork: ["Review failed or incomplete command activity before relying on this task."] }),
     });
     const maintenance = result.status === "committed"

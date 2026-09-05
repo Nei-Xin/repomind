@@ -23,6 +23,38 @@ describe("L2 module narratives", () => {
     delete process.env.REPOMIND_DATA_DIR;
   });
 
+  it("fills the requested limit past a full batch of stale narratives", () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      for (let index = 0; index < 23; index++) {
+        core.record({
+          type: "architecture",
+          title: "Paginationtoken boundary",
+          content: "Paginationtoken owns the module boundary.",
+          scopeType: "module",
+          scopeValue: `src/module${String(index).padStart(2, "0")}`,
+        });
+      }
+      core.rebuildModuleNarratives();
+      const firstBatch = core.searchModuleNarratives("paginationtoken", 20);
+      expect(firstBatch).toHaveLength(20);
+      for (const narrative of firstBatch) {
+        core.invalidateMemory({ memoryId: narrative.sourceMemoryIds[0]!, reason: "The module boundary changed." });
+      }
+      const staleIds = new Set(firstBatch.map((narrative) => narrative.id));
+      const results = core.searchModuleNarratives("paginationtoken", 2);
+      expect(results).toHaveLength(2);
+      expect(results.every((narrative) => narrative.current && !staleIds.has(narrative.id))).toBe(true);
+      const remaining = core.searchModuleNarratives("paginationtoken", 20);
+      expect(remaining).toHaveLength(3);
+      expect(new Set(remaining.map((narrative) => narrative.id)).size).toBe(3);
+      expect(results).toEqual(remaining.slice(0, 2));
+      expect(core.searchModuleNarratives("no_matching_narrative")).toEqual([]);
+    } finally {
+      core.close();
+    }
+  });
+
   it("builds bounded L2 from active evidence-backed L1 and tracks incremental changes", () => {
     const core = new RepositoryMemoryCore(repository);
     const architecture = core.record({

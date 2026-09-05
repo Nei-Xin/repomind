@@ -372,19 +372,27 @@ export class RepositoryMemoryCore {
     if (!input.idempotencyKey.trim()) throw new RepoMindError("INVALID_INPUT", "idempotencyKey must not be empty");
     const db = this.context.database;
     const requestHash = hash(stableJson(input));
-    const receipt = db.raw.prepare(
+    const receiptQuery = db.raw.prepare(
       "SELECT request_hash, result_json FROM commit_receipts WHERE session_id=? AND idempotency_key=?",
-    ).get(input.sessionId, input.idempotencyKey) as { request_hash: string; result_json: string } | undefined;
-    if (receipt) {
+    );
+    const readReceipt = (): CommitSessionResult | undefined => {
+      const receipt = receiptQuery.get(input.sessionId, input.idempotencyKey) as { request_hash: string; result_json: string } | undefined;
+      if (!receipt) return undefined;
       if (receipt.request_hash !== requestHash) throw new RepoMindError("INVALID_INPUT", "Idempotency key was reused with a different request");
       return JSON.parse(receipt.result_json) as CommitSessionResult;
-    }
+    };
+    const receipt = readReceipt();
+    if (receipt) return receipt;
 
     const session = db.raw.prepare(
       "SELECT status, baseline_head, task FROM sessions WHERE id=? AND repository_id=?",
     ).get(input.sessionId, this.context.marker.projectId) as { status: string; baseline_head: string | null; task: string } | undefined;
     if (!session) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
-    if (session.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
+    if (session.status !== "open") {
+      const repeated = readReceipt();
+      if (repeated) return repeated;
+      throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
+    }
 
     const finalSnapshot = inspectGit(this.context.root);
     const finalWorktreeFiles = inspectWorktreeFiles(this.context.root);
@@ -414,6 +422,14 @@ export class RepositoryMemoryCore {
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
     return db.transaction(() => {
+      // Git collection runs outside the write lock; another process may have committed meanwhile.
+      const repeated = readReceipt();
+      if (repeated) return repeated;
+      const current = db.raw.prepare("SELECT status FROM sessions WHERE id=? AND repository_id=?")
+        .get(input.sessionId, this.context.marker.projectId) as { status: string } | undefined;
+      if (!current) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
+      if (current.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${current.status}`);
+
       const evidenceIds: string[] = [];
       evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, { remainingWork: input.remainingWork ?? [] }, null));
       evidenceIds.push(this.insertEvidence(input.sessionId, "git_snapshot", JSON.stringify(finalSnapshot), { phase: "final" }, finalSnapshot.head));
@@ -482,9 +498,11 @@ export class RepositoryMemoryCore {
         }
       }
 
-      db.raw.prepare(`
-        UPDATE sessions SET status=?, final_branch=?, final_head=?, final_dirty=?, ended_at=? WHERE id=?
-      `).run(finalStatus, finalSnapshot.branch, finalSnapshot.head, finalSnapshot.dirty ? 1 : 0, Date.now(), input.sessionId);
+      const updated = db.raw.prepare(`
+        UPDATE sessions SET status=?, final_branch=?, final_head=?, final_dirty=?, ended_at=?
+        WHERE id=? AND repository_id=? AND status='open'
+      `).run(finalStatus, finalSnapshot.branch, finalSnapshot.head, finalSnapshot.dirty ? 1 : 0, Date.now(), input.sessionId, this.context.marker.projectId);
+      if (Number(updated.changes) !== 1) throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is no longer open`);
       const result: CommitSessionResult = {
         sessionId: input.sessionId,
         status: finalStatus,
@@ -1045,7 +1063,7 @@ export class RepositoryMemoryCore {
 
   searchModuleNarratives(query: string, limit = 2): ModuleNarrativeSummary[] {
     this.refreshStaleMemoryStates();
-    return new ModuleNarrativeStore(this.context).search(query, limit).filter((item) => item.current);
+    return new ModuleNarrativeStore(this.context).search(query, limit);
   }
 
   inspectModuleNarrative(id: string): ModuleNarrativeDetails {

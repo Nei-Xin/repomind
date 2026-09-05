@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startBridgeServer, type RunningBridgeServer } from "../src/bridge/server.js";
+import { InteractiveActivityStore } from "../src/activity/store.js";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { handleClaudeInteractiveHook } from "../src/integrations/claude/interactive-hook.js";
 import {
@@ -51,6 +52,47 @@ async function post<T>(base: string, path: string, body: unknown, token?: string
 }
 
 describe("interactive RepoMind Bridge", () => {
+  it.each([
+    { exitCode: null, requestedStatus: undefined, expectedStatus: "partial" },
+    { exitCode: null, requestedStatus: "success" as const, expectedStatus: "partial" },
+    { exitCode: 1, requestedStatus: "success" as const, expectedStatus: "partial" },
+    { exitCode: 0, requestedStatus: "failed" as const, expectedStatus: "failed" },
+  ])("does not promote incomplete or failed tasks ($exitCode, $requestedStatus)", ({ exitCode, requestedStatus, expectedStatus }) => {
+    const fixture = initializedFixture();
+    const store = new InteractiveActivityStore(fixture.repository, fixture.dataDirectory);
+    try {
+      const common = {
+        schemaVersion: 1,
+        agent: "opencode",
+        agentSessionId: "unknown-command-result",
+        repositoryPath: fixture.repository,
+      } as const;
+      const started = store.startTask({ ...common, eventId: "start", task: "Run the repository tests" });
+      const payload = {
+        toolName: "bash",
+        toolInput: { command: "npm test" },
+        toolResponse: { output: "Test runner output", ...(exitCode === null ? {} : { exitCode }) },
+      };
+      store.record({ ...common, eventId: "result", source: "opencode-plugin", type: "tool_result", payload });
+      const finished = store.finish({
+        ...common,
+        eventId: "finish",
+        summary: "Tests completed",
+        ...(requestedStatus === undefined ? {} : { status: requestedStatus }),
+      });
+      expect(finished).toMatchObject({ status: expectedStatus, tests: 1, memories: { stored: 0 }, maintenance: null });
+      const db = store.core.context.database.raw;
+      const activity = db.prepare("SELECT payload_json FROM activity_events WHERE id='result'").get() as { payload_json: string };
+      expect(JSON.parse(activity.payload_json)).toEqual(payload);
+      const tests = db.prepare("SELECT content FROM evidence WHERE session_id=? AND kind='test_result'")
+        .all(started.sessionId) as Array<{ content: string }>;
+      expect(tests.map((test) => JSON.parse(test.content).exitCode)).toEqual(exitCode === null ? [] : [exitCode]);
+      expect(store.core.status()).toMatchObject({ memories: 0, openSessions: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
   it("captures L0 activity, commits Git/test evidence, and recalls it in a later Claude session", async () => {
     const fixture = initializedFixture();
     const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory, token: "test-token" });

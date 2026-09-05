@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { RepoMindError } from "../errors.js";
 import type { GitSnapshot } from "../domain/types.js";
 import { SENSITIVE_PATH_GLOBS } from "../security/redaction.js";
@@ -30,6 +30,27 @@ function git(cwd: string, args: string[], allowFailure = false, input?: string):
       cause: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function gitDiff(cwd: string, args: string[]): { content: string; truncated: boolean } {
+  const result = spawnSync("git", args, {
+    cwd,
+    timeout: 10_000,
+    maxBuffer: MAX_OUTPUT,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const truncated = result.error !== undefined && "code" in result.error
+    && result.error.code === "ENOBUFS" && (result.stdout?.length ?? 0) >= MAX_OUTPUT;
+  if (!truncated && (result.error || result.status !== 0)) {
+    throw new RepoMindError("GIT_INSPECTION_FAILED", `git ${args.join(" ")} failed`, {
+      cause: result.error?.message ?? `Git exited with code ${result.status}`,
+    });
+  }
+  return {
+    content: new TextDecoder().decode(result.stdout.subarray(0, MAX_OUTPUT), { stream: truncated }).trimEnd(),
+    truncated,
+  };
 }
 
 export function locateGitRoot(path: string): string {
@@ -79,16 +100,16 @@ export function filesChangedBetweenHeads(
   finalHead: string | null,
 ): string[] {
   if (!finalHead || baselineHead === finalHead) return [];
-  const emptyTree = baselineHead ? null : git(repositoryRoot, ["mktree"], true, "");
+  const emptyTree = baselineHead ? null : git(repositoryRoot, ["mktree"], false, "");
   const range = [baselineHead ?? emptyTree, finalHead].filter((value): value is string => Boolean(value));
   const output = git(repositoryRoot, [
     "diff", "--name-only", "-z", ...range, "--", ".", ...WORKTREE_EXCLUDE_PATHSPECS,
-  ], true);
+  ]);
   return output ? [...new Set(output.split("\0").filter(Boolean).map((path) => path.replaceAll("\\", "/")))].sort() : [];
 }
 
 function sensitiveNames(repositoryRoot: string, rangeArgs: string[]): string[] {
-  const output = git(repositoryRoot, ["diff", "--name-only", ...rangeArgs, "--", ...SENSITIVE_PATH_GLOBS], true);
+  const output = git(repositoryRoot, ["diff", "--name-only", ...rangeArgs, "--", ...SENSITIVE_PATH_GLOBS]);
   return output ? output.split(/\r?\n/u).filter(Boolean) : [];
 }
 
@@ -100,6 +121,12 @@ export function captureDiff(
   files?: string[],
 ): { content: string; truncated: boolean; sources: string[]; excludedFiles: string[] } {
   const sections: Array<{ source: string; content: string }> = [];
+  let truncated = false;
+  const collect = (source: string, args: string[]): void => {
+    const result = gitDiff(repositoryRoot, args);
+    truncated ||= result.truncated;
+    if (result.content) sections.push({ source, content: result.content });
+  };
   const excluded = new Set<string>();
   const includedPathspecs = files?.map(literalPathspec);
   if (includedPathspecs?.length === 0) {
@@ -107,22 +134,19 @@ export function captureDiff(
   }
   const pathspecs = includedPathspecs ?? [".", ...EXCLUDE_PATHSPECS];
   if (finalHead && baselineHead !== finalHead) {
-    const emptyTree = baselineHead ? null : git(repositoryRoot, ["mktree"], true, "");
+    const emptyTree = baselineHead ? null : git(repositoryRoot, ["mktree"], false, "");
     const range = [baselineHead ?? emptyTree, finalHead].filter((value): value is string => Boolean(value));
-    const committed = git(repositoryRoot, ["diff", "--no-ext-diff", "--unified=3", ...range, "--", ...pathspecs], true);
-    if (committed) sections.push({ source: "committed", content: committed });
+    collect("committed", ["diff", "--no-ext-diff", "--unified=3", ...range, "--", ...pathspecs]);
     for (const name of sensitiveNames(repositoryRoot, range)) excluded.add(name);
   }
-  const working = git(repositoryRoot, ["diff", "--no-ext-diff", "--unified=3", "--", ...pathspecs], true);
-  const staged = git(repositoryRoot, ["diff", "--cached", "--no-ext-diff", "--unified=3", "--", ...pathspecs], true);
-  if (working) sections.push({ source: "working", content: working });
-  if (staged) sections.push({ source: "staged", content: staged });
+  collect("working", ["diff", "--no-ext-diff", "--unified=3", "--", ...pathspecs]);
+  collect("staged", ["diff", "--cached", "--no-ext-diff", "--unified=3", "--", ...pathspecs]);
   for (const name of sensitiveNames(repositoryRoot, [])) excluded.add(name);
   for (const name of sensitiveNames(repositoryRoot, ["--cached"])) excluded.add(name);
   const content = sections.map((section) => `--- ${section.source} ---\n${section.content}`).join("\n\n");
   const sources = sections.map((section) => section.source);
   const excludedFiles = [...excluded].sort();
   const buffer = Buffer.from(content, "utf8");
-  if (buffer.length <= maxBytes) return { content, truncated: false, sources, excludedFiles };
-  return { content: buffer.subarray(0, maxBytes).toString("utf8"), truncated: true, sources, excludedFiles };
+  if (buffer.length <= maxBytes) return { content, truncated, sources, excludedFiles };
+  return { content: new TextDecoder().decode(buffer.subarray(0, maxBytes), { stream: true }), truncated: true, sources, excludedFiles };
 }

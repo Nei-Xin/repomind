@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { initializeRepository } from "../src/repository.js";
 import { createTestRepository, git } from "./helpers.js";
@@ -347,6 +347,63 @@ describe("repository memory core", () => {
     second.close();
   });
 
+  it.each(["same-request", "different-key", "changed-request"] as const)(
+    "rechecks a competing commit inside the transaction (%s)",
+    (mode) => {
+      const first = new RepositoryMemoryCore(repository);
+      const second = new RepositoryMemoryCore(repository);
+      try {
+        const started = first.startSession({ task: "Commit a task exactly once" });
+        const winningInput = {
+          sessionId: started.sessionId,
+          idempotencyKey: "winner",
+          status: "success" as const,
+          summary: "The first completed result must be preserved.",
+        };
+        const input = mode === "same-request" ? winningInput : {
+          ...winningInput,
+          idempotencyKey: mode === "different-key" ? "loser" : "winner",
+          status: "failed" as const,
+          summary: "This later result must not overwrite the winner.",
+        };
+        const db = first.context.database;
+        const persisted = () => ({
+          sessions: db.raw.prepare("SELECT * FROM sessions ORDER BY id").all(),
+          evidence: db.raw.prepare("SELECT * FROM evidence ORDER BY id").all(),
+          memories: db.raw.prepare("SELECT * FROM memories ORDER BY id").all(),
+          receipts: db.raw.prepare("SELECT * FROM commit_receipts ORDER BY session_id, idempotency_key").all(),
+        });
+        let winner: ReturnType<RepositoryMemoryCore["commitSession"]> | undefined;
+        let before: ReturnType<typeof persisted> | undefined;
+        const transaction = db.transaction.bind(db);
+        // Deterministically interleave a second connection after the first precheck, before BEGIN.
+        const gate = vi.spyOn(db, "transaction").mockImplementationOnce((work) => {
+          winner = second.commitSession(winningInput);
+          before = persisted();
+          return transaction(work);
+        });
+        try {
+          if (mode === "same-request") {
+            const result = first.commitSession(input);
+            expect(result).toEqual(winner);
+          } else {
+            expect(() => first.commitSession(input)).toThrowError(expect.objectContaining({
+              code: mode === "different-key" ? "SESSION_NOT_OPEN" : "INVALID_INPUT",
+            }));
+          }
+          expect(winner?.status).toBe("committed");
+          expect(persisted()).toEqual(before);
+          expect(before?.receipts).toHaveLength(1);
+        } finally {
+          gate.mockRestore();
+        }
+      } finally {
+        first.close();
+        second.close();
+      }
+    },
+  );
+
   it("keeps a newer extracted decision active while making its old subject conflict uncertain", () => {
     const core = new RepositoryMemoryCore(repository);
     try {
@@ -550,6 +607,27 @@ describe("repository memory core", () => {
       second.close();
     } finally {
       rmSync(otherRepository, { recursive: true, force: true });
+    }
+  });
+
+  it("persists truncated Git evidence when the diff exceeds the process capture limit", () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const started = core.startSession({ task: "Update a large tracked file" });
+      writeFileSync(join(repository, "README.txt"), "large tracked change for bounded evidence capture\n".repeat(30_000));
+      core.commitSession({
+        sessionId: started.sessionId,
+        idempotencyKey: "large-diff",
+        status: "success",
+        summary: "Updated the tracked file.",
+      });
+      const evidence = core.context.database.raw.prepare("SELECT content, metadata_json FROM evidence WHERE session_id=? AND kind='git_diff'")
+        .get(started.sessionId) as { content: string; metadata_json: string };
+      expect(evidence.content).toContain("large tracked change");
+      expect(Buffer.byteLength(evidence.content)).toBeLessThanOrEqual(65_536);
+      expect(JSON.parse(evidence.metadata_json)).toMatchObject({ truncated: true, sources: ["working"] });
+    } finally {
+      core.close();
     }
   });
 

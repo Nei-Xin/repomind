@@ -4,6 +4,7 @@ import type { EmbeddingProvider } from "../embedding/provider.js";
 import { serializeVector, validateEmbeddings } from "../embedding/provider.js";
 import { RepoMindError } from "../errors.js";
 import type { RepositoryContext } from "../repository.js";
+import { redactSecrets } from "../security/redaction.js";
 
 interface MemoryDocument {
   id: string;
@@ -80,7 +81,7 @@ export class VectorIndex {
     options: { limit?: number; types?: MemoryType[]; statuses?: Array<"active" | "uncertain"> } = {},
   ): Promise<VectorHit[]> {
     await this.sync();
-    const vectors = await this.provider.embed([query]);
+    const vectors = await this.provider.embed([redactSecrets(query).content]);
     validateEmbeddings(this.provider, vectors, 1);
     const statuses = options.statuses ?? ["active", "uncertain"];
     const types = options.types ?? [];

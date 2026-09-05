@@ -84,6 +84,40 @@ describe("vector and hybrid retrieval", () => {
     core.close();
   });
 
+  it("redacts query credentials before remote embedding across retrieval entry points", async () => {
+    const requests: string[][] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { input: string[] };
+      requests.push(body.input);
+      return new Response(JSON.stringify({
+        data: body.input.map((_text, index) => ({ index, embedding: [1, 0, 0, 0, 0, 0, 0, 0] })),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const provider = new OpenAICompatibleEmbeddingProvider({
+      baseUrl: "https://embedding.example/v1",
+      apiKey: "test-key",
+      model: "embed-test",
+      dimensions: 8,
+    });
+    const core = new RepositoryMemoryCore(repository, { embeddingProvider: provider });
+    try {
+      core.record({ type: "convention", title: "Configuration", content: "Keep configuration credentials in the vault." });
+      const query = "Find configuration password=example-review-secret-12345";
+      const safeQuery = "Find configuration password=[REDACTED:credential]";
+      expect((await core.searchHybrid(query)).strategy).toBe("hybrid-fts5-vector");
+      const started = await core.startSessionHybrid({ task: query });
+      expect(started.retrievalStrategy).toBe("hybrid-fts5-vector");
+      core.abandonSession(started.sessionId);
+      const index = new VectorIndex(core.context, provider);
+      await index.search(query);
+      await index.search("Find configuration");
+      expect(requests.slice(1)).toEqual([[safeQuery], [safeQuery], [safeQuery], ["Find configuration"]]);
+      expect(JSON.stringify(requests)).not.toContain("example-review-secret-12345");
+    } finally {
+      core.close();
+    }
+  });
+
   it("rebuilds for a model change and cascades vectors when a memory is forgotten", async () => {
     const firstProvider = new CountingProvider("model-a");
     const core = new RepositoryMemoryCore(repository, { embeddingProvider: firstProvider });
