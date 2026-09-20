@@ -46,23 +46,29 @@ export class Database {
   }
 
   transaction<T>(work: () => T): T {
-    const savepoint = `repomind_nested_${this.transactionDepth}`;
-    this.raw.exec(this.transactionDepth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
-    this.transactionDepth++;
+    const depth = this.transactionDepth;
+    const savepoint = `repomind_nested_${depth}`;
+    this.raw.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
+    this.transactionDepth = depth + 1;
     try {
       const result = work();
-      this.transactionDepth--;
-      this.raw.exec(this.transactionDepth === 0 ? "COMMIT" : `RELEASE SAVEPOINT ${savepoint}`);
+      this.raw.exec(depth === 0 ? "COMMIT" : `RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {
-      this.transactionDepth--;
-      if (this.transactionDepth === 0) {
-        this.raw.exec("ROLLBACK");
-      } else {
-        this.raw.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        this.raw.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      try {
+        if (depth === 0) {
+          this.raw.exec("ROLLBACK");
+        } else {
+          this.raw.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          this.raw.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Transaction failed and rollback also failed", { cause: error });
       }
       throw error;
+    } finally {
+      // COMMIT/RELEASE can throw too; restore the entry depth exactly once.
+      this.transactionDepth = depth;
     }
   }
 
