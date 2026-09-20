@@ -292,7 +292,7 @@ export class InteractiveActivityStore {
       tests: knownResults.filter((command) => command.isTest).map(({ isTest: _isTest, ...command }) => command),
       commands: knownResults.filter((command) => !command.isTest).map(({ isTest: _isTest, ...command }) => command),
       ...(status === "success" ? {} : { remainingWork: ["Review failed or incomplete command activity before relying on this task."] }),
-    });
+    }, { tests: "tool-observed", commands: "tool-observed" });
     const maintenance = result.status === "committed"
       ? this.core.maintainMemoryLayers()
       : null;

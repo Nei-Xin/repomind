@@ -30,6 +30,20 @@ silently.
 Evidence is never returned as recall text. It is what you consult to decide
 whether to believe a memory, which is a different job from being context.
 
+Command and test Evidence records include `verificationSource` in metadata:
+`caller-reported` for CLI/MCP submissions, `tool-observed` for captured tool
+results, and `host-verified` for Host-owned checks. Only the collecting
+integration sets this field; a CLI/MCP result payload cannot assign its own trust.
+Successful caller reports create `reported-command` memories with confidence
+0.5, while observed results and Host checks create `verified-command` memories
+with confidence 0.9 and 0.95 respectively. These are provenance distinctions,
+not guarantees that a passing command adequately tests the task.
+
+Historical verified-command memories without recorded execution provenance
+remain stored unchanged. Search and inspect display them as unverified with
+a warning and confidence capped at 0.5; L2/L3 exclude them from current derived
+context until new, observed evidence supports a command memory.
+
 ## L1 — Atomic memories
 
 An L1 memory states exactly one reusable fact about the repository. It is the
@@ -40,7 +54,7 @@ unit that search returns and the unit that governance acts on.
 | `architecture` | structure or responsibility | HTTP routes are registered only in `src/routes` |
 | `convention` | a project rule | public APIs export explicit types |
 | `decision` | a choice and its reason | SQLite is the local source of truth |
-| `command` | a verified command | `npm test -- storage` runs the storage suite |
+| `command` | a command with reported or observed results | `npm test -- storage` runs the storage suite |
 | `failure` | a confirmed failure | the native module fails to load on this Node version |
 | `solution` | a verified fix | reinstalling with the matching architecture restores the loader |
 | `dependency` | a version or tooling constraint | Node.js 22.5+ is required |

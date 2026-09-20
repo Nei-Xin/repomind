@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import type {
   CommitSessionInput,
+  CommandEvidenceSource,
   CommitSessionResult,
   CorrectMemoryInput,
   CorrectMemoryResult,
@@ -77,6 +78,7 @@ import { SkillCandidateStore } from "./skills/skill-candidates.js";
 import { buildMatchExpression, searchTokens, shouldUseSubstringFallback } from "./search/lexical.js";
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
+import { UNKNOWN_COMMAND_VERIFICATION, unverifiedLegacyCommandIds } from "./evidence/command-provenance.js";
 
 type SqlValue = string | number | null;
 
@@ -249,11 +251,12 @@ function compactVerifiedCommandSummary(value: string): string {
   return `${compact.slice(0, headChars).trimEnd()}${marker}${compact.slice(-tailChars).trimStart()}`;
 }
 
-function verifiedCommandMemoryContent(test: NonNullable<CommitSessionInput["tests"]>[number]): string {
+function verifiedCommandMemoryContent(test: NonNullable<CommitSessionInput["tests"]>[number], source: CommandEvidenceSource): string {
   const summary = compactVerifiedCommandSummary(test.summary);
   return [
     `Command: ${JSON.stringify(test.command)}`,
-    `Result: passed (exit code ${test.exitCode})`,
+    `Result: ${source === "caller-reported" ? "reported passed" : "passed"} (exit code ${test.exitCode})`,
+    `Verification source: ${source}`,
     ...(summary ? [`Summary: ${summary}`] : []),
   ].join("\n");
 }
@@ -368,17 +371,37 @@ export class RepositoryMemoryCore {
     }
   }
 
-  commitSession(input: CommitSessionInput): CommitSessionResult {
+  commitSession(input: CommitSessionInput, sources: {
+    tests?: CommandEvidenceSource;
+    commands?: CommandEvidenceSource;
+  } = {}): CommitSessionResult {
     if (!input.idempotencyKey.trim()) throw new RepoMindError("INVALID_INPUT", "idempotencyKey must not be empty");
     const db = this.context.database;
-    const requestHash = hash(stableJson(input));
+    // Provenance is supplied by in-process collectors, not the result payload.
+    const testSource = sources.tests ?? "caller-reported";
+    const commandSource = sources.commands ?? "caller-reported";
+    const sourceOverrides = {
+      ...(testSource === "caller-reported" ? {} : { tests: testSource }),
+      ...(commandSource === "caller-reported" ? {} : { commands: commandSource }),
+    };
+    const legacyRequestHash = hash(stableJson(input));
+    const requestHash = Object.keys(sourceOverrides).length
+      ? hash(stableJson({ input, sources: sourceOverrides })) : legacyRequestHash;
     const receiptQuery = db.raw.prepare(
       "SELECT request_hash, result_json FROM commit_receipts WHERE session_id=? AND idempotency_key=?",
     );
     const readReceipt = (): CommitSessionResult | undefined => {
       const receipt = receiptQuery.get(input.sessionId, input.idempotencyKey) as { request_hash: string; result_json: string } | undefined;
       if (!receipt) return undefined;
-      if (receipt.request_hash !== requestHash) throw new RepoMindError("INVALID_INPUT", "Idempotency key was reused with a different request");
+      if (receipt.request_hash !== requestHash) {
+        // A pre-provenance collector retry returns its old receipt unchanged;
+        // it must neither duplicate writes nor retroactively upgrade evidence.
+        const legacyRetry = receipt.request_hash === legacyRequestHash && !db.raw.prepare(`
+          SELECT 1 FROM evidence WHERE session_id=? AND kind IN ('test_result','command_result')
+            AND json_extract(metadata_json, '$.verificationSource') IS NOT NULL LIMIT 1
+        `).get(input.sessionId);
+        if (!legacyRetry) throw new RepoMindError("INVALID_INPUT", "Idempotency key was reused with a different request");
+      }
       return JSON.parse(receipt.result_json) as CommitSessionResult;
     };
     const receipt = readReceipt();
@@ -444,12 +467,12 @@ export class RepositoryMemoryCore {
 
       const testEvidence: string[] = [];
       for (const test of input.tests ?? []) {
-        const id = this.insertEvidence(input.sessionId, "test_result", JSON.stringify(test), { exitCode: test.exitCode, command: test.command }, finalSnapshot.head);
+        const id = this.insertEvidence(input.sessionId, "test_result", JSON.stringify(test), { exitCode: test.exitCode, command: test.command, verificationSource: testSource }, finalSnapshot.head);
         evidenceIds.push(id);
         testEvidence.push(id);
       }
       for (const command of input.commands ?? []) {
-        evidenceIds.push(this.insertEvidence(input.sessionId, "command_result", JSON.stringify(command), { exitCode: command.exitCode, command: command.command }, finalSnapshot.head));
+        evidenceIds.push(this.insertEvidence(input.sessionId, "command_result", JSON.stringify(command), { exitCode: command.exitCode, command: command.command, verificationSource: commandSource }, finalSnapshot.head));
       }
 
       let stored = 0;
@@ -486,10 +509,10 @@ export class RepositoryMemoryCore {
           if (test.exitCode !== 0) continue;
           track(this.storeMemory({
             type: "command",
-            title: `Verified command: ${test.command}`,
-            content: verifiedCommandMemoryContent(test),
-            confidence: 0.95,
-            tags: ["test", "verified-command"],
+            title: `${testSource === "caller-reported" ? "Reported successful command" : "Verified command"}: ${test.command}`,
+            content: verifiedCommandMemoryContent(test, testSource),
+            confidence: testSource === "caller-reported" ? 0.5 : testSource === "tool-observed" ? 0.9 : 0.95,
+            tags: ["test", testSource === "caller-reported" ? "reported-command" : "verified-command", testSource],
             relatedFiles: memoryFiles,
           }, "extracted", [testEvidence[index]!]));
         }
@@ -912,6 +935,7 @@ export class RepositoryMemoryCore {
       files,
       relations,
       audit,
+      ...this.legacyCommandPresentation(memory),
     };
   }
 
@@ -1253,6 +1277,22 @@ export class RepositoryMemoryCore {
             ...(staleReason ? { staleReasons: staleReason.files } : {}),
           }
         : {}),
+      ...this.legacyCommandPresentation(row),
+    };
+  }
+
+  private legacyCommandPresentation(row: Record<string, unknown>): Partial<MemoryResult> {
+    if (row.type !== "command") return {};
+    const tags = JSON.parse(String(row.tags_json)) as string[];
+    if (!tags.includes("verified-command") || !unverifiedLegacyCommandIds(this.context, String(row.id)).size) return {};
+    const reason = parseStatusReason(row.status_reason_json);
+    const warning = reason?.kind === "stale_files" ? staleWarning(reason.files)
+      : reason?.kind === "conflict" ? conflictWarning(reason.withMemoryIds) : "";
+    return {
+      title: String(row.title).replace(/^Verified command:/u, "Unverified command:"),
+      confidence: Math.min(Number(row.confidence), 0.5),
+      tags: [...tags.filter((tag) => !["verified-command", "host-verified", "tool-observed"].includes(tag)), "verification-unknown"],
+      warning: [warning, UNKNOWN_COMMAND_VERIFICATION].filter(Boolean).join(" "),
     };
   }
 

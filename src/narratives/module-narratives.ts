@@ -9,6 +9,7 @@ import type {
   RebuildModuleNarrativesResult,
 } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
+import { unverifiedLegacyCommandIds } from "../evidence/command-provenance.js";
 import type { RepositoryContext } from "../repository.js";
 import { buildMatchExpression } from "../search/lexical.js";
 
@@ -276,6 +277,7 @@ export class ModuleNarrativeStore {
   }
 
   private sourceRows(): SourceMemory[] {
+    const unverified = unverifiedLegacyCommandIds(this.context);
     const rows = this.context.database.raw.prepare(`
       SELECT m.id, m.type, m.title, m.content, m.confidence, m.fingerprint, m.scope_type, m.scope_value,
         m.status, m.status_reason_json, m.updated_at, m.last_validated_at, mf.file_path,
@@ -291,7 +293,7 @@ export class ModuleNarrativeStore {
     }>;
     const grouped = new Map<string, SourceMemory>();
     for (const row of rows) {
-      if (Number(row.evidence_count) < 1) continue;
+      if (Number(row.evidence_count) < 1 || unverified.has(row.id)) continue;
       let source = grouped.get(row.id);
       if (!source) {
         source = {

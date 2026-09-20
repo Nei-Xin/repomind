@@ -175,7 +175,7 @@ describe("OpenCode transparent interactive integration", () => {
         WHERE s.client_session_id='root-1' AND e.kind='test_result'
       `).all() as Array<{ metadata_json: string }>;
       expect(tests.map((row) => JSON.parse(row.metadata_json))).toEqual([
-        { command: "npm test -- invoice", exitCode: 0 },
+        { command: "npm test -- invoice", exitCode: 0, verificationSource: "tool-observed" },
       ]);
       const childSessions = core.context.database.raw.prepare(
         "SELECT COUNT(*) AS count FROM agent_sessions WHERE external_session_id IN ('child-1','grandchild-1')",

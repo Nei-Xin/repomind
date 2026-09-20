@@ -458,7 +458,7 @@ describe("repository memory core", () => {
     }
   });
 
-  it("keeps full test Evidence while deduplicating compact verified-command memories", () => {
+  it("keeps full test Evidence while deduplicating compact reported-command memories", () => {
     const core = new RepositoryMemoryCore(repository);
     const commit = (key: string, duration: string): void => {
       const started = core.startSession({ task: "Verify the delivery contract" });
@@ -489,7 +489,8 @@ describe("repository memory core", () => {
     expect(commands).toHaveLength(1);
     expect(commands[0]!.content).toBe([
       "Command: \"node --test\"",
-      "Result: passed (exit code 0)",
+      "Result: reported passed (exit code 0)",
+      "Verification source: caller-reported",
       "Summary: tests 4; pass 4; fail 0; skipped 0",
     ].join("\n"));
     const evidence = core.context.database.raw.prepare(

@@ -190,7 +190,7 @@ export function commitHostLifecycle(input: {
       summary: input.summary,
       ...(input.tests?.length ? { tests: input.tests } : {}),
       ...(input.commands?.length ? { commands: input.commands } : {}),
-    });
+    }, { tests: "host-verified", commands: "tool-observed" });
     const commitMs = round(performance.now() - commitStarted);
     if (result.status !== "committed") {
       return {

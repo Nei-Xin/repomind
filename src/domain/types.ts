@@ -396,6 +396,9 @@ export interface TestEvidenceInput {
   summary: string;
 }
 
+/** Set by the collecting integration, never accepted from CLI/MCP result payloads. */
+export type CommandEvidenceSource = "caller-reported" | "tool-observed" | "host-verified";
+
 export interface CommitSessionInput {
   sessionId: string;
   idempotencyKey: string;

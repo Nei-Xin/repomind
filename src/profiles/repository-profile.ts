@@ -11,6 +11,7 @@ import type {
   RepositoryProfileVersion,
 } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
+import { unverifiedLegacyCommandIds } from "../evidence/command-provenance.js";
 import type { RepositoryContext } from "../repository.js";
 
 interface StableMemory {
@@ -287,6 +288,7 @@ export class RepositoryProfileStore {
   }
 
   private stableMemories(minConfidence: number): StableMemory[] {
+    const unverified = unverifiedLegacyCommandIds(this.context);
     const previous = this.previousMemorySourceIds();
     const rows = this.context.database.raw.prepare(`
       SELECT m.id, m.type, m.title, m.content, m.status, m.status_reason_json, m.confidence,
@@ -302,7 +304,7 @@ export class RepositoryProfileStore {
       updated_at: number; last_validated_at: number | null; evidence_count: number;
     }>;
     return deduplicateMemories(rows
-      .filter((row) => STABLE_TYPES.has(row.type) && Number(row.evidence_count) > 0)
+      .filter((row) => STABLE_TYPES.has(row.type) && Number(row.evidence_count) > 0 && !unverified.has(row.id))
       .map((row) => ({
         id: row.id,
         type: row.type,
