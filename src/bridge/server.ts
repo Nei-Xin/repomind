@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { z, ZodError, type ZodTypeAny } from "zod";
 import { InteractiveActivityStore } from "../activity/store.js";
 import { RepoMindError } from "../errors.js";
@@ -44,11 +46,31 @@ class SessionRepositoryRegistry {
   }
 
   set(agent: string, agentSessionId: string, repositoryPath: string): void {
-    this.paths.set(this.key(agent, agentSessionId), repositoryPath);
+    const key = this.key(agent, agentSessionId);
+    const current = this.paths.get(key);
+    if (current && current !== repositoryPath) {
+      throw new RepoMindError(
+        "INVALID_INPUT",
+        `Agent session ${agentSessionId} is already bound to repository ${current}`,
+      );
+    }
+    this.paths.set(key, repositoryPath);
   }
 
   get(agent: string, agentSessionId: string): string | null {
     return this.paths.get(this.key(agent, agentSessionId)) ?? null;
+  }
+}
+
+function canonicalRepositoryPath(value: string): string {
+  const resolved = resolve(value);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    // openRepository will return the detailed repository/path error later;
+    // retaining the resolved path still prevents lexical aliases from
+    // bypassing the session binding when the path exists.
+    return resolved;
   }
 }
 
@@ -116,8 +138,9 @@ function repositoryFor(
   value: { agent: string; agentSessionId: string; repositoryPath?: string | undefined },
 ): string {
   if (value.repositoryPath) {
-    registry.set(value.agent, value.agentSessionId, value.repositoryPath);
-    return value.repositoryPath;
+    const repositoryPath = canonicalRepositoryPath(value.repositoryPath);
+    registry.set(value.agent, value.agentSessionId, repositoryPath);
+    return repositoryPath;
   }
   const registered = registry.get(value.agent, value.agentSessionId);
   if (!registered) {
@@ -177,7 +200,8 @@ export async function startBridgeServer(options: BridgeServerOptions = {}): Prom
       }
       if (url.pathname === "/v1/sessions/register") {
         const input = await jsonBody(request, registerAgentSessionSchema);
-        registry.set(input.agent, input.agentSessionId, input.repositoryPath);
+        const repositoryPath = canonicalRepositoryPath(input.repositoryPath);
+        registry.set(input.agent, input.agentSessionId, repositoryPath);
         const result = withStore(input.repositoryPath, options.dataDirectory, (store) => store.register(input));
         sendJson(response, 200, result);
         return;

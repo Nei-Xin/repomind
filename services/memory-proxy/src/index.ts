@@ -1,11 +1,12 @@
 /** Entry point: parse config, start server. */
 
-if (!process.version.startsWith("v22.")) {
+import { isSupportedNodeVersion } from "./runtime.js";
+
+if (!isSupportedNodeVersion(process.version)) {
   console.error(`\x1b[31m[ERROR] Node.js version check failed!\x1b[0m`);
-  console.error(`\x1b[31m[ERROR] Required Node.js version: v22.x\x1b[0m`);
+  console.error(`\x1b[31m[ERROR] Required Node.js version: >=v22.5.0\x1b[0m`);
   console.error(`\x1b[31m[ERROR] Current Node.js version is: ${process.version}\x1b[0m`);
-  console.error(`\x1b[33m[TIP] Please run with Node.js v22. You can switch using:\x1b[0m`);
-  console.error(`\x1b[33m      source ~/.nvm/nvm.sh && nvm use 22\x1b[0m`);
+  console.error(`\x1b[33m[TIP] Please use Node.js 22.5 or newer.\x1b[0m`);
   process.exit(1);
 }
 

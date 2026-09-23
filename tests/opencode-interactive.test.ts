@@ -60,7 +60,11 @@ describe("OpenCode transparent interactive integration", () => {
         }),
         messages: async ({ path }: { path: { id: string } }) => ({
           data: [{
-            info: { id: `${path.id}-assistant`, sessionID: path.id, role: "assistant" },
+            info: {
+              id: `${path.id}-assistant`, sessionID: path.id, role: "assistant",
+              parentID: path.id === "root-1" ? "message-1" : "message-2",
+              finish: "stop", time: { completed: Date.now() },
+            },
             parts: [{
               id: `${path.id}-assistant-text`,
               sessionID: path.id,
@@ -128,7 +132,12 @@ describe("OpenCode transparent interactive integration", () => {
 
     const second = userMessage("root-2", "message-2", "Which invoice verification command should I run?");
     await plugin["chat.message"]({ sessionID: "root-2", messageID: "message-2" }, second);
-    const secondMessages = [{ info: second.message, parts: [...second.parts] }];
+    const reminder = { id: "reminder", type: "text", text: "Framework reminder", synthetic: true };
+    const attachment = { id: "attachment", type: "file", mime: "image/png", url: "file:///invoice.png" };
+    const additionalText = { id: "extra-text", type: "text", text: "Keep the explanation concise." };
+    const nativeMessage = { info: second.message, parts: [reminder, ...second.parts, attachment, additionalText] };
+    const originalMessage = structuredClone(nativeMessage);
+    const secondMessages = [nativeMessage];
     await plugin["experimental.chat.messages.transform"]({}, { messages: secondMessages });
     expect(secondMessages[0]!.parts).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -137,6 +146,25 @@ describe("OpenCode transparent interactive integration", () => {
         text: expect.stringContaining("npm test -- invoice"),
       }),
     ]));
+    expect(secondMessages[0]!.parts).toHaveLength(nativeMessage.parts.length);
+    const injected = secondMessages[0]!.parts[1]!;
+    expect(injected).toEqual(expect.objectContaining({
+      text: expect.stringContaining(`<current_user_request>\n${second.parts[0]!.text}\n</current_user_request>`),
+    }));
+    expect(secondMessages[0]!.parts[0]).toBe(reminder);
+    expect(secondMessages[0]!.parts[2]).toBe(attachment);
+    expect(secondMessages[0]!.parts[3]).toBe(additionalText);
+    expect(nativeMessage).toEqual(originalMessage);
+    const transformed = structuredClone(secondMessages);
+    await plugin["experimental.chat.messages.transform"]({}, { messages: secondMessages });
+    expect(secondMessages).toEqual(transformed);
+    const freshMessages = [nativeMessage];
+    await plugin["experimental.chat.messages.transform"]({}, { messages: freshMessages });
+    expect(freshMessages).toEqual(transformed);
+    const staleMessages = [{ ...nativeMessage, info: { ...second.message, id: "previous-user-message" } }];
+    const staleSnapshot = structuredClone(staleMessages);
+    await plugin["experimental.chat.messages.transform"]({}, { messages: staleMessages });
+    expect(staleMessages).toEqual(staleSnapshot);
 
     const core = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
     try {
@@ -187,6 +215,64 @@ describe("OpenCode transparent interactive integration", () => {
     expect(warnings).toEqual([]);
 
     await plugin.event({ event: { type: "session.deleted", properties: { info: { id: "root-2" } } } });
+  });
+
+  it.each([
+    { name: "cancelled despite finish=stop", info: { error: { name: "MessageAbortedError", data: { message: "Aborted" } } }, status: "abandoned" },
+    { name: "upstream error", info: { error: { name: "APIError", data: { message: "Upstream unavailable" } } }, status: "failed" },
+    { name: "still streaming", info: { time: { started: 1 }, finish: undefined }, status: "abandoned" },
+    { name: "unfinished tool loop", info: { finish: "tool-calls" }, status: "abandoned" },
+    { name: "token limit", info: { finish: "length" }, status: "partial" },
+    { name: "previous turn only", info: { parentID: "old-user" }, status: "abandoned" },
+    { name: "no assistant", info: null, status: "abandoned" },
+  ])("does not commit $name as success, and supports a later turn", async ({ info, status }) => {
+    const fixture = initializedFixture();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const warnings: string[] = [];
+    const message = (parentID: string, overrides: Record<string, unknown> = {}) => ({
+      info: { id: `assistant-${parentID}`, role: "assistant", parentID,
+        finish: "stop", time: { completed: Date.now() }, ...overrides },
+      parts: [{ type: "text", text: "采用 SQLite 事务作为唯一写入边界，src/storage 模块负责持久化。" }],
+    });
+    let messages = info === null ? [] : [message("new-user", info)];
+    const plugin = await createOpenCodeInteractivePlugin({ bridgeUrl: bridge.url, onWarning: (v) => warnings.push(v) })({
+      directory: fixture.repository, worktree: fixture.repository,
+      client: { session: {
+        get: async () => ({ data: { id: "root" } }),
+        messages: async () => ({ data: messages }),
+      } },
+    });
+    await plugin["chat.message"]({ sessionID: "root", messageID: "new-user" },
+      userMessage("root", "new-user", "存储写入必须保持事务性。请更新 src/storage 模块。"));
+    const idle = { event: { type: "session.idle", properties: { sessionID: "root" } } };
+    await plugin.event(idle);
+    await plugin.event(idle); // Duplicate idle must not finalize twice.
+    const core = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
+    try {
+      const db = core.context.database.raw;
+      expect(db.prepare("SELECT status FROM sessions").all()).toEqual([{ status }]);
+      for (const table of ["memories", "module_narratives", "repository_profiles", "skill_candidates"]) {
+        expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+      }
+      if (status === "abandoned" || status === "failed") {
+        expect(db.prepare("SELECT count(*) AS n FROM activity_events WHERE event_type='assistant_message'").get()).toEqual({ n: 0 });
+      }
+      expect(db.prepare("SELECT count(*) AS n FROM activity_events WHERE event_type='session_event'").get()).toEqual({ n: 1 });
+      const events = db.prepare("SELECT payload_json FROM activity_events WHERE event_type='session_event'").all() as {payload_json: string}[];
+      expect(JSON.parse(events[0]!.payload_json)).toMatchObject(status === "abandoned"
+        ? { kind: "task_abort" } : { kind: "task_finish", requestedStatus: status });
+
+      // Cancellation must not break the next prompt in the same native session.
+      messages = [message("next-user")];
+      await plugin["chat.message"]({ sessionID: "root", messageID: "next-user" },
+        userMessage("root", "next-user", "存储写入必须保持事务性。确认 src/storage 持久化边界。"));
+      await plugin.event(idle);
+      expect(db.prepare("SELECT status FROM sessions ORDER BY started_at").all()).toEqual([{ status }, { status: "committed" }]);
+      expect(warnings).toEqual([]);
+    } finally {
+      core.close();
+    }
   });
 
   it("installs an idempotent managed project plugin without replacing user code", () => {

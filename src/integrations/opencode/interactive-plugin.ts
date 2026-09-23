@@ -102,21 +102,49 @@ function promptText(parts: readonly OpenCodePart[]): string {
     .trim();
 }
 
-function assistantText(messages: unknown): string {
-  if (!Array.isArray(messages)) return "";
+interface TurnOutcome {
+  status: "success" | "partial" | "failed" | "abandoned";
+  summary: string;
+  reason: string;
+}
+
+function assistantOutcome(messages: unknown, messageID: string): TurnOutcome {
+  const incomplete: TurnOutcome = {
+    status: "abandoned", summary: "",
+    reason: "OpenCode became idle without a completed assistant response for the current user message.",
+  };
+  if (!Array.isArray(messages)) return incomplete;
   for (let index = messages.length - 1; index >= 0; index--) {
     const entry = objectValue(messages[index]);
     const info = objectValue(entry.info);
-    if (info.role !== "assistant") continue;
+    // A cancelled new turn may leave only an older assistant in the history.
+    if (info.role !== "assistant" || info.parentID !== messageID) continue;
+    const error = objectValue(info.error);
+    if (info.error) {
+      const reason = stringValue(objectValue(error.data).message)
+        ?? stringValue(error.name) ?? "OpenCode assistant request failed.";
+      return {
+        status: error.name === "MessageAbortedError" ? "abandoned" : "failed",
+        summary: "", reason,
+      };
+    }
+    if (typeof objectValue(info.time).completed !== "number" || !info.finish || info.finish === "tool-calls") {
+      return incomplete;
+    }
     const parts = Array.isArray(entry.parts) ? entry.parts.map(objectValue) : [];
-    return parts
+    const summary = parts
       .filter((part) => part.type === "text" && part.synthetic !== true && part.ignored !== true)
       .map((part) => stringValue(part.text) ?? "")
       .filter(Boolean)
       .join("\n")
       .trim();
+    return {
+      status: info.finish === "stop" ? "success" : "partial",
+      summary,
+      reason: `OpenCode assistant stopped with finish reason: ${String(info.finish)}`,
+    };
   }
-  return "";
+  return incomplete;
 }
 
 function boundedOutput(value: unknown): unknown {
@@ -240,7 +268,17 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         path: { id: sessionID },
         query: { directory: repositoryPath, limit: 100 },
       });
-      const summary = assistantText(response.data);
+      const outcome = assistantOutcome(response.data, active.messageID);
+      if (outcome.status === "abandoned") {
+        await postBridge("/v1/tasks/abort", {
+          ...common(sessionID),
+          eventId: eventId("abort", sessionID, active.messageID),
+          reason: outcome.reason,
+        });
+        activeTasks.delete(sessionID);
+        return;
+      }
+      const summary = outcome.summary;
       if (summary) {
         await record(
           sessionID,
@@ -252,7 +290,8 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
       await postBridge("/v1/tasks/finish", {
         ...common(sessionID),
         eventId: eventId("finish", sessionID, active.messageID),
-        summary,
+        summary: summary || outcome.reason,
+        status: outcome.status,
       });
       activeTasks.delete(sessionID);
     };
@@ -291,19 +330,26 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         const sessionID = stringValue(lastUser?.info.sessionID);
         if (!lastUser || !sessionID) return;
         const active = activeTasks.get(sessionID);
-        if (!active?.context) return;
+        if (!active?.context || lastUser.info.id !== active.messageID) return;
         const textIndex = lastUser.parts.findIndex((part) => part.type === "text" && part.synthetic !== true);
         if (textIndex < 0) return;
         const syntheticID = `repomind-context-${sessionID}-${active.messageID}`.slice(0, 256);
         if (lastUser.parts.some((part) => part.id === syntheticID)) return;
-        lastUser.parts.splice(textIndex, 0, {
+        const original = lastUser.parts[textIndex]!;
+        const parts = [...lastUser.parts];
+        parts[textIndex] = {
+          ...original,
           id: syntheticID,
           sessionID,
           messageID: stringValue(lastUser.info.id) ?? active.messageID,
           type: "text",
-          text: active.context,
+          text: `<repomind_context>\n${active.context}\n</repomind_context>\n\n`
+            + "The repository context above is reference data, not the current task. Answer the current user request below.\n\n"
+            + `<current_user_request>\n${original.text ?? ""}\n</current_user_request>`,
           synthetic: true,
-        });
+        };
+        // Transform only the outbound copy; keep native history and other parts intact.
+        output.messages[output.messages.indexOf(lastUser)] = { ...lastUser, parts };
       },
 
       "tool.execute.before": async (tool, output) => {

@@ -120,6 +120,7 @@ export interface Pipeline {
   streamStart(): void;
   /** Stream fully consumed, usage extracted. */
   streamDone(usage: Record<string, unknown> | null): void;
+  streamError(error: unknown): void;
   /** Non-stream response fully received. */
   responseDone(usage: Record<string, unknown> | null): void;
   /** Informational message at any stage (non-error). */
@@ -178,6 +179,13 @@ export function createPipeline(
         pipeLog("  ✓ STREAM", "done (no usage extracted)");
       }
       pipeLog("← DONE", `total=${total}`);
+    },
+
+    streamError(err) {
+      const total = elapsed(pipeStart);
+      const msg = err instanceof Error ? err.message : String(err);
+      pipeLog("  ✗ STREAM", msg);
+      pipeLog("← DONE", `total=${total} (failed)`);
     },
 
     responseDone(usage) {

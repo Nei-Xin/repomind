@@ -1,6 +1,7 @@
 /** Core request handler: intercept → forward → parse usage → log. */
 
 import type { Context } from "hono";
+import { cancellableStream, upstreamSignal } from "./stream-lifecycle.js";
 import { createHash } from "node:crypto";
 import { writeLog, createPipeline } from "./logger.js";
 import {
@@ -300,9 +301,11 @@ async function forwardWithRetry(
   originalHeaders: Record<string, string>,
   pipe: ReturnType<typeof createPipeline>,
   forwardTimeoutMs: number,
+  clientSignal: AbortSignal,
   sessionKeyForDebug?: string,
   rateLimitContext?: { config: ProxyConfig; instanceId?: string },
-): Promise<{ resp: Response; retried: boolean }> {
+): Promise<{ resp: Response; retried: boolean; signal: AbortSignal }> {
+  let signal = upstreamSignal(clientSignal, forwardTimeoutMs);
   let upstreamResp: Response | undefined;
   let forwardFailed = false;
 
@@ -350,9 +353,7 @@ async function forwardWithRetry(
     headers: upstreamHeaders,
     body: JSON.stringify(upstreamBody),
   };
-  if (forwardTimeoutMs > 0) {
-    fetchOpts.signal = AbortSignal.timeout(forwardTimeoutMs);
-  }
+  fetchOpts.signal = signal;
 
   if (rateLimitContext) {
     await enforceRateLimit({
@@ -377,6 +378,7 @@ async function forwardWithRetry(
     pipe.forwardDone(upstreamResp.status);
   }
 
+  clientSignal.throwIfAborted();
   const shouldRetry = target.retryTarget &&
     (forwardFailed || (upstreamResp && upstreamResp.status >= 400 && upstreamResp.status < 500));
 
@@ -405,16 +407,15 @@ async function forwardWithRetry(
         headers: retryHeaders,
         body: JSON.stringify(retryBody),
       };
-      if (forwardTimeoutMs > 0) {
-        retryFetchOpts.signal = AbortSignal.timeout(forwardTimeoutMs);
-      }
+      signal = upstreamSignal(clientSignal, forwardTimeoutMs);
+      retryFetchOpts.signal = signal;
       upstreamResp = await fetch(target.retryTarget.url, retryFetchOpts);
       if (upstreamResp.ok) {
         pipe.info("RETRY_SUCCESS", `Retry returned ${upstreamResp.status}`);
       } else {
         pipe.error("RETRY_FAILED", `Retry returned ${upstreamResp.status}`);
       }
-      return { resp: upstreamResp, retried: true };
+      return { resp: upstreamResp, retried: true, signal };
     } catch (retryErr: unknown) {
       if (isRateLimitExceededError(retryErr)) throw retryErr;
       if (retryErr instanceof DOMException && retryErr.name === "TimeoutError") {
@@ -434,7 +435,7 @@ async function forwardWithRetry(
     throw new Error("No upstream response available");
   }
 
-  return { resp: upstreamResp, retried: false };
+  return { resp: upstreamResp, retried: false, signal };
 }
 
 /** Main handler for POST /v1/chat/completions (OpenAI compat). */
@@ -1260,17 +1261,21 @@ export async function handleChatCompletions(
   pipe.forwardStart(target.url);
   let upstreamResp: Response;
   let retried = false;
+  const streamAbort = new AbortController();
+  const clientSignal = AbortSignal.any([c.req.raw.signal, streamAbort.signal]);
+  let responseSignal: AbortSignal;
 
   try {
     const result = await forwardWithRetry(
       target, upstreamHeaders, upstreamBody,
       body, originalHeaders,
-      pipe, forwardTimeoutMs,
+      pipe, forwardTimeoutMs, clientSignal,
       sessionKey,
       { config, instanceId: spaceId || undefined },
     );
     upstreamResp = result.resp;
     retried = result.retried;
+    responseSignal = result.signal;
   } catch (err: unknown) {
     if (isRateLimitExceededError(err)) {
       pipe.info("RATE_LIMIT", "TPM/QPM exceeded");
@@ -1381,11 +1386,14 @@ export async function handleChatCompletions(
       langfuseDebug,
       debugMetadata,
       preparedStats,
+      signal: responseSignal,
     };
-    const passthrough = createUsageTapTransform(tapCtx);
-    const tappedStream = upstreamResp.body.pipeThrough(passthrough);
+    const tap = createUsageTapTransform(tapCtx);
+    const tappedStream = pipeThroughUsageTap(cancellableStream(upstreamResp.body, responseSignal), tap);
 
-    return new Response(tappedStream, { status: upstreamResp.status, headers: respHeaders });
+    return new Response(cancellableStream(tappedStream, responseSignal, (reason) => streamAbort.abort(reason)), {
+      status: upstreamResp.status, headers: respHeaders,
+    });
   }
 
   // ── Non-streaming response ───────────────────────────────────────────────
@@ -1660,6 +1668,7 @@ function outputMessageContent(message: Record<string, unknown> | null): string |
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 interface TapContext {
+  signal: AbortSignal;
   config: ProxyConfig;
   modelId: string;
   keyId: string;
@@ -1780,20 +1789,61 @@ function mergeToolCallDeltas(
 /** Create a TransformStream that passes bytes through unchanged,
  *  while extracting usage/content/tool_calls from SSE events in-band.
  */
-function createUsageTapTransform(ctx: TapContext): TransformStream<Uint8Array, Uint8Array> {
+interface UsageTapTransform {
+  transform: TransformStream<Uint8Array, Uint8Array>;
+  finalize(error?: unknown): Promise<void>;
+}
+
+/**
+ * Pipe an upstream stream through the usage tap while handling source errors.
+ * TransformStream.flush() is skipped when the writable side aborts, so the
+ * rejected pipe explicitly records failure after propagating the stream error.
+ */
+function pipeThroughUsageTap(
+  source: ReadableStream<Uint8Array>,
+  tap: UsageTapTransform,
+): ReadableStream<Uint8Array> {
+  // Native piping propagates downstream cancellation to a pending source read.
+  void source.pipeTo(tap.transform.writable).catch(async (error: unknown) => {
+    try {
+      await tap.finalize(error ?? new Error("Upstream stream aborted"));
+    } catch {
+      // Preserve the transport outcome if failure reporting itself fails.
+    }
+  });
+  return tap.transform.readable;
+}
+
+function createUsageTapTransform(ctx: TapContext): UsageTapTransform {
   const { config, modelId, keyId, sessionKey, upstreamUrl, traceId, forkTraceId, startTime, inputMessages, retried, logMeta, pipe, lf, spaceId, upstreamRequestId } = ctx;
 
   const decoder = new TextDecoder();
   let sseBuf = "";
   let lastUsage: Record<string, unknown> | null = null;
   let assistantContent = "";
+  let receivedDone = false;
+  let protocolError: Error | undefined;
   const toolCallAccumulators = new Map<number, ToolCallAccumulator>();
+
+  function inspectTerminalEvent(part: string): void {
+    for (const line of part.split("\n")) {
+      if (!line.trim().startsWith("data:")) continue;
+      const data = line.trim().slice(5).trim();
+      if (data === "[DONE]") receivedDone = true;
+      else {
+        try {
+          if (JSON.parse(data)?.error) protocolError = new Error("OpenAI SSE error event");
+        } catch { /* Ignore malformed SSE data. */ }
+      }
+    }
+  }
 
   function processSseChunk(chunk: string): void {
     sseBuf += chunk;
-    const parts = sseBuf.split("\n\n");
+    const parts = sseBuf.split(/\r?\n\r?\n/);
     sseBuf = parts.pop() ?? "";
     for (const part of parts) {
+      inspectTerminalEvent(part);
       const usage = extractSseUsage(part);
       if (usage) lastUsage = usage;
       const { content, toolCallDeltas } = extractSseContentAndTools(part);
@@ -1802,8 +1852,16 @@ function createUsageTapTransform(ctx: TapContext): TransformStream<Uint8Array, U
     }
   }
 
-  async function finalize(): Promise<void> {
+  let finalized = false;
+  async function finalizeOnce(error?: unknown): Promise<void> {
+    if (finalized) return;
+    finalized = true;
+    await finalize(error);
+  }
+
+  async function finalize(error?: unknown): Promise<void> {
     if (sseBuf.trim()) {
+      inspectTerminalEvent(sseBuf);
       const usage = extractSseUsage(sseBuf);
       if (usage) lastUsage = usage;
       const { content, toolCallDeltas } = extractSseContentAndTools(sseBuf);
@@ -1812,6 +1870,19 @@ function createUsageTapTransform(ctx: TapContext): TransformStream<Uint8Array, U
     }
 
     const endTime = new Date().toISOString();
+    const failure = error ?? (ctx.signal.aborted ? ctx.signal.reason : undefined) ?? protocolError ?? (receivedDone
+      ? undefined : new Error("OpenAI stream ended before [DONE]"));
+    if (failure !== undefined) {
+      pipe.streamError(failure);
+      langfuseReportFailure({
+        lf, model: modelId, startTime, endTime,
+        input: buildLangfuseInputChat(inputMessages, ctx.langfuseDebug, flattenMessagesForOpik),
+        statusMessage: failure instanceof Error ? failure.message : String(failure),
+        extraTags: ["error"],
+        observationMetadata: { ...ctx.debugMetadata, stage: "stream", stream: true, partialUsage: lastUsage },
+      });
+      return;
+    }
 
     let outputMessage: Record<string, unknown> | null = null;
     if (assistantContent || toolCallAccumulators.size > 0) {
@@ -2056,7 +2127,8 @@ function createUsageTapTransform(ctx: TapContext): TransformStream<Uint8Array, U
       .catch((err: unknown) => pipe.error("CREDIT_REPORT", err));
   }
 
-  return new TransformStream<Uint8Array, Uint8Array>({
+  return {
+    transform: new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       controller.enqueue(chunk);
       try {
@@ -2067,10 +2139,12 @@ function createUsageTapTransform(ctx: TapContext): TransformStream<Uint8Array, U
     },
     async flush() {
       try {
-        await finalize();
+        await finalizeOnce();
       } catch (err: unknown) {
         pipe.error("STREAM_FINALIZE", err);
       }
     },
-  });
+    }),
+    finalize: finalizeOnce,
+  };
 }

@@ -2,6 +2,9 @@
   "name": "context-proxy",
   "version": "0.2.0",
   "description": "Lightweight LLM request forwarding proxy with JSONL logging and Opik tracing",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "type": "module",
   "scripts": {
     "start": "node --import tsx/esm src/index.ts",

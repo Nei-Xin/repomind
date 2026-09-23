@@ -26,13 +26,20 @@ opencode
 ```
 
 For every root-session user message, the plugin starts a RepoMind task, retrieves
-relevant current L1-L3 context, and injects it as an untrusted synthetic text
-part before model dispatch. Root-session and delegated child-session tool calls,
-results, and failures are recorded automatically against the root task while
-preserving the originating Session ID. Root `session.idle` captures the last assistant response,
-commits Git, command, and test evidence, then performs the existing best-effort
-L2/L3/L4 maintenance. Bridge failures are logged and do not prevent OpenCode
-from continuing.
+relevant current L1-L3 context, and combines it with the first user text part
+in an outbound synthetic text part before model dispatch. Explicit boundaries
+separate untrusted repository context from the current user request. Native
+message history, attachments, and remaining parts are preserved. Root-session
+and delegated child-session tool calls, results, and failures are recorded
+automatically against the root task while
+preserving the originating Session ID. On root `session.idle`, the plugin checks
+the assistant response belonging to the current user message. A completed
+response with no error and a `stop` finish reason commits Git, command, and test
+evidence, then performs the existing best-effort L2/L3/L4 maintenance. Cancelled
+or unfinished turns are abandoned; upstream errors are failed, and truncated
+responses are partial. These outcomes do not trigger successful-task memory
+maintenance. Cancelling a turn still permits another prompt in the same OpenCode
+session. Bridge failures are logged and do not prevent OpenCode from continuing.
 
 Child-session user messages do not create separate RepoMind tasks, and child
 `session.idle` or deletion events do not finish or abort the root task. Nested

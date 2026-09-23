@@ -52,6 +52,36 @@ async function post<T>(base: string, path: string, body: unknown, token?: string
 }
 
 describe("interactive RepoMind Bridge", () => {
+  it("keeps an agent session bound to its first repository", async () => {
+    const fixture = initializedFixture();
+    const otherRepository = createTestRepository("repomind-bridge-other-");
+    cleanup.push(otherRepository);
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const common = {
+      schemaVersion: 1,
+      agent: "claude",
+      agentSessionId: "bound-session",
+      repositoryPath: fixture.repository,
+    } as const;
+
+    await post(bridge.url, "/v1/sessions/register", common);
+    const response = await fetch(`${bridge.url}/v1/tasks/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...common,
+        repositoryPath: otherRepository,
+        eventId: "bound-session:start",
+        task: "Use the original repository binding",
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "INVALID_INPUT" },
+    });
+  });
+
   it.each([
     { exitCode: null, requestedStatus: undefined, expectedStatus: "partial" },
     { exitCode: null, requestedStatus: "success" as const, expectedStatus: "partial" },

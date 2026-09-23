@@ -8,6 +8,7 @@
  */
 
 import type { Context } from "hono";
+import { cancellableStream, upstreamSignal } from "./stream-lifecycle.js";
 import { createHash } from "node:crypto";
 import { writeLog, createPipeline } from "./logger.js";
 import {
@@ -379,9 +380,11 @@ async function forwardWithRetry(
   originalHeaders: Record<string, string>,
   pipe: ReturnType<typeof createPipeline>,
   forwardTimeoutMs: number,
+  clientSignal: AbortSignal,
   sessionKeyForDebug?: string,
   rateLimitContext?: { config: ProxyConfig; instanceId?: string },
-): Promise<{ resp: Response; retried: boolean }> {
+): Promise<{ resp: Response; retried: boolean; signal: AbortSignal }> {
+  let signal = upstreamSignal(clientSignal, forwardTimeoutMs);
   let upstreamResp: Response | undefined;
   let forwardFailed = false;
 
@@ -450,7 +453,7 @@ async function forwardWithRetry(
       method: "POST",
       headers: upstreamHeaders,
       body: JSON.stringify(upstreamBody),
-      signal: AbortSignal.timeout(forwardTimeoutMs),
+      signal,
     });
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -465,6 +468,7 @@ async function forwardWithRetry(
     pipe.forwardDone(upstreamResp.status);
   }
 
+  clientSignal.throwIfAborted();
   const shouldRetry = target.retryTarget &&
     (forwardFailed || (upstreamResp && upstreamResp.status >= 400 && upstreamResp.status < 500));
 
@@ -487,18 +491,19 @@ async function forwardWithRetry(
           protocol: "anthropic",
         });
       }
+      signal = upstreamSignal(clientSignal, forwardTimeoutMs);
       upstreamResp = await fetch(target.retryTarget.url, {
         method: "POST",
         headers: retryHeaders,
         body: JSON.stringify(originalBody),
-        signal: AbortSignal.timeout(forwardTimeoutMs),
+        signal,
       });
       if (upstreamResp.ok) {
         pipe.info("RETRY_SUCCESS", `Retry returned ${upstreamResp.status}`);
       } else {
         pipe.error("RETRY_FAILED", `Retry returned ${upstreamResp.status}`);
       }
-      return { resp: upstreamResp, retried: true };
+      return { resp: upstreamResp, retried: true, signal };
     } catch (retryErr: unknown) {
       if (isRateLimitExceededError(retryErr)) throw retryErr;
       if (retryErr instanceof DOMException && retryErr.name === "TimeoutError") {
@@ -518,7 +523,7 @@ async function forwardWithRetry(
     throw new Error("No upstream response available");
   }
 
-  return { resp: upstreamResp, retried: false };
+  return { resp: upstreamResp, retried: false, signal };
 }
 
 /** Main handler for POST /v1/messages (Anthropic Messages API). */
@@ -1236,17 +1241,21 @@ export async function handleAnthropicMessages(
   pipe.forwardStart();
   let upstreamResp: Response;
   let retried = false;
+  const streamAbort = new AbortController();
+  const clientSignal = AbortSignal.any([c.req.raw.signal, streamAbort.signal]);
+  let responseSignal: AbortSignal;
 
   try {
     const result = await forwardWithRetry(
       target, upstreamHeaders, upstreamBody,
       retryBody, originalHeaders,
-      pipe, forwardTimeoutMs,
+      pipe, forwardTimeoutMs, clientSignal,
       sessionKey,
       { config, instanceId: spaceId || undefined },
     );
     upstreamResp = result.resp;
     retried = result.retried;
+    responseSignal = result.signal;
   } catch (err: unknown) {
     if (isRateLimitExceededError(err)) {
       pipe.info("RATE_LIMIT", "TPM/QPM exceeded");
@@ -1325,7 +1334,7 @@ export async function handleAnthropicMessages(
       return new Response(clientStream, { status: upstreamResp.status, headers: respHeaders });
     }
 
-    const [rawClientStream, tapStream] = upstreamResp.body.tee();
+    const [rawClientStream, tapStream] = cancellableStream(upstreamResp.body, responseSignal).tee();
     pipe.streamStart();
 
     // Background: consume tap stream for Anthropic SSE → extract usage
@@ -1359,11 +1368,15 @@ export async function handleAnthropicMessages(
       langfuseDebug,
       debugMetadata,
       preparedStats,
+      signal: responseSignal,
+      abort: streamAbort,
     });
 
     const clientStream = rawClientStream.pipeThrough(createSseThinkingFixStream(pipe));
 
-    return new Response(clientStream, { status: upstreamResp.status, headers: respHeaders });
+    return new Response(cancellableStream(clientStream, responseSignal, (reason) => streamAbort.abort(reason)), {
+      status: upstreamResp.status, headers: respHeaders,
+    });
   }
 
   // ── Non-streaming response ───────────────────────────────────────────────
@@ -1742,6 +1755,8 @@ function createSseThinkingFixStream(
 // ── Stream processing helpers ────────────────────────────────────────────────
 
 interface AnthropicTapContext {
+  signal: AbortSignal;
+  abort: AbortController;
   config: ProxyConfig;
   modelId: string;
   keyId: string;
@@ -1798,6 +1813,9 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
     let outputText = "";
     let toolUseCount = 0;
     let streamCompleted = false;
+    let receivedMessageStop = false;
+    let protocolError: Error | undefined;
+    const reader = stream.getReader();
     // 内部使用埋点用：按 index 累积每个 tool_use 块。
     // Anthropic SSE 协议：
     //   1. content_block_start(type=tool_use)  → 拿到 index + name（此时 input 是空 {}）
@@ -1809,17 +1827,33 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
     const timeoutHandle = setTimeout(() => {
       if (!streamCompleted) {
         pipe.error("STREAM_TIMEOUT", "Anthropic stream reading exceeded 5 minutes");
-        // completeStream 是 async；这里 fire-and-forget（timeout 里已经无法 await）
-        void completeStream().catch((err) => pipe.error("STREAM_TIMEOUT_COMPLETE", err));
+        // completeStream 是 async；这里 fire-and-forget（timeout 里已经无法 await）。
+        // 超时视为中断，不能把已经收到的部分内容当成完整回答写回。
+        const error = new Error("Anthropic stream timeout");
+        void completeStream(error).catch((err) => pipe.error("STREAM_TIMEOUT_COMPLETE", err));
+        ctx.abort.abort(error);
       }
     }, 5 * 60 * 1000);
 
-    async function completeStream(): Promise<void> {
+    async function completeStream(error?: unknown): Promise<void> {
       if (streamCompleted) return;
       streamCompleted = true;
       clearTimeout(timeoutHandle);
 
       const endTime = new Date().toISOString();
+      const failure = error ?? (ctx.signal.aborted ? ctx.signal.reason : undefined) ?? protocolError ?? (receivedMessageStop
+        ? undefined : new Error("Anthropic stream ended before message_stop"));
+      if (failure !== undefined) {
+        pipe.streamError(failure);
+        langfuseReportFailure({
+          lf, model: modelId, startTime, endTime,
+          input: buildLangfuseInput(inputMessages, system, ctx.langfuseDebug),
+          statusMessage: failure instanceof Error ? failure.message : String(failure),
+          extraTags: ["error"],
+          observationMetadata: { ...ctx.debugMetadata, stage: "stream", stream: true, partialUsage: usage },
+        });
+        return;
+      }
 
       if (Object.keys(usage).length > 0) {
         await recordInputTokenUsage({
@@ -2049,14 +2083,13 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
     }
 
     try {
-      const reader = stream.getReader();
-      while (true) {
+      while (!streamCompleted) {
         const { done, value } = await reader.read();
         if (done) break;
 
         sseBuf += decoder.decode(value, { stream: true });
 
-        const parts = sseBuf.split("\n\n");
+        const parts = sseBuf.split(/\r?\n\r?\n/);
         sseBuf = parts.pop() ?? "";
 
         for (const part of parts) {
@@ -2076,7 +2109,11 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
             const evt = JSON.parse(dataStr) as Record<string, unknown>;
             const evtType = evt.type as string;
 
-            if (evtType === "message_start") {
+            if (evtType === "message_stop") {
+              receivedMessageStop = true;
+            } else if (evtType === "error") {
+              protocolError = new Error("Anthropic SSE error event");
+            } else if (evtType === "message_start") {
               const message = evt.message as Record<string, unknown> | undefined;
               if (message?.usage) {
                 Object.assign(usage, message.usage as Record<string, unknown>);
@@ -2134,6 +2171,8 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
         if (dataStr && dataStr !== "[DONE]") {
           try {
             const evt = JSON.parse(dataStr) as Record<string, unknown>;
+            if (evt.type === "message_stop") receivedMessageStop = true;
+            if (evt.type === "error") protocolError = new Error("Anthropic SSE error event");
             if (evt.type === "message_delta" && evt.usage) {
               Object.assign(usage, evt.usage as Record<string, unknown>);
             }
@@ -2144,6 +2183,10 @@ function consumeAnthropicStream(stream: ReadableStream<Uint8Array>, ctx: Anthrop
       }
     } catch (err: unknown) {
       pipe.error("STREAM", err);
+      await completeStream(err ?? new Error("Upstream stream aborted"));
+      return;
+    } finally {
+      reader.releaseLock();
     }
 
     await completeStream();
