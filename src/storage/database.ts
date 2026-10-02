@@ -10,12 +10,30 @@ export class Database {
   constructor(readonly path: string) {
     this.raw = new DatabaseSync(path, { allowExtension: true });
     try {
-      this.raw.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+      this.raw.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
+      this.configureJournalMode();
       this.vector = this.loadVectorExtension();
       this.migrate();
     } catch (error) {
       this.raw.close();
       throw error;
+    }
+  }
+
+  private configureJournalMode(): void {
+    // SQLite may return SQLITE_BUSY immediately during the initial WAL mode
+    // transition even with busy_timeout configured. Retry that transition only.
+    const deadline = Date.now() + 5000;
+    const wait = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      try {
+        this.raw.exec("PRAGMA journal_mode = WAL");
+        return;
+      } catch (error) {
+        const code = (error as { errcode?: number }).errcode;
+        if (code === undefined || (code & 255) !== 5 || Date.now() >= deadline) throw error;
+        Atomics.wait(wait, 0, 0, 10);
+      }
     }
   }
 
@@ -32,17 +50,19 @@ export class Database {
   }
 
   private migrate(): void {
-    this.raw.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
-    const applied = new Set(
-      (this.raw.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map((r) => r.version),
-    );
-    for (const migration of migrations) {
-      if (applied.has(migration.version)) continue;
-      this.transaction(() => {
+    // Read versions under the same write lock as DDL. Concurrent openers
+    // must see migrations completed by the connection that acquired it first.
+    this.transaction(() => {
+      this.raw.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+      const applied = new Set(
+        (this.raw.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map((r) => r.version),
+      );
+      for (const migration of migrations) {
+        if (applied.has(migration.version)) continue;
         this.raw.exec(migration.sql);
         this.raw.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, Date.now());
-      });
-    }
+      }
+    });
   }
 
   transaction<T>(work: () => T): T {
