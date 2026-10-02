@@ -5,9 +5,11 @@ runtime data stays in the ignored `tmp/` directory.
 
 ## MemoryProxy
 
-`memory-proxy/` is the extracted Tencent MemoryProxy service used by the
-Claude interactive adapter. It is part of the RepoMind checkout and does not
-contain a nested Git repository.
+`memory-proxy/` is the extracted Tencent MemoryProxy service. RepoMind's Claude
+integration is hooks-only by default and does not start or require it; it is
+used only when `repomind claude setup --proxy-url <route>` opts into routing
+Claude's model traffic through the proxy. It is part of the RepoMind checkout
+and does not contain a nested Git repository.
 
 The boundary is explicit:
 

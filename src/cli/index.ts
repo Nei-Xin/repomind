@@ -50,7 +50,6 @@ import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
 import {
   claudeInteractiveStatus,
-  DEFAULT_CLAUDE_PROXY_URL,
   setupClaudeInteractive,
 } from "../integrations/claude/interactive-setup.js";
 import { servicesStatus, startServices, stopServices, type ServiceManagerOptions } from "../services/manager.js";
@@ -350,7 +349,7 @@ async function main(): Promise<void> {
     const options = {
       ...serviceManagerOptions(),
       repository: repositoryPath(),
-      proxyUrl: values["proxy-url"] ?? DEFAULT_CLAUDE_PROXY_URL,
+      ...(values["proxy-url"] ? { proxyUrl: values["proxy-url"] } : {}),
       ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
     };
     if (action === "setup") output(await setupClaudeInteractive(options));
@@ -646,7 +645,7 @@ async function main(): Promise<void> {
       const interactiveClaude = await claudeInteractiveStatus({
         ...serviceManagerOptions(),
         repository: probeRoot,
-        proxyUrl: values["proxy-url"] ?? DEFAULT_CLAUDE_PROXY_URL,
+        ...(values["proxy-url"] ? { proxyUrl: values["proxy-url"] } : {}),
         ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}),
       });
       checks.interactiveClaude = interactiveClaude;

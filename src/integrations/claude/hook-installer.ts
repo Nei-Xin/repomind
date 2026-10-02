@@ -10,7 +10,23 @@ export interface InstallClaudeHooksOptions {
   cliEntry: string;
   nodeExecutable?: string;
   bridgeUrl?: string;
+  /**
+   * Opt-in: route Claude's model traffic through MemoryProxy at this URL.
+   * When omitted, Claude talks to its own endpoint and a project-level
+   * ANTHROPIC_BASE_URL that RepoMind previously wrote for MemoryProxy is removed.
+   */
   proxyUrl?: string;
+}
+
+export interface ClaudeProxyEnvironment {
+  /** True when the project setting matches the requested routing. */
+  configured: boolean;
+  /** The project-level ANTHROPIC_BASE_URL after this operation. */
+  value: string | null;
+  /** The requested proxy URL, or null for direct (hooks-only) routing. */
+  expected: string | null;
+  /** True when the value is a RepoMind-managed MemoryProxy route. */
+  legacyManagedProxy: boolean;
 }
 
 export interface InstallClaudeHooksResult {
@@ -18,7 +34,11 @@ export interface InstallClaudeHooksResult {
   command: string;
   added: number;
   unchanged: number;
-  proxyEnvironment: { configured: boolean; changed: boolean; value: string | null };
+  proxyEnvironment: ClaudeProxyEnvironment & {
+    changed: boolean;
+    /** The legacy MemoryProxy route removed by this install, if any. */
+    removed: string | null;
+  };
 }
 
 export interface InspectClaudeHooksResult {
@@ -26,7 +46,7 @@ export interface InspectClaudeHooksResult {
   installed: number;
   expected: number;
   missingEvents: string[];
-  proxyEnvironment: { configured: boolean; value: string | null; expected: string | null };
+  proxyEnvironment: ClaudeProxyEnvironment;
 }
 
 interface HookDefinition {
@@ -43,6 +63,24 @@ const EVENTS: ReadonlyArray<{ name: string; matcher?: string }> = [
   { name: "Stop" },
   { name: "SessionEnd" },
 ];
+
+// Routes RepoMind's service manager configured for Claude before hooks-only
+// integration: MemoryProxy's loopback port with its /claude-code/ prefix.
+const MANAGED_PROXY_ROUTE = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):8096\/claude-code(?:\/|$)/iu;
+
+export function isRepoMindManagedProxyUrl(value: string | null | undefined): boolean {
+  return typeof value === "string" && MANAGED_PROXY_ROUTE.test(value.trim());
+}
+
+function proxyEnvironment(value: string | null, proxyUrl: string | undefined): ClaudeProxyEnvironment {
+  const legacyManagedProxy = isRepoMindManagedProxyUrl(value);
+  return {
+    configured: proxyUrl === undefined ? !legacyManagedProxy : value === proxyUrl,
+    value,
+    expected: proxyUrl ?? null,
+    legacyManagedProxy,
+  };
+}
 
 function objectValue(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
@@ -100,10 +138,20 @@ export function installClaudeInteractiveHooks(options: InstallClaudeHooksOptions
   const currentProxy = typeof environment.ANTHROPIC_BASE_URL === "string"
     ? environment.ANTHROPIC_BASE_URL
     : null;
-  const proxyChanged = options.proxyUrl !== undefined && currentProxy !== options.proxyUrl;
+  let nextProxy = currentProxy;
+  let removed: string | null = null;
   if (options.proxyUrl !== undefined) {
+    nextProxy = options.proxyUrl;
     environment.ANTHROPIC_BASE_URL = options.proxyUrl;
     settings.env = environment;
+  } else if (isRepoMindManagedProxyUrl(currentProxy)) {
+    // Hooks carry recall and capture now; a stale MemoryProxy route would make
+    // every Claude request depend on a service that is no longer started.
+    removed = currentProxy;
+    nextProxy = null;
+    delete environment.ANTHROPIC_BASE_URL;
+    if (Object.keys(environment).length) settings.env = environment;
+    else delete settings.env;
   }
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.repomind-${process.pid}.tmp`;
@@ -115,9 +163,9 @@ export function installClaudeInteractiveHooks(options: InstallClaudeHooksOptions
     added,
     unchanged,
     proxyEnvironment: {
-      configured: options.proxyUrl === undefined ? currentProxy !== null : true,
-      changed: proxyChanged,
-      value: options.proxyUrl ?? currentProxy,
+      ...proxyEnvironment(nextProxy, options.proxyUrl),
+      changed: nextProxy !== currentProxy,
+      removed,
     },
   };
 }
@@ -139,10 +187,6 @@ export function inspectClaudeInteractiveHooks(options: InstallClaudeHooksOptions
     installed: EVENTS.length - missingEvents.length,
     expected: EVENTS.length,
     missingEvents,
-    proxyEnvironment: {
-      configured: options.proxyUrl === undefined ? value !== null : value === options.proxyUrl,
-      value,
-      expected: options.proxyUrl ?? null,
-    },
+    proxyEnvironment: proxyEnvironment(value, options.proxyUrl),
   };
 }

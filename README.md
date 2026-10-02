@@ -99,7 +99,7 @@ opencode
 
 The project plugin retrieves context for root-session user messages, captures tool activity—including delegated child-session activity—and closes the task when the root session becomes idle. It uses a local Bridge and does not require the model to call MCP tools.
 
-Claude Code interactive integration uses hooks, the local Bridge, and the bundled MemoryProxy. Prepare MemoryProxy's configuration and dependencies as described in the [Claude interactive guide](docs/claude-interactive.md), then run:
+Claude Code interactive integration uses project hooks and the same local Bridge; Claude keeps talking to its own model endpoint. Configure the repository once, then run `claude` normally:
 
 ```powershell
 repomind claude setup --repo D:\path\to\repository

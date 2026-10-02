@@ -4,6 +4,7 @@ import { locateGitRoot } from "../../git/git-inspector.js";
 import { initializeRepository } from "../../repository.js";
 import {
   servicesStatus,
+  startBridgeService,
   startServices,
   type ServiceManagerOptions,
   type ServicesResult,
@@ -16,10 +17,15 @@ import {
   type InstallClaudeHooksResult,
 } from "./hook-installer.js";
 
+/**
+ * MemoryProxy route used by `--proxy-url` deployments. Claude integration is
+ * hooks-only by default and does not route model traffic through a proxy.
+ */
 export const DEFAULT_CLAUDE_PROXY_URL = "http://127.0.0.1:8096/claude-code/default";
 
 export interface ClaudeInteractiveOptions extends ServiceManagerOptions {
   repository: string;
+  /** Opt-in MemoryProxy route; omit for the default hooks-only integration. */
   proxyUrl?: string;
   runnerExecutable?: string;
 }
@@ -30,6 +36,7 @@ export interface ClaudeInteractiveStatus {
   claude: { executable: string; available: boolean; version: string | null };
   hooks: InspectClaudeHooksResult;
   services: ServicesResult;
+  warnings: string[];
   nextSteps: string[];
 }
 
@@ -38,9 +45,13 @@ function hookOptions(options: ClaudeInteractiveOptions) {
     repository: options.repository,
     cliEntry: options.cliEntry,
     bridgeUrl: "http://127.0.0.1:7345",
-    proxyUrl: options.proxyUrl ?? DEFAULT_CLAUDE_PROXY_URL,
+    ...(options.proxyUrl !== undefined ? { proxyUrl: options.proxyUrl } : {}),
   };
 }
+
+const REMOVED_PROXY_WARNING = "RepoMind removed its MemoryProxy route (ANTHROPIC_BASE_URL) from "
+  + ".claude/settings.local.json. Claude now uses your user-level endpoint; if MemoryProxy forwarded to "
+  + "a custom upstream, set ANTHROPIC_BASE_URL to that upstream in your own Claude settings.";
 
 export async function claudeInteractiveStatus(options: ClaudeInteractiveOptions): Promise<ClaudeInteractiveStatus> {
   const root = locateGitRoot(options.repository);
@@ -60,14 +71,21 @@ export async function claudeInteractiveStatus(options: ClaudeInteractiveOptions)
     ...(options.runnerExecutable ? { executable: options.runnerExecutable } : {}),
   });
   const version = await adapter.version(root);
+  const proxied = options.proxyUrl !== undefined;
+  const setupCommand = `repomind claude setup --repo ${JSON.stringify(root)}`
+    + (proxied ? ` --proxy-url ${JSON.stringify(options.proxyUrl)}` : "");
   const nextSteps = [
-    ...(projectId ? [] : [`Run 'repomind claude setup --repo ${JSON.stringify(root)}'.`]),
+    ...(projectId ? [] : [`Run '${setupCommand}'.`]),
     ...(hooks.installed === hooks.expected && hooks.proxyEnvironment.configured
       ? []
-      : [`Run 'repomind claude setup --repo ${JSON.stringify(root)}' to repair Claude hooks and proxy routing.`]),
-    ...(services.bridge.healthy && services.memoryProxy.healthy ? [] : ["Run 'repomind services start'."]),
+      : [`Run '${setupCommand}' to repair Claude hooks and model routing.`]),
+    ...(services.bridge.healthy ? [] : [`Run '${setupCommand}' or start the RepoMind Bridge.`]),
+    ...(proxied && !services.memoryProxy.healthy ? ["Run 'repomind services start' to start MemoryProxy."] : []),
     ...(version ? [] : ["Install Claude Code or add the claude executable to PATH."]),
   ];
+  const warnings = !proxied && hooks.proxyEnvironment.legacyManagedProxy
+    ? ["Claude still routes through RepoMind's legacy MemoryProxy route; setup will remove it."]
+    : [];
   const uniqueNextSteps = [...new Set(nextSteps)];
   return {
     ready: uniqueNextSteps.length === 0,
@@ -75,6 +93,7 @@ export async function claudeInteractiveStatus(options: ClaudeInteractiveOptions)
     claude: { executable: adapter.executable, available: version !== null, version },
     hooks,
     services,
+    warnings,
     nextSteps: uniqueNextSteps,
   };
 }
@@ -90,7 +109,10 @@ export async function setupClaudeInteractive(options: ClaudeInteractiveOptions):
   const projectId = context.marker.projectId;
   context.database.close();
   const hooks = installClaudeInteractiveHooks({ ...hookOptions(options), repository: root });
-  const services = await startServices(options);
+  const services = options.proxyUrl !== undefined
+    ? await startServices(options)
+    : await startBridgeService(options);
   const status = await claudeInteractiveStatus({ ...options, repository: root });
+  if (hooks.proxyEnvironment.removed) status.warnings = [...status.warnings, REMOVED_PROXY_WARNING];
   return { projectId, hooks, services, status };
 }
