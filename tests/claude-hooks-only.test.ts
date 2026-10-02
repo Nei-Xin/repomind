@@ -8,13 +8,18 @@ import {
   isRepoMindManagedProxyUrl,
 } from "../src/integrations/claude/hook-installer.js";
 import { claudeInteractiveStatus } from "../src/integrations/claude/interactive-setup.js";
+import { handleClaudeInteractiveHook } from "../src/integrations/claude/interactive-hook.js";
+import { startBridgeServer, type RunningBridgeServer } from "../src/bridge/server.js";
+import { InteractiveActivityStore } from "../src/activity/store.js";
 import { initializeRepository } from "../src/repository.js";
 import { createTestRepository } from "./helpers.js";
 
 const cleanup: string[] = [];
+const running: RunningBridgeServer[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
+  await Promise.all(running.splice(0).map((server) => server.close()));
   for (const path of cleanup.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
@@ -135,3 +140,153 @@ describe("hooks-only Claude integration", () => {
   });
 });
 
+describe("Claude hook sessions without MemoryProxy", () => {
+  async function session(
+    fixture: { root: string; dataDirectory: string },
+    bridge: RunningBridgeServer,
+    id: string,
+    toolInput: Record<string, unknown>,
+    toolResponse: Record<string, unknown>,
+    event: "PostToolUse" | "PostToolUseFailure" = "PostToolUse",
+  ): Promise<string[]> {
+    const warnings: string[] = [];
+    const hook = (input: Record<string, unknown>) => handleClaudeInteractiveHook({
+      bridgeUrl: bridge.url,
+      input: { session_id: id, cwd: fixture.root, ...input },
+      onWarning: (warning) => warnings.push(warning),
+    });
+    await hook({ hook_event_name: "SessionStart", source: "startup" });
+    await hook({ hook_event_name: "UserPromptSubmit", prompt: "Run npm test to verify the invoice module" });
+    await hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: `${id}-t1`, tool_input: toolInput });
+    await hook({
+      hook_event_name: event,
+      tool_name: "Bash",
+      tool_use_id: `${id}-t1`,
+      tool_input: toolInput,
+      ...(event === "PostToolUse" ? { tool_response: toolResponse } : { error: "Exit code 1\nFAIL" }),
+    });
+    await hook({
+      hook_event_name: "Stop",
+      stop_hook_active: false,
+      last_assistant_message: "Ran npm test for the invoice module.",
+    });
+    await hook({ hook_event_name: "SessionEnd", reason: "exit" });
+    return warnings;
+  }
+
+  function outcome(fixture: { root: string; dataDirectory: string }) {
+    const store = new InteractiveActivityStore(fixture.root, fixture.dataDirectory);
+    try {
+      const db = store.core.context.database.raw;
+      return {
+        sessions: (db.prepare("SELECT status FROM sessions").all() as Array<{ status: string }>).map((row) => row.status),
+        memories: db.prepare("SELECT type, content FROM memories").all() as Array<{ type: string; content: string }>,
+        sources: (db.prepare("SELECT DISTINCT source FROM activity_events").all() as Array<{ source: string }>)
+          .map((row) => row.source),
+      };
+    } finally {
+      store.close();
+    }
+  }
+
+  const passed = { stdout: "invoice tests passed", stderr: "", interrupted: false, isImage: false };
+
+  it("commits a completed foreground Bash test as verified and recalls it next session", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+
+    expect(await session(fixture, bridge, "claude-1", { command: "npm test" }, passed)).toEqual([]);
+    const first = outcome(fixture);
+    expect(first.sessions).toEqual(["committed"]);
+    expect(first.sources).toEqual(["claude-hook"]);
+    expect(first.memories).toContainEqual(expect.objectContaining({
+      type: "command",
+      content: expect.stringContaining("npm test"),
+    }));
+
+    const recalled = await handleClaudeInteractiveHook({
+      bridgeUrl: bridge.url,
+      input: {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "claude-2",
+        cwd: fixture.root,
+        prompt: "How do I verify the invoice module?",
+      },
+    });
+    expect(recalled).toMatchObject({
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringContaining("npm test") },
+    });
+  });
+
+  it("treats Node's built-in test runner as a verified test command", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    await session(fixture, bridge, "claude-node-test", { command: "node --test storage.test.mjs" }, passed);
+    const result = outcome(fixture);
+    expect(result.sessions).toEqual(["committed"]);
+    expect(result.memories).toContainEqual(expect.objectContaining({
+      type: "command",
+      content: expect.stringContaining("node --test storage.test.mjs"),
+    }));
+  });
+
+  it("stores only the test invocation and keeps the full command line as provenance", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const invoked = "ls src && cat storage.test.mjs && node --test storage.test.mjs";
+    await session(fixture, bridge, "claude-compound", { command: invoked }, passed);
+    await session(fixture, bridge, "claude-plain", { command: "node --test storage.test.mjs" }, passed);
+
+    const store = new InteractiveActivityStore(fixture.root, fixture.dataDirectory);
+    try {
+      const db = store.core.context.database.raw;
+      const titles = (db.prepare("SELECT title FROM memories WHERE type='command'").all() as Array<{ title: string }>)
+        .map((row) => row.title);
+      expect(new Set(titles)).toEqual(new Set(["Verified command: node --test storage.test.mjs"]));
+      const evidence = db.prepare("SELECT content FROM evidence WHERE kind='test_result' ORDER BY created_at").all() as Array<{
+        content: string;
+      }>;
+      expect(JSON.parse(evidence[0]!.content)).toMatchObject({ command: "node --test storage.test.mjs", invokedAs: invoked });
+      expect(JSON.parse(evidence[1]!.content)).not.toHaveProperty("invokedAs");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("commits a piped test run without claiming the test was verified", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    await session(fixture, bridge, "claude-piped", { command: "node --test storage.test.mjs 2>&1 | tail -30" }, passed);
+    const result = outcome(fixture);
+    expect(result.sessions).toEqual(["committed"]);
+    expect(result.memories.filter((memory) => memory.type === "command")).toEqual([]);
+    expect(result.memories).toContainEqual(expect.objectContaining({ type: "solution" }));
+  });
+
+  it.each([
+    { name: "interrupted", input: { command: "npm test" }, response: { ...passed, interrupted: true } },
+    { name: "background", input: { command: "npm test", run_in_background: true }, response: { backgroundTaskId: "b1" } },
+  ])("keeps an $name Bash result unverified", async ({ input, response }) => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    await session(fixture, bridge, "claude-unknown", input, response);
+    const result = outcome(fixture);
+    expect(result.sessions).toEqual(["partial"]);
+    expect(result.memories.filter((memory) => memory.type === "command")).toEqual([]);
+  });
+
+  it("records a failing Bash test as a failure, not a verified command", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    await session(fixture, bridge, "claude-fail", { command: "npm test" }, {}, "PostToolUseFailure");
+    const result = outcome(fixture);
+    expect(result.sessions).toEqual(["partial"]);
+    expect(result.memories.filter((memory) => memory.type === "command")).toEqual([]);
+  });
+});

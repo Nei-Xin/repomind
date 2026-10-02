@@ -1,6 +1,7 @@
 import type { AgentEventMetrics } from "../../eval/agent/events.js";
 import { parseAgentEvents } from "../../eval/agent/events.js";
 import type { AgentCommandEvidence, AgentOutcome } from "../agent-host/types.js";
+import { isVerifyingTestCommand } from "../../activity/test-command.js";
 
 const MAX_HOST_SUMMARY_CHARS = 12_000;
 const MAX_COMMAND_SUMMARY_CHARS = 2_000;
@@ -67,10 +68,6 @@ function contentText(value: unknown): string {
 function isCommandTool(name: string): boolean {
   const normalized = name.toLowerCase();
   return normalized === "bash" || normalized === "powershell";
-}
-
-function isTestCommand(command: string): boolean {
-  return /(^|\s)(test|tests|vitest|jest|pytest|unittest|mocha)(\s|$)|\bgo\s+test\b|\bcargo\s+test\b|\bdotnet\s+test\b|\bmvn(?:w)?\s+test\b|\bgradle(?:w)?\s+test\b/iu.test(command);
 }
 
 function integerValue(value: unknown): number | null {
@@ -207,7 +204,7 @@ export function analyzeClaudeEvents(jsonl: string, fallbackSummary: string): Cla
       command,
       exitCode: status.exitCode,
       exitCodeKnown: status.known,
-      isTest: isTestCommand(command),
+      isTest: isVerifyingTestCommand(command),
       summary: resultSummary(results.length === 1 ? results[0] : undefined),
     });
   }

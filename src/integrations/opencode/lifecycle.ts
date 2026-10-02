@@ -14,6 +14,7 @@ import type {
 import type { BeginHostRunInput, FinishHostRunInput, HostRunRecord } from "../../domain/types.js";
 import { RepoMindError } from "../../errors.js";
 import { renderHostContext } from "./context.js";
+import { isVerifyingTestCommand } from "../../activity/test-command.js";
 
 export interface HostLifecycleStart {
   sessionId: string;
@@ -371,10 +372,6 @@ export function assessOpenCodeOutcome(input: {
   };
 }
 
-function isTestCommand(command: string): boolean {
-  return /(^|\s)(test|tests|vitest|jest|pytest|unittest|mocha)(\s|$)|\bgo\s+test\b|\bcargo\s+test\b|\bdotnet\s+test\b|\bmvn(?:w)?\s+test\b|\bgradle(?:w)?\s+test\b/iu.test(command);
-}
-
 export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string): OpenCodeOutcome {
   let summary = "";
   const commands: OpenCodeCommandEvidence[] = [];
@@ -410,7 +407,7 @@ export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string): 
       exitCode: exitCodeKnown ? Number(metadata?.exit) : 1,
       exitCodeKnown,
       summary: output.slice(0, 2000),
-      isTest: isTestCommand(input.command),
+      isTest: isVerifyingTestCommand(input.command),
     });
   }
   const lastPart = lastEvent?.part as Record<string, unknown> | undefined;

@@ -17,6 +17,37 @@ period; every behavioral change is listed with its migration impact.
   and automatic aggregation of delegated OpenCode child-session activity.
 - Refines deterministic extraction and L2/L3 derived-memory maintenance.
 
+- Claude interactive integration is hooks-only by default. `repomind claude
+  setup` installs hooks and starts only the Bridge; it no longer routes Claude's
+  model traffic through MemoryProxy or requires MemoryProxy to be configured.
+  Re-running setup removes the RepoMind-managed `ANTHROPIC_BASE_URL`
+  (`http://127.0.0.1:8096/claude-code/...`) from `.claude/settings.local.json`
+  and reports it; other values are untouched. Migration: if MemoryProxy forwarded
+  to a custom upstream, point `ANTHROPIC_BASE_URL` at that upstream yourself.
+  `--proxy-url` keeps the previous proxied mode as an explicit opt-in.
+
+### Fixed
+
+- Claude shell commands can now become verified command memories. Claude Code
+  reports no exit status and signals a non-zero exit through
+  `PostToolUseFailure`, so a completed, foreground, uninterrupted `Bash` or
+  `PowerShell` `PostToolUse` is recorded as an observed exit code 0. Previously
+  every Claude task that ran a shell command was committed as `partial` and
+  stored no memories. Interrupted and background commands remain unknown.
+- Node's built-in test runner (`node --test`, including with preceding flags
+  such as `--experimental-strip-types`) is recognized as a test command, so a
+  passing run becomes a verified command memory.
+- A test only counts as verified when the command's exit status is the test's.
+  `npm test | tail`, `npm test; echo done`, `npm test || true`, and background
+  runs are kept as ordinary command evidence instead of verified tests, since
+  the reported status belongs to a later command. The three diverging copies of
+  the test-command check (interactive, Claude host run, OpenCode host run) now
+  share one implementation.
+- Verified command memories record only the test invocation and the context
+  steps chained before it (`cd app && npm test`), not exploratory steps such as
+  `ls src && cat file && node --test`. The full command line stays in the test
+  Evidence as `invokedAs` and in the memory content.
+
 ### Security
 
 - The interactive Bridge now requires a bearer token by default. `repomind

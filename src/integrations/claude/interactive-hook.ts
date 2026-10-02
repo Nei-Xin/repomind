@@ -133,6 +133,22 @@ function assistantText(payload: JsonObject): string {
     ?? "";
 }
 
+/**
+ * Claude Code's shell tool reports no exit status: a non-zero exit fires
+ * PostToolUseFailure instead of PostToolUse. A completed, foreground,
+ * uninterrupted shell PostToolUse therefore observed exit code 0. Anything
+ * else stays unknown so it cannot become verified-command evidence.
+ */
+function claudeObservedExitCode(hookEventName: string, payload: JsonObject): number | null {
+  if (hookEventName !== "PostToolUse") return null;
+  if (payload.tool_name !== "Bash" && payload.tool_name !== "PowerShell") return null;
+  const input = objectValue(payload.tool_input);
+  const response = objectValue(payload.tool_response);
+  if (input.run_in_background === true || response.backgroundTaskId !== undefined) return null;
+  if (response.interrupted === true) return null;
+  return 0;
+}
+
 export async function handleClaudeInteractiveHook(
   options: ClaudeInteractiveHookOptions = {},
 ): Promise<Record<string, unknown> | null> {
@@ -180,6 +196,7 @@ export async function handleClaudeInteractiveHook(
     }
 
     if (hookEventName === "PostToolUse" || hookEventName === "PostToolUseFailure") {
+      const observedExitCode = claudeObservedExitCode(hookEventName, payload);
       await postBridge("/v1/activities", activityBody(
         payload,
         repositoryPath,
@@ -192,6 +209,7 @@ export async function handleClaudeInteractiveHook(
           toolResponse: payload.tool_response ?? null,
           error: payload.error ?? null,
           toolUseId: payload.tool_use_id ?? null,
+          ...(observedExitCode === null ? {} : { observedExitCode }),
         },
       ), options);
       return null;

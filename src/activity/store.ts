@@ -21,6 +21,7 @@ import type {
 } from "../protocol/activity.js";
 import { redactDeep } from "../security/redaction.js";
 import { renderInteractiveContext } from "./context.js";
+import { verifyingTestCommand } from "./test-command.js";
 
 type SqlValue = string | number | null;
 
@@ -125,10 +126,6 @@ function commandExitCode(eventType: string, response: unknown): number | null {
   return null;
 }
 
-function isTestCommand(command: string): boolean {
-  return /(^|\s)(test|tests|vitest|jest|pytest|unittest|mocha)(\s|$)|\bgo\s+test\b|\bcargo\s+test\b|\bdotnet\s+test\b|\bmvn(?:w)?\s+test\b|\bgradle(?:w)?\s+test\b/iu.test(command);
-}
-
 function boundedSummary(value: unknown): string {
   const text = typeof value === "string" ? value : stableJson(value);
   return text.replace(/\u0000/gu, "").slice(0, 2_000);
@@ -145,11 +142,16 @@ function commandEvidence(rows: readonly ActivityRow[]): Array<Omit<TestEvidenceI
     const command = typeof input.command === "string" ? input.command.trim() : "";
     if (!command) continue;
     const response = payload.toolResponse ?? payload.tool_response ?? payload.error ?? "";
+    const testCommand = verifyingTestCommand(command);
     commands.push({
-      command,
-      exitCode: commandExitCode(row.event_type, response),
+      command: testCommand ?? command,
+      ...(testCommand !== null && testCommand !== command ? { invokedAs: command } : {}),
+      // An exit status in the tool response wins; otherwise use what the
+      // agent integration observed from its own event semantics.
+      exitCode: commandExitCode(row.event_type, response)
+        ?? (row.event_type === "tool_result" ? integerValue(payload.observedExitCode) : null),
       summary: boundedSummary(response),
-      isTest: isTestCommand(command),
+      isTest: testCommand !== null,
     });
   }
   return commands;

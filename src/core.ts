@@ -255,6 +255,7 @@ function verifiedCommandMemoryContent(test: NonNullable<CommitSessionInput["test
   const summary = compactVerifiedCommandSummary(test.summary);
   return [
     `Command: ${JSON.stringify(test.command)}`,
+    ...(test.invokedAs ? [`Invoked as: ${JSON.stringify(test.invokedAs)}`] : []),
     `Result: ${source === "caller-reported" ? "reported passed" : "passed"} (exit code ${test.exitCode})`,
     `Verification source: ${source}`,
     ...(summary ? [`Summary: ${summary}`] : []),

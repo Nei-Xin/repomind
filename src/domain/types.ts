@@ -394,6 +394,11 @@ export interface TestEvidenceInput {
   command: string;
   exitCode: number;
   summary: string;
+  /**
+   * The full command line as executed, set by collectors when `command` is the
+   * test invocation extracted from it (e.g. `ls && npm test` -> `npm test`).
+   */
+  invokedAs?: string;
 }
 
 /** Set by the collecting integration, never accepted from CLI/MCP result payloads. */
