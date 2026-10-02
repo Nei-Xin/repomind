@@ -1,12 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
 import { RepositoryMemoryCore } from "../core.js";
 import type {
   CommitSessionResult,
   DerivedMemoryMaintenanceResult,
-  MemoryResult,
-  ModuleNarrativeSummary,
-  RepositoryProfileSummary,
   TestEvidenceInput,
 } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
@@ -20,8 +17,8 @@ import type {
   StartInteractiveTaskRequest,
 } from "../protocol/activity.js";
 import { redactDeep } from "../security/redaction.js";
-import { renderInteractiveContext } from "./context.js";
-import { verifyingTestCommand } from "./test-command.js";
+import { renderInteractiveRecall, type InteractiveRecallRecord } from "./context.js";
+import { verificationSteps, verifyingTestCommand } from "./test-command.js";
 
 type SqlValue = string | number | null;
 
@@ -157,6 +154,22 @@ function commandEvidence(rows: readonly ActivityRow[]): Array<Omit<TestEvidenceI
   return commands;
 }
 
+/**
+ * A task is incomplete only when a verification step (test, build, type-check,
+ * lint) did not end in a pass: the latest run of each step decides, so a fix
+ * followed by a passing re-run completes the task. Failed exploratory commands
+ * (`ls`, `cat`, `grep`) stay in the Evidence without downgrading the task.
+ */
+function hasUnresolvedVerification(commands: ReturnType<typeof commandEvidence>): boolean {
+  const latest = new Map<string, boolean>();
+  for (const command of commands) {
+    for (const step of verificationSteps(command.invokedAs ?? command.command, command.exitCode)) {
+      latest.set(step.key, step.passed);
+    }
+  }
+  return [...latest.values()].some((passed) => !passed);
+}
+
 export class InteractiveActivityStore {
   readonly core: RepositoryMemoryCore;
 
@@ -191,10 +204,27 @@ export class InteractiveActivityStore {
   }
 
   startTask(input: StartInteractiveTaskRequest): InteractiveTaskStartResult {
+    return this.core.context.database.transaction(() => this.startTaskInTransaction(input));
+  }
+
+  private startTaskInTransaction(input: StartInteractiveTaskRequest): InteractiveTaskStartResult {
     const registered = this.register(input);
     const row = this.agentSession(input.agent, input.agentSessionId);
-    if (row.current_session_id && row.current_task_event_id === input.eventId) {
-      return this.renderStartResult(input, row.current_session_id, true);
+    const prior = this.core.context.database.raw.prepare(
+      "SELECT session_id, agent_session_id, payload_json FROM activity_events WHERE id=? AND repository_id=?",
+    ).get(`activity:${input.eventId}`, this.core.context.marker.projectId) as {
+      session_id: string; agent_session_id: string; payload_json: string;
+    } | undefined;
+    if (prior) {
+      const payload = objectValue(JSON.parse(prior.payload_json));
+      if (prior.agent_session_id !== registered.agentSessionId || payload.text !== redactDeep(input.task).value
+        || (payload.maxMemories !== undefined && payload.maxMemories !== (input.maxMemories ?? 5))) {
+        throw new RepoMindError("INVALID_INPUT", "Task start event was reused with different input");
+      }
+      if (row.current_session_id !== prior.session_id) {
+        throw new RepoMindError("SESSION_NOT_OPEN", "This task start event belongs to a completed or superseded task");
+      }
+      return this.renderStartResult(input, prior.session_id, true);
     }
     if (row.current_session_id) {
       this.core.commitSession({
@@ -212,6 +242,7 @@ export class InteractiveActivityStore {
       clientSessionId: input.agentSessionId,
       maxMemories: input.maxMemories ?? 5,
     });
+    const { context, recall } = renderInteractiveRecall(started.memories, started.moduleNarratives, started.repositoryProfile);
     this.core.context.database.transaction(() => {
       this.core.context.database.raw.prepare(`
         UPDATE agent_sessions SET current_session_id=?, current_task_event_id=?, status='active',
@@ -226,7 +257,7 @@ export class InteractiveActivityStore {
         source: interactiveActivitySource(input.agent),
         type: "user_message",
         timestamp: input.timestamp,
-        payload: { text: input.task, taskStartEventId: input.eventId },
+        payload: { text: input.task, taskStartEventId: input.eventId, maxMemories: input.maxMemories ?? 5, recall },
       });
     });
     return {
@@ -234,11 +265,11 @@ export class InteractiveActivityStore {
       sessionId: started.sessionId,
       repositoryId: started.repositoryId,
       recalled: {
-        memories: started.memories.length,
-        modules: started.moduleNarratives?.length ?? 0,
-        profile: Boolean(started.repositoryProfile),
+        memories: recall.memoryIds.length,
+        modules: recall.moduleIds.length,
+        profile: recall.profileId !== null,
       },
-      context: renderInteractiveContext(started.memories, started.moduleNarratives, started.repositoryProfile),
+      context,
       resumed: false,
     };
   }
@@ -279,7 +310,7 @@ export class InteractiveActivityStore {
     const activities = this.activitiesForSession(sessionId);
     const observed = commandEvidence(activities);
     const requestedStatus = input.status ?? "success";
-    const status = requestedStatus === "success" && observed.some((command) => command.exitCode !== 0)
+    const status = requestedStatus === "success" && hasUnresolvedVerification(observed)
       ? "partial"
       : requestedStatus;
     // Unknown results remain in L0 activity; only known exits become command/test evidence.
@@ -294,7 +325,7 @@ export class InteractiveActivityStore {
       tests: knownResults.filter((command) => command.isTest).map(({ isTest: _isTest, ...command }) => command),
       commands: knownResults.filter((command) => !command.isTest).map(({ isTest: _isTest, ...command }) => command),
       ...(status === "success" ? {} : { remainingWork: ["Review failed or incomplete command activity before relying on this task."] }),
-    }, { tests: "tool-observed", commands: "tool-observed" });
+    }, { tests: "tool-observed", commands: "tool-observed", solutionPolicy: "repository-outcome" });
     const maintenance = result.status === "committed"
       ? this.core.maintainMemoryLayers()
       : null;
@@ -348,10 +379,12 @@ export class InteractiveActivityStore {
       : this.core.search(input.query, { limit: input.maxMemories ?? 5 });
     const modules = this.core.searchModuleNarratives(input.query);
     const profile = this.core.getRepositoryProfile() ?? undefined;
+    const { context, recall } = renderInteractiveRecall(memories, modules, profile);
+    this.recordRecall(input, recall);
     return {
       repositoryId: this.core.context.marker.projectId,
-      recalled: { memories: memories.length, modules: modules.length, profile: Boolean(profile) },
-      context: renderInteractiveContext(memories, modules, profile),
+      recalled: { memories: recall.memoryIds.length, modules: recall.moduleIds.length, profile: recall.profileId !== null },
+      context,
     };
   }
 
@@ -365,14 +398,29 @@ export class InteractiveActivityStore {
       : this.core.search(input.task, { limit: input.maxMemories ?? 5 });
     const modules = this.core.searchModuleNarratives(input.task);
     const profile = this.core.getRepositoryProfile() ?? undefined;
+    const { context, recall } = renderInteractiveRecall(memories, modules, profile);
+    this.recordRecall(input, recall);
     return {
       agentSessionId: input.agentSessionId,
       sessionId,
       repositoryId: this.core.context.marker.projectId,
-      recalled: { memories: memories.length, modules: modules.length, profile: Boolean(profile) },
-      context: renderInteractiveContext(memories, modules, profile),
+      recalled: { memories: recall.memoryIds.length, modules: recall.moduleIds.length, profile: recall.profileId !== null },
+      context,
       resumed,
     };
+  }
+
+  private recordRecall(
+    input: Pick<RecallInteractiveContextRequest, "agent" | "agentSessionId" | "repositoryPath">,
+    recall: InteractiveRecallRecord,
+  ): void {
+    const row = this.agentSession(input.agent, input.agentSessionId);
+    this.insertActivity(row.id, row.current_session_id, {
+      schemaVersion: 1, eventId: `recall:${randomUUID()}`,
+      agent: input.agent, agentSessionId: input.agentSessionId, repositoryPath: input.repositoryPath,
+      source: interactiveActivitySource(input.agent), type: "session_event",
+      payload: { kind: "recall", recall },
+    });
   }
 
   private agentSession(agent: string, externalId: string): AgentSessionRow {

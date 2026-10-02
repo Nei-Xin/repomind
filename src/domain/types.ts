@@ -419,7 +419,8 @@ export interface CommitSessionResult {
   sessionId: string;
   status: SessionStatus;
   evidenceCreated: number;
-  memories: { stored: number; skipped: number; conflicts: number };
+  /** `revalidated` counts command memories confirmed by this commit (also counted as skipped). */
+  memories: { stored: number; skipped: number; conflicts: number; revalidated?: number };
 }
 
 export interface ExtractSessionInput {

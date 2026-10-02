@@ -201,8 +201,20 @@ function stableJson(value: unknown): string {
 }
 
 function titleFrom(text: string, fallback: string): string {
-  const line = text.trim().split(/\r?\n/u)[0]?.trim() || fallback;
-  return line.length > 96 ? `${line.slice(0, 93)}...` : line;
+  let fenced = false;
+  const lines = text.split(/\r?\n/u).flatMap((value) => {
+    const line = value.trim();
+    if (/^(?:```|~~~)/u.test(line)) { fenced = !fenced; return []; }
+    if (fenced || !line || /^#{1,6}\s/u.test(line)) return [];
+    const clean = line.replace(/^(?:>\s*|[-*+]\s+|\d+[.)]\s+)/u, "").trim();
+    // An instruction lead-in is not a conclusion, even if its code block is omitted.
+    return clean && !/[:：]$/u.test(clean) ? [clean] : [];
+  });
+  const line = lines[0];
+  if (!line) return fallback;
+  const sentence = line.match(/^.*?[。！？!?](?:\s|$)|^.*?\.(?:\s|$)/u)?.[0]?.trim() ?? line;
+  // Do not turn an overlong sentence into an incomplete statement.
+  return sentence.length <= 96 ? sentence : fallback;
 }
 
 function decisionSubject(title: string, content: string): string | null {
@@ -375,6 +387,12 @@ export class RepositoryMemoryCore {
   commitSession(input: CommitSessionInput, sources: {
     tests?: CommandEvidenceSource;
     commands?: CommandEvidenceSource;
+    /**
+     * "always" (default): an explicit commit's summary is a solution memory.
+     * "repository-outcome": automatic lifecycles store it only when the task
+     * changed files or passed a test, so a read-only answer stays Evidence.
+     */
+    solutionPolicy?: "always" | "repository-outcome";
   } = {}): CommitSessionResult {
     if (!input.idempotencyKey.trim()) throw new RepoMindError("INVALID_INPUT", "idempotencyKey must not be empty");
     const db = this.context.database;
@@ -384,6 +402,7 @@ export class RepositoryMemoryCore {
     const sourceOverrides = {
       ...(testSource === "caller-reported" ? {} : { tests: testSource }),
       ...(commandSource === "caller-reported" ? {} : { commands: commandSource }),
+      ...(sources.solutionPolicy === "repository-outcome" ? { solutionPolicy: sources.solutionPolicy } : {}),
     };
     const legacyRequestHash = hash(stableJson(input));
     const requestHash = Object.keys(sourceOverrides).length
@@ -397,7 +416,7 @@ export class RepositoryMemoryCore {
       if (receipt.request_hash !== requestHash) {
         // A pre-provenance collector retry returns its old receipt unchanged;
         // it must neither duplicate writes nor retroactively upgrade evidence.
-        const legacyRetry = receipt.request_hash === legacyRequestHash && !db.raw.prepare(`
+        const legacyRetry = sources.solutionPolicy !== "repository-outcome" && receipt.request_hash === legacyRequestHash && !db.raw.prepare(`
           SELECT 1 FROM evidence WHERE session_id=? AND kind IN ('test_result','command_result')
             AND json_extract(metadata_json, '$.verificationSource') IS NOT NULL LIMIT 1
         `).get(input.sessionId);
@@ -479,12 +498,21 @@ export class RepositoryMemoryCore {
       let stored = 0;
       let skipped = 0;
       let conflicts = 0;
+      let revalidated = 0;
       const track = (outcome: { stored: boolean; conflicts: string[] }): void => {
         outcome.stored ? stored++ : skipped++;
         conflicts += outcome.conflicts.length;
       };
       const summaryEvidence = evidenceIds[0];
       if (input.status === "success") {
+        const passedTest = testSource !== "caller-reported" && (input.tests ?? []).some((test) => test.exitCode === 0);
+        // Interactive read-only answers remain Evidence/L0. Requirements are
+        // still retained from the task itself, but decisions and architecture
+        // claims in a recap only become memories when this task has a fresh
+        // repository outcome to support them.
+        const hasFreshRepositoryOutcome = memoryFiles.length > 0 || passedTest;
+        const canExtractSummary = sources.solutionPolicy === "repository-outcome"
+          ? hasFreshRepositoryOutcome : hasRepositoryActivity;
         const userRequirementEvidence = db.raw.prepare(`
           SELECT id FROM evidence WHERE session_id=? AND kind='user_requirement'
           ORDER BY created_at, id LIMIT 1
@@ -493,7 +521,7 @@ export class RepositoryMemoryCore {
           task: session.task,
           summary: input.summary,
           changedFiles: memoryFiles,
-        }).filter((candidate) => candidate.type === "requirement" || hasRepositoryActivity);
+        }).filter((candidate) => candidate.type === "requirement" || canExtractSummary);
         for (const candidate of candidates) {
           const evidenceId = candidate.type === "requirement"
             ? userRequirementEvidence?.id ?? summaryEvidence!
@@ -508,16 +536,26 @@ export class RepositoryMemoryCore {
         }
         for (const [index, test] of (input.tests ?? []).entries()) {
           if (test.exitCode !== 0) continue;
+          const title = `${testSource === "caller-reported" ? "Reported successful command" : "Verified command"}: ${test.command}`;
+          // A later passing run of the same command confirms the existing
+          // memory instead of adding a near-duplicate whose only difference is
+          // the run's output.
+          if (testSource !== "caller-reported" && this.revalidateCommandMemory(title, testEvidence[index]!, memoryFiles, input.sessionId)) {
+            revalidated++;
+            skipped++;
+            continue;
+          }
           track(this.storeMemory({
             type: "command",
-            title: `${testSource === "caller-reported" ? "Reported successful command" : "Verified command"}: ${test.command}`,
+            title,
             content: verifiedCommandMemoryContent(test, testSource),
             confidence: testSource === "caller-reported" ? 0.5 : testSource === "tool-observed" ? 0.9 : 0.95,
             tags: ["test", testSource === "caller-reported" ? "reported-command" : "verified-command", testSource],
             relatedFiles: memoryFiles,
           }, "extracted", [testEvidence[index]!]));
         }
-        if (input.summary.trim()) {
+        const solutionEarned = sources.solutionPolicy !== "repository-outcome" || files.length > 0 || passedTest;
+        if (input.summary.trim() && solutionEarned) {
           track(this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: memoryFiles }, "extracted", evidenceIds));
         }
       }
@@ -531,7 +569,7 @@ export class RepositoryMemoryCore {
         sessionId: input.sessionId,
         status: finalStatus,
         evidenceCreated: evidenceIds.length,
-        memories: { stored, skipped, conflicts },
+        memories: { stored, skipped, conflicts, revalidated },
       };
       db.raw.prepare(`
         INSERT INTO commit_receipts(session_id, idempotency_key, request_hash, result_json, created_at) VALUES (?, ?, ?, ?, ?)
@@ -1298,10 +1336,18 @@ export class RepositoryMemoryCore {
   }
 
   listSessions(): unknown[] {
-    return this.context.database.raw.prepare(`
-      SELECT id, task, status, client_name, started_at, ended_at FROM sessions
-      WHERE repository_id=? ORDER BY started_at DESC
-    `).all(this.context.marker.projectId);
+    // Interactive tasks record what recall injected on their first user_message.
+    const rows = this.context.database.raw.prepare(`
+      SELECT s.id, s.task, s.status, s.client_name, s.started_at, s.ended_at,
+        (SELECT json_extract(a.payload_json, '$.recall') FROM activity_events a
+          WHERE a.session_id=s.id AND a.repository_id=s.repository_id AND a.event_type='user_message'
+          ORDER BY a.received_at, a.id LIMIT 1) AS recall_json
+      FROM sessions s
+      WHERE s.repository_id=? ORDER BY s.started_at DESC
+    `).all(this.context.marker.projectId) as Array<Record<string, unknown> & { recall_json: string | null }>;
+    return rows.map(({ recall_json: recallJson, ...row }) => (
+      recallJson ? { ...row, recall: JSON.parse(recallJson) as unknown } : row
+    ));
   }
 
   beginHostRun(input: BeginHostRunInput): HostRunRecord {
@@ -1609,6 +1655,67 @@ export class RepositoryMemoryCore {
         );
       }
     });
+  }
+
+  /**
+   * Confirms an existing active/uncertain command memory with the same title:
+   * links the new Evidence, adds the Session's changed files, refreshes file
+   * fingerprints, and marks it active with a new validation time.
+   */
+  private revalidateCommandMemory(
+    title: string,
+    evidenceId: string,
+    relatedFiles: readonly string[],
+    sessionId: string,
+  ): boolean {
+    const db = this.context.database.raw;
+    const normalizedTitle = redactSecrets(title).content.trim();
+    const memory = db.prepare(`
+      SELECT id, status, status_reason_json, title, content, tags_json FROM memories
+      WHERE repository_id=? AND type='command' AND status IN ('active','uncertain') AND title=?
+      ORDER BY created_at LIMIT 1
+    `).get(this.context.marker.projectId, normalizedTitle) as {
+      id: string;
+      status: string;
+      status_reason_json: string | null;
+      title: string; content: string; tags_json: string;
+    } | undefined;
+    if (!memory) return false;
+    const now = Date.now();
+    db.prepare("INSERT OR IGNORE INTO memory_evidence(memory_id, evidence_id) VALUES (?, ?)").run(memory.id, evidenceId);
+    const existingFiles = (db.prepare("SELECT file_path FROM memory_files WHERE memory_id=?").all(memory.id) as Array<{
+      file_path: string;
+    }>).map((row) => row.file_path);
+    const files = [...new Set([
+      ...existingFiles,
+      ...relatedFiles.map((file) => redactSecrets(file).content.trim()).filter(Boolean),
+    ])];
+    for (const file of files) {
+      const fingerprintOfFile = this.fileFingerprint(file);
+      db.prepare(`
+        INSERT INTO memory_files(memory_id, file_path, file_hash, file_size, file_mtime_ms) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id, file_path) DO UPDATE SET
+          file_hash=excluded.file_hash, file_size=excluded.file_size, file_mtime_ms=excluded.file_mtime_ms
+      `).run(memory.id, file, fingerprintOfFile.hash, fingerprintOfFile.size, fingerprintOfFile.mtimeMs);
+    }
+    db.prepare("DELETE FROM memory_fts WHERE memory_id=?").run(memory.id);
+    db.prepare("INSERT INTO memory_fts(memory_id, repository_id, title, content, search_tokens) VALUES (?, ?, ?, ?, ?)")
+      .run(memory.id, this.context.marker.projectId, memory.title, memory.content,
+        searchTokens(memory.title, memory.content, JSON.parse(memory.tags_json) as string[], files));
+    db.prepare("UPDATE memories SET status='active', status_reason_json=NULL, last_validated_at=?, updated_at=? WHERE id=?")
+      .run(now, now, memory.id);
+    db.prepare(`
+      INSERT INTO memory_audit_log(id, memory_id, action, previous_json, next_json, reason, created_at)
+      VALUES (?, ?, 'memory_revalidated', ?, ?, ?, ?)
+    `).run(
+      `aud_${randomUUID()}`,
+      memory.id,
+      JSON.stringify({ status: memory.status, statusReason: parseStatusReason(memory.status_reason_json) }),
+      JSON.stringify({ status: "active", lastValidatedAt: now, sessionId, evidenceId, files }),
+      "A later Session ran the same command successfully",
+      now,
+    );
+    return true;
   }
 
   private storeMemory(

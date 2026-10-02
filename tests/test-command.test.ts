@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { isTestInvocation, isVerifyingTestCommand, verifyingTestCommand } from "../src/activity/test-command.js";
+import {
+  isBuildInvocation,
+  isTestInvocation,
+  isVerifyingTestCommand,
+  verificationKey,
+  verificationSteps,
+  verifyingTestCommand,
+} from "../src/activity/test-command.js";
 
 describe("test command recognition", () => {
   it.each([
     "npm test",
     "npm run test",
+    "npm --workspace a test",
+    "pnpm --filter billing test",
+    "node --import tsx --test a.ts",
     "pnpm test -- invoice",
     "npx vitest run",
     "pytest -q",
@@ -49,6 +59,8 @@ describe("test command recognition", () => {
     ["npm test || true", false],
     ["npm test && echo ok || echo failed", false],
     ["npm test &", false],
+    ["cd missing; npm test", false],
+    ["cd app && ls; npm test", false],
     ["npm test\necho done", false],
     ["npm test | tail -5 && npm test", true],
   ])("attributes the exit status of %j to the test: %s", (command, expected) => {
@@ -66,7 +78,7 @@ describe("test command recognition", () => {
     ["ls src && cat storage.test.mjs && node --test storage.test.mjs", "node --test storage.test.mjs"],
     ["cd app && npm test", "cd app && npm test"],
     ["ls && cd app && npm test", "cd app && npm test"],
-    ["cd app && ls && npm test", "npm test"],
+    ["cd app && ls && npm test", "cd app && npm test"],
     ["export NODE_ENV=test && npm test", "export NODE_ENV=test && npm test"],
     ["CI=1 && npm test", "CI=1 && npm test"],
     ["source .venv/bin/activate && pytest -q", "source .venv/bin/activate && pytest -q"],
@@ -74,10 +86,68 @@ describe("test command recognition", () => {
     ["npm run build && npm test", "npm test"],
     ["npm test && echo done", "npm test"],
     ["echo start; cd app && npm test", "cd app && npm test"],
-    ["npm test 2>&1", "npm test 2>&1"],
+    ["npm test 2>&1", "npm test"],
+    ["cd app && npm test > out.log 2>&1", "cd app && npm test"],
     ["npm test | tail", null],
     ["git status", null],
   ])("extracts the verifying test from %j", (command, expected) => {
     expect(verifyingTestCommand(command)).toBe(expected);
+  });
+
+  it.each([
+    "npm run build", "pnpm build", "yarn typecheck", "npm run lint", "npx tsc --noEmit", "tsc -p .",
+    "cargo build", "cargo clippy", "go vet ./...", "make", "make all", "./gradlew build", "mvn package",
+    "dotnet build", "eslint src", "ruff check .", "mypy src",
+  ])("recognizes build step %s", (command) => {
+    expect(isBuildInvocation(command)).toBe(true);
+  });
+
+  it.each(["npm install", "git status", "ls build", "cat Makefile", "echo make"])("does not treat %s as a build", (command) => {
+    expect(isBuildInvocation(command)).toBe(false);
+  });
+
+  it.each([
+    ["npm test", "npm test"],
+    ["npm test 2>&1 | tail -30", "npm test"],
+    ["cd app && npm test > out.log 2>&1", "cd app && npm test"],
+    ["ls && node --test storage.test.mjs &> log.txt", "node --test storage.test.mjs"],
+    ["npm run build && npm test", "npm test"],
+    ["npm run build | tee build.log", "npm run build"],
+    ["cat package.json", null],
+    ["ls -la src", null],
+  ])("keys verification steps (%j -> %j)", (command, key) => {
+    expect(verificationKey(command)).toBe(key);
+  });
+});
+
+describe("verification identity and shell semantics", () => {
+  it.each(["ls test", "cat tests", "echo npm test", "grep test README.md", "node app.js --test"])("does not invent a test for %s", (command) => {
+    expect(isTestInvocation(command)).toBe(false);
+    expect(verificationSteps(command, 1)).toEqual([]);
+  });
+
+  it.each([
+    ['npm test -- --testNamePattern="a > b"', 'npm test -- --testNamePattern="a > b"'],
+    ['npm test -- --testNamePattern="a  b"', 'npm test -- --testNamePattern="a  b"'],
+    ['node --test > "test log.txt"', 'node --test'],
+    ['npm test -- --grep "(a|b)"', 'npm test -- --grep "(a|b)"'],
+    ["npm test -- --grep 'a | b' 2>&1", "npm test -- --grep 'a | b'"],
+  ])("preserves quoted arguments in %s", (command, expected) => {
+    expect(verifyingTestCommand(command)).toBe(expected);
+  });
+
+  it.each(["npm test || true", "npm test | tail", "npm test; echo done", "npm test &", "false || npm test"])("does not use a masked status to verify %s", (command) => {
+    expect(verificationSteps(command, 0)).toEqual([{ key: "npm test", passed: false }]);
+  });
+
+  it("tracks every verification step and preserves execution context", () => {
+    expect(verificationSteps("npm run build && npm test", 1)).toEqual([
+      { key: "npm run build", passed: false }, { key: "npm test", passed: false },
+    ]);
+    expect(verificationSteps("npm run build && npm test", 0).every((step) => step.passed)).toBe(true);
+    expect(verificationKey("cd a && ls && npm test")).toBe("cd a && npm test");
+    expect(verificationKey("cd b && npm test")).toBe("cd b && npm test");
+    expect(verificationKey("cd . && npm test")).toBe("npm test");
+    expect(verificationKey("NODE_ENV=production npm test")).not.toBe(verificationKey("NODE_ENV=test npm test"));
   });
 });

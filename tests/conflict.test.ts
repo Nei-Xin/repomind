@@ -91,7 +91,7 @@ describe("deterministic conflict detection", () => {
       summary: "Settled the indentation style",
       decisions: ["Use tabs for indentation"],
     });
-    expect(result.memories).toEqual({ stored: 2, skipped: 0, conflicts: 1 });
+    expect(result.memories).toEqual({ stored: 2, skipped: 0, conflicts: 1, revalidated: 0 });
     core.close();
   });
 

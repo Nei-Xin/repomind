@@ -84,7 +84,7 @@ token，保存到 `REPOMIND_DATA_DIR/bridge.token`（默认 `~/.repomind/bridge.
 | `UserPromptSubmit` | 创建 RepoMind Session、读取 Git baseline、注入 L1/L2/L3 |
 | `PreToolUse` | 写入 L0 tool call |
 | `PostToolUse` | 写入 L0 tool result |
-| `PostToolUseFailure` | 写入失败活动，任务以 `partial` 提交 |
+| `PostToolUseFailure` | 写入失败活动；提交时仍未解决的验证失败使任务成为 `partial` |
 | `Stop` | 保存最终回答、读取最终 Git 状态并自动 commit |
 | `SessionEnd` | 放弃仍未结束的任务，保留已写 L0 |
 
@@ -94,13 +94,35 @@ token，保存到 `REPOMIND_DATA_DIR/bridge.token`（默认 `~/.repomind/bridge.
 Claude Code 不为 Shell 命令报告退出码：非零退出会触发 `PostToolUseFailure` 而不是
 `PostToolUse`。因此 RepoMind 把已完成、前台、未中断的 `Bash`/`PowerShell`
 `PostToolUse` 记为观察到的退出码 0，通过的测试才能成为已验证的 `command` 记忆。
-被中断或后台运行（`run_in_background`）的命令保持未知，任务仍为 `partial`。
+被中断或后台运行（`run_in_background`）的命令保持未知；如果属于已识别的验证步骤，
+并且后续没有可信的通过记录，任务以 `partial` 提交。
 如果测试之后还有可能覆盖退出码的命令（`npm test | tail`、`npm test; echo`、
 `npm test || true`），只记为普通命令证据，不算已验证的测试。
 
 `Stop` 后先提交确定性 Evidence 和 L1 Memory，再自动重建 L2 Module Narratives 与
 L3 Repository Profile。只有成功提交的任务会提升到 L2/L3；没有稳定来源时对应阶段
 返回 `skipped`；维护失败记录在返回值中，不会回滚已提交的任务。
+
+## 交互任务会记住什么
+
+以下规则适用于所有交互任务（Claude Hook 和 OpenCode 插件）。显式的
+`repomind commit` / MCP 提交以及 `repomind run` 保持各自原有行为。
+
+- **solution 需要仓库成果。** 成功任务相对开始基线有文件变更，或存在工具观测／
+  Host 验证的测试通过证据，才保存 solution；调用方自报通过不满足条件。标题取首个
+  有实际内容的句子，跳过 Markdown 标题、代码块和冒号引导句，过长时使用完整的兜底标题。
+- **可信通过的命令复用原记忆。** 追加证据、刷新验证时间、文件指纹和全文索引，记录
+  `memory_revalidated`；不自动复活已失效或已替代的记忆。工作目录、环境步骤、引号
+  内参数保留在命令身份中，只移除引号外的输出重定向。
+- **恢复必须有同一检查的可信通过结果。** 组合命令中的测试、构建、类型检查和 lint
+  逐项跟踪；其他目录的测试不能抵消失败。管道、后台执行和 `npm test || true` 不证明
+  测试通过，验证保持未解决。`ls test`、`cat` 等探索不当作测试。识别支持已知 runner
+  和简单 shell 语法，不等同于完整 shell 解释器，也不推断任意别名或自定义脚本。
+- **召回审计对应最终文本。** 首条用户活动记录脱敏后的上下文快照、SHA-256、实际保留
+  的 L1/L2/L3 ID、派生层版本、字符数及部分截断信息；`repomind sessions --json`
+  显示首次 `recall`。后续独立召回及恢复开始请求各写一条 `kind: recall` 的 L0 活动。
+  阶段为 `generated`，不声称宿主已经投递或模型已经消费。已完成的任务开始事件被重放
+  时会拒绝请求，不创建新的孤立 Session。
 
 ## 当前限制
 

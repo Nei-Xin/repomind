@@ -7,22 +7,12 @@
  * count as (non-test) command evidence, but never as verified tests.
  */
 
-const RUNNER_PATTERN = /(^|\s)(test|tests|vitest|jest|pytest|unittest|mocha)(\s|$)|\bgo\s+test\b|\bcargo\s+test\b|\bdotnet\s+test\b|\bmvn(?:w)?\s+test\b|\bgradle(?:w)?\s+test\b/iu;
-// Node's built-in runner, including flags before --test
-// (`node --experimental-strip-types --test`, `node --test-only`).
-const NODE_TEST_PATTERN = /(^|[\s/\\])node(?:\.exe)?(?:\s+\S+)*?\s--test(?:-only)?(?:[=\s]|$)/iu;
-
 type Operator = "&&" | "||" | "|" | ";" | "&" | null;
 
 interface Segment {
   text: string;
   /** The control operator that follows this segment; null for the last one. */
   next: Operator;
-}
-
-/** True when a single simple command invokes a recognized test runner. */
-export function isTestInvocation(command: string): boolean {
-  return RUNNER_PATTERN.test(command) || NODE_TEST_PATTERN.test(command);
 }
 
 /**
@@ -85,36 +75,160 @@ function splitCommandLine(command: string): Segment[] {
   return segments.filter((segment, index, all) => segment.text || index === all.length - 1);
 }
 
-// Steps that change where or how the following test runs. They stay attached
-// to the test; anything else before it (ls, cat, echo, builds) is dropped.
-const CONTEXT_STEP_PATTERN = /^(?:(?:cd|pushd)\s|(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=\S*$|(?:source|\.)\s|(?:nvm|fnm)\s+use\b|conda\s+activate\b)/u;
-
-/**
- * Returns the test invocation whose exit status is the command's, with the
- * context steps chained before it (`cd app && npm test`), or null when the
- * command does not verify a test. The status belongs to the test only when
- * every operator after the last test invocation is `&&`.
- */
-export function verifyingTestCommand(command: string): string | null {
-  const segments = splitCommandLine(command);
-  let lastTest = -1;
-  segments.forEach((segment, index) => {
-    if (isTestInvocation(segment.text)) lastTest = index;
-  });
-  if (lastTest < 0) return null;
-  const statusIsTests = segments.slice(lastTest, -1).every((segment) => segment.next === "&&")
-    && segments[segments.length - 1]!.next === null;
-  if (!statusIsTests) return null;
-  let first = lastTest;
-  while (
-    first > 0
-    && segments[first - 1]!.next === "&&"
-    && CONTEXT_STEP_PATTERN.test(segments[first - 1]!.text)
-  ) first--;
-  return segments.slice(first, lastTest + 1).map((segment) => segment.text).join(" && ");
+/** Read one shell word without changing quoted arguments or escapes. */
+function wordEnd(text: string, start: number): number {
+  let quote: string | null = null;
+  let index = start;
+  for (; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === "\\" && quote !== "'") { index++; continue; }
+    if (quote) { if (char === quote) quote = null; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (/\s/u.test(char) || char === ">" || (char === "&" && text[index + 1] === ">")) break;
+  }
+  return index;
 }
 
-/** True when the command's exit status verifies a test (see verifyingTestCommand). */
+/** Remove only output redirections outside shell words, retaining input semantics. */
+function commandWords(text: string): string[] {
+  const words: string[] = [];
+  for (let index = 0; index < text.length;) {
+    if (/\s/u.test(text[index]!)) { index++; continue; }
+    const redirection = /^(?:\d*>>?&(?:\d+|-)|\d*>>?|&>>?)/u.exec(text.slice(index));
+    if (redirection) {
+      index += redirection[0].length;
+      if (!/>&(?:\d+|-)$/u.test(redirection[0])) {
+        while (index < text.length && /\s/u.test(text[index]!)) index++;
+        index = wordEnd(text, index);
+      }
+      continue;
+    }
+    const end = wordEnd(text, index);
+    // Retain unsupported syntax verbatim rather than silently dropping it.
+    if (end === index) { words.push(text[index]!); index++; continue; }
+    words.push(text.slice(index, end));
+    index = end;
+  }
+  return words;
+}
+
+function invocationWords(command: string): string[] {
+  const words = commandWords(command);
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? "")) words.shift();
+  if (["npx", "bunx"].includes(words[0] ?? "")) words.shift();
+  else if (["pnpm", "yarn"].includes(words[0] ?? "") && ["exec", "dlx"].includes(words[1] ?? "")) words.splice(0, 2);
+  if (words[0]) words[0] = words[0].replace(/^['"]|['"]$/gu, "").replaceAll("\\", "/").split("/").pop()!.replace(/\.exe$/iu, "");
+  return words;
+}
+
+function packageScript(args: string[]): string | undefined {
+  const valueFlags = new Set(["--workspace", "-w", "--prefix", "--dir", "--cwd", "-C", "--filter", "-F"]);
+  let index = 0;
+  while (args[index]?.startsWith("-")) {
+    index += valueFlags.has(args[index]!) ? 2 : 1;
+  }
+  return args[index] === "run" ? args[index + 1] : args[index];
+}
+
+/** Match executable/subcommand positions, never filenames or echo arguments. */
+export function isTestInvocation(command: string): boolean {
+  const [head, ...args] = invocationWords(command);
+  if (!head) return false;
+  if (["vitest", "jest", "pytest", "py.test", "mocha", "unittest"].includes(head)) return true;
+  if (["npm", "pnpm", "yarn", "bun"].includes(head)) {
+    const script = packageScript(args);
+    return /^(?:test|tests)(?::|$)/u.test(script ?? "");
+  }
+  if (head === "node") {
+    // Stop before the script or -e/-p: their arguments cannot enable test mode.
+    const valueFlags = new Set(["--import", "--require", "-r", "--loader", "--experimental-loader", "--conditions", "--test-reporter", "--test-reporter-destination"]);
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index]!;
+      if (arg === "--" || !arg.startsWith("-") || ["-e", "--eval", "-p", "--print"].includes(arg)) return false;
+      if (/^--test(?:-only)?(?:=|$)/u.test(arg)) return true;
+      if (valueFlags.has(arg)) index++;
+    }
+    return false;
+  }
+  if (["python", "python3"].includes(head)) return args[0] === "-m" && ["pytest", "unittest"].includes(args[1] ?? "");
+  return ["go", "cargo", "dotnet", "mvn", "mvnw", "gradle", "gradlew"].includes(head) && args[0] === "test";
+}
+
+export function isBuildInvocation(command: string): boolean {
+  const [head, ...args] = invocationWords(command);
+  if (!head) return false;
+  if (["npm", "pnpm", "yarn", "bun"].includes(head)) {
+    return /^(?:build|typecheck|type-check|lint|check)(?::|$)/u.test(packageScript(args) ?? "");
+  }
+  if (["tsc", "eslint", "ruff", "mypy", "pyright", "biome", "make"].includes(head)) return true;
+  const subcommands: Record<string, string[]> = {
+    cargo: ["build", "check", "clippy"], go: ["build", "vet"],
+    gradle: ["build", "assemble", "check"], gradlew: ["build", "assemble", "check"],
+    mvn: ["compile", "package", "verify", "install"], mvnw: ["compile", "package", "verify", "install"],
+    dotnet: ["build"], swift: ["build"],
+  };
+  return subcommands[head]?.includes(args[0] ?? "") ?? false;
+}
+
+const CONTEXT_STEP_PATTERN = /^(?:(?:cd|pushd)\s|(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=|(?:source|\.)\s|(?:nvm|fnm)\s+use\b|conda\s+activate\b)/u;
+
+function stepKey(segments: Segment[], index: number): string {
+  const context = segments.slice(0, index)
+    .filter((segment) => CONTEXT_STEP_PATTERN.test(segment.text))
+    .map((segment) => commandWords(segment.text).join(" "))
+    .filter((step) => !/^cd\s+(?:\.|'\.'|"\.")$/u.test(step));
+  return [...context, commandWords(segments[index]!.text).join(" ")].join(" && ");
+}
+
+function supportedSyntax(text: string): boolean {
+  let quote: string | null = null;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === "\\" && quote !== "'") { index++; continue; }
+    if (quote === "'") { if (char === "'") quote = null; continue; }
+    if (char === "`" || (char === "$" && ["(", "{"].includes(text[index + 1] ?? ""))) return false;
+    if (quote) { if (char === quote) quote = null; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === "(" || char === ")" || text.slice(index, index + 2) === "<<") return false;
+  }
+  return quote === null;
+}
+
+/** A zero exit proves a step only on an unmasked, foreground && suffix. */
+function canVerify(segments: Segment[], index: number): boolean {
+  if (segments.at(-1)?.next !== null || !segments.slice(index, -1).every((segment) => segment.next === "&&")) return false;
+  // Unsupported shell evaluation must not be promoted to verified evidence.
+  if (segments.some((segment) => !supportedSyntax(segment.text))) return false;
+  // A failed `cd` before `;` need not stop the test. Only carry contexts whose
+  // entire path to this step is joined by &&, so success also proves setup.
+  if (segments.slice(0, index).some((segment, position) =>
+    CONTEXT_STEP_PATTERN.test(segment.text) && !segments.slice(position, index).every((part) => part.next === "&&"))) return false;
+  let first = index;
+  while (first > 0 && segments[first - 1]!.next !== ";") first--;
+  return !segments.slice(first, index).some((segment) => segment.next === "||" || segment.next === "&");
+}
+
+export function verifyingTestCommand(command: string): string | null {
+  const segments = splitCommandLine(command);
+  for (let index = segments.length - 1; index >= 0; index--) {
+    if (isTestInvocation(segments[index]!.text)) return canVerify(segments, index) ? stepKey(segments, index) : null;
+  }
+  return null;
+}
+
 export function isVerifyingTestCommand(command: string): boolean {
   return verifyingTestCommand(command) !== null;
+}
+
+/** Compatibility helper; recovery uses every step, not just the last one. */
+export function verificationKey(command: string): string | null {
+  return verificationSteps(command, null).at(-1)?.key ?? null;
+}
+
+export function verificationSteps(command: string, exitCode: number | null): Array<{ key: string; passed: boolean }> {
+  const segments = splitCommandLine(command);
+  return segments.flatMap((segment, index) => {
+    if (!isTestInvocation(segment.text) && !isBuildInvocation(segment.text)) return [];
+    return [{ key: stepKey(segments, index), passed: exitCode === 0 && canVerify(segments, index) }];
+  });
 }
