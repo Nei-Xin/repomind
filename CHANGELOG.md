@@ -26,7 +26,49 @@ period; every behavioral change is listed with its migration impact.
   to a custom upstream, point `ANTHROPIC_BASE_URL` at that upstream yourself.
   `--proxy-url` keeps the previous proxied mode as an explicit opt-in.
 
+- Interactive tasks (Claude hooks, OpenCode plugin) remember less noise:
+  - a final answer becomes a `solution` memory only when the task changed files
+    or passed an observed/host-verified test; read-only answers stay Evidence.
+    Explicit commits and `repomind run` retain their existing solution policies
+    (`solutionPolicy` on `commitSession`).
+  - a later passing run of the same normalized test command revalidates the
+    existing command memory (new Evidence, refreshed fingerprints, `active`,
+    `memory_revalidated` audit entry) instead of storing a duplicate. Commit
+    results report it as `memories.revalidated`.
+  - a task is `partial` only when a test, build, type-check, or lint step has no
+    trustworthy final pass. Recovery preserves working-directory and
+    argument context, tracks every check in a compound command, and never
+    treats `|| true` or a pipeline exit as proof that its test passed. Failed
+    exploratory commands no longer downgrade it.
+- Interactive recall records the final redacted context, SHA-256, retained
+  memory/module/profile IDs, versions, character spans, and truncation. Initial
+  recall is shown by `repomind sessions --json`; later recalls and resumed
+  starts have separate L0 events. These are generation receipts, not proof of
+  model consumption.
+- Memory titles use the first substantive sentence, skipping Markdown headings,
+  fenced code, and dangling lead-ins; overlong titles use a complete fallback.
+
 ### Fixed
+
+- OpenCode interactive plugins handle both `session.status: idle` and the legacy
+  `session.idle` event, and drain in-flight hooks and queued Bridge writes during
+  normal plugin disposal. Standalone `opencode run` no longer exits with task
+  finalization still pending; duplicate idle notifications finalize only once.
+- Command normalization preserves quoted arguments and whitespace, and removes
+  only output redirections outside quotes. Revalidated command/file links also
+  update FTS in the same transaction; caller-reported runs cannot revalidate.
+- Interactive task start creation and activity binding are atomic. Replayed
+  completed start events are rejected without creating orphan Sessions or
+  displacing another active task.
+- Concurrent database openers serialize schema checks with migration DDL and
+  retry SQLite's initial WAL-mode contention within the existing five-second
+  lock budget. No schema migration or data rewrite is required.
+- Structured sensitive fields (including nested password, API key, credential,
+  and authorization values) are redacted by field name before storage. Existing
+  stored data is not retroactively changed.
+- Read-only interactive recaps no longer promote decision or architecture prose
+  into memories unless the same task has a fresh file change or trusted passing
+  test; the recap remains Evidence/L0.
 
 - Claude shell commands can now become verified command memories. Claude Code
   reports no exit status and signals a non-zero exit through
