@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { readBridgeToken } from "../../bridge/token.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -66,7 +67,7 @@ async function postBridge<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 3_000);
-  const token = options.bridgeToken ?? process.env.REPOMIND_BRIDGE_TOKEN;
+  const token = options.bridgeToken ?? readBridgeToken();
   try {
     const response = await fetch(`${bridgeBase(options.bridgeUrl)}${path}`, {
       method: "POST",

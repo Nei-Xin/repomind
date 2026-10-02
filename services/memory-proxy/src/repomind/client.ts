@@ -1,5 +1,9 @@
 /** Optional RepoMind Bridge write-through for coding-agent turns. */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
 export interface RepoMindTurnInput {
   sessionKey: string;
   traceId: string;
@@ -17,6 +21,20 @@ export interface RepoMindRuntimeConfig {
 
 let runtimeConfig: RepoMindRuntimeConfig | undefined;
 
+/**
+ * The RepoMind Bridge writes a generated token to <data dir>/bridge.token on
+ * first start. Reading it lets a MemoryProxy on the same machine authenticate
+ * without copying the token into config.yaml or the environment.
+ */
+function bridgeTokenFromFile(): string {
+  const root = process.env.REPOMIND_DATA_DIR?.trim() || join(homedir(), ".repomind");
+  try {
+    return readFileSync(join(resolve(root), "bridge.token"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 export function configureRepoMind(config: RepoMindRuntimeConfig): void {
   runtimeConfig = { ...config };
 }
@@ -27,7 +45,7 @@ function settings(): { base: string; token: string; timeoutMs: number } | null {
   if (!value) return null;
   return {
     base: value.replace(/\/$/u, ""),
-    token: (runtimeConfig?.bridgeToken ?? process.env.REPOMIND_BRIDGE_TOKEN ?? "").trim(),
+    token: (runtimeConfig?.bridgeToken || process.env.REPOMIND_BRIDGE_TOKEN || "").trim() || bridgeTokenFromFile(),
     timeoutMs: runtimeConfig?.timeoutMs ?? Number(process.env.REPOMIND_BRIDGE_TIMEOUT_MS ?? 3000),
   };
 }

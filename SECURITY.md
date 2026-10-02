@@ -39,6 +39,19 @@ The security properties it aims to hold:
 - **Secret redaction.** Content entering long-term storage passes through
   deterministic redaction that replaces recognized secrets with a visible
   `[REDACTED:kind]` marker, and diff capture excludes sensitive paths outright.
+- **Authenticated local Bridge.** The interactive Bridge (`127.0.0.1:7345`)
+  accepts writes that become memories an agent later reads, so it treats any
+  other local origin as hostile. It requires a bearer token by default: the
+  first `repomind bridge` start writes a random token to
+  `<data dir>/bridge.token` with owner-only permissions, and the Claude hook,
+  OpenCode plugin, and MemoryProxy read it from there (`REPOMIND_BRIDGE_TOKEN`
+  overrides the file). Independently of the token, the Bridge rejects requests
+  carrying `Origin` or cross-site Fetch Metadata headers, requires
+  `Content-Type: application/json` on writes, and on loopback only accepts a
+  loopback `Host` header, so a web page can neither submit a no-CORS form-style
+  write nor reach it through DNS rebinding. Binding outside loopback requires a
+  token. On Windows the token file relies on the user profile's ACLs rather
+  than POSIX permissions.
 - **Optional encrypted archives.** Logical exports and physical backups can be
   wrapped with AES-256-GCM after a scrypt key derivation. Passphrases are read
   from an environment variable, never a CLI value. Authentication and purpose

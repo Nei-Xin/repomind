@@ -1,3 +1,5 @@
+import { readBridgeToken } from "../../bridge/token.js";
+
 type JsonObject = Record<string, unknown>;
 
 interface OpenCodeResponse {
@@ -173,7 +175,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
     const postBridge = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
-      const token = options.bridgeToken ?? process.env.REPOMIND_BRIDGE_TOKEN;
+      const token = options.bridgeToken ?? readBridgeToken();
       try {
         const response = await fetch(`${bridgeBase(options.bridgeUrl)}${path}`, {
           method: "POST",

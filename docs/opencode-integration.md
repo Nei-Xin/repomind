@@ -18,7 +18,9 @@ repomind opencode status --repo D:\path\to\repository
 
 `setup` initializes RepoMind, installs the managed project plugin at
 `.opencode/plugins/repomind.js`, and starts only the loopback RepoMind Bridge at
-`127.0.0.1:7345`. MemoryProxy is not involved. After setup, use the normal
+`127.0.0.1:7345`. MemoryProxy is not involved. The plugin authenticates with the
+token the Bridge stores in `REPOMIND_DATA_DIR/bridge.token` (or
+`REPOMIND_BRIDGE_TOKEN` when set), so no extra configuration is required. After setup, use the normal
 interactive CLI from the target repository:
 
 ```powershell

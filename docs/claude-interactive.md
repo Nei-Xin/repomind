@@ -63,7 +63,8 @@ The manager starts the Bridge at `127.0.0.1:7345` and MemoryProxy at
 live under `REPOMIND_DATA_DIR/services/`, or `~/.repomind/services/` when no
 override is set. Existing `REPOMIND_DATA_DIR` and `REPOMIND_BRIDGE_TOKEN` values
 are inherited, and MemoryProxy receives `REPOMIND_BRIDGE_URL` with the loopback
-Bridge URL when the variable is not already set. Stop only manager-owned
+Bridge URL when the variable is not already set. Both services receive the same
+Bridge token (see below). Stop only manager-owned
 processes:
 
 ```powershell
@@ -79,8 +80,18 @@ node D:\path\to\repomind\dist\cli\entry.js claude-hook-install `
 ```
 
 The installer merges definitions into `.claude/settings.local.json` and is
-idempotent. Set the same `REPOMIND_BRIDGE_TOKEN` in the Bridge, MemoryProxy, and
-Claude environments when bearer authentication is required.
+idempotent.
+
+The Bridge always requires a bearer token. On first start it generates one and
+stores it in `REPOMIND_DATA_DIR/bridge.token` (or `~/.repomind/bridge.token`)
+with owner-only permissions; the Claude hooks and MemoryProxy read the same file,
+so no configuration is needed on one machine. To choose the token yourself, set
+the same `REPOMIND_BRIDGE_TOKEN` for the Bridge, MemoryProxy, and Claude
+environments; the variable takes precedence over the file. A MemoryProxy that
+cannot read the file, such as one in a container, needs `REPOMIND_BRIDGE_TOKEN`
+or `repomind.bridgeToken` in `config.yaml`. The Bridge also rejects browser
+requests (any `Origin` header), non-JSON writes, and non-loopback `Host`
+headers.
 
 For manual service startup instead of `services start`, configure the Bridge
 URL before launching MemoryProxy:

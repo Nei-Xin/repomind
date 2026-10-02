@@ -34,8 +34,14 @@ node D:\path\to\repomind\dist\cli\entry.js init --repo D:\path\to\repository
 node D:\path\to\repomind\dist\cli\entry.js bridge
 ```
 
-Bridge 默认只监听 `127.0.0.1:7345`。需要 bearer token 时，在 Bridge、
-MemoryProxy 和启动 Claude 的终端中设置相同的 `REPOMIND_BRIDGE_TOKEN`。
+Bridge 默认只监听 `127.0.0.1:7345`，并始终要求 bearer token。首次启动时会
+生成随机 token，保存到 `REPOMIND_DATA_DIR/bridge.token`（默认
+`~/.repomind/bridge.token`），权限仅限当前用户；Claude Hook 和 MemoryProxy 会
+读取同一个文件，同一台机器上无需额外配置。如需自定义，在 Bridge、MemoryProxy
+和启动 Claude 的终端中设置相同的 `REPOMIND_BRIDGE_TOKEN`，环境变量优先于文件。
+无法读取该文件的 MemoryProxy（例如运行在容器中）需要通过 `REPOMIND_BRIDGE_TOKEN`
+或 `config.yaml` 的 `repomind.bridgeToken` 提供 token。此外，Bridge 会拒绝浏览器
+请求（带 `Origin` 头）、非 JSON 写入，以及 `Host` 头不是 loopback 的请求。
 
 将 RepoMind Hook 合并到目标仓库现有 Claude 设置：
 

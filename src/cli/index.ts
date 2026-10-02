@@ -45,6 +45,7 @@ import { stringifyCliJson } from "./json.js";
 import { applyBootstrapBundle, generateBootstrapBundle, loadBootstrapBundle, writeBootstrapBundle } from "../bootstrap.js";
 import { backupRepository, exportRepository, importRepository, restoreRepository } from "../portability/repository-data.js";
 import { startBridgeServer } from "../bridge/server.js";
+import { ensureBridgeToken } from "../bridge/token.js";
 import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-hook.js";
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
 import {
@@ -310,14 +311,18 @@ async function main(): Promise<void> {
   }
   if (command === "bridge") {
     const port = values.port === undefined ? 7345 : Number(values.port);
+    const bridgeToken = ensureBridgeToken({ dataDirectory: process.env.REPOMIND_DATA_DIR });
     const running = await startBridgeServer({
       host: values.host ?? "127.0.0.1",
       port,
-      ...(process.env.REPOMIND_BRIDGE_TOKEN ? { token: process.env.REPOMIND_BRIDGE_TOKEN } : {}),
+      token: bridgeToken.token,
       ...(process.env.REPOMIND_DATA_DIR ? { dataDirectory: process.env.REPOMIND_DATA_DIR } : {}),
       onError: (error) => console.error(`[RepoMind Bridge] ${error instanceof Error ? error.message : String(error)}`),
     });
     console.error(`[RepoMind Bridge] listening on ${running.url}`);
+    console.error(bridgeToken.source === "env"
+      ? "[RepoMind Bridge] requiring the bearer token from REPOMIND_BRIDGE_TOKEN"
+      : `[RepoMind Bridge] requiring the bearer token stored in ${bridgeToken.path}`);
     let closing = false;
     const close = (): void => {
       if (closing) return;

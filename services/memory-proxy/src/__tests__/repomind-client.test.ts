@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   configureRepoMind,
@@ -73,5 +76,25 @@ describe("RepoMind Bridge client", () => {
       turnSeq: 1,
       userText: "hello",
     })).rejects.toThrow("HTTP 503");
+  });
+  it("falls back to the token file written by the RepoMind Bridge", async () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "memory-proxy-repomind-token-"));
+    try {
+      writeFileSync(join(dataDirectory, "bridge.token"), "file-token\n");
+      vi.stubEnv("REPOMIND_DATA_DIR", dataDirectory);
+      vi.stubEnv("REPOMIND_BRIDGE_TOKEN", "");
+      const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      configureRepoMind({ enabled: true, bridgeUrl: "http://127.0.0.1:7345", bridgeToken: "" });
+
+      await recordRepoMindTurn({ sessionKey: "session-1", traceId: "trace-1", turnSeq: 0, userText: "hello" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0]!;
+      expect(init.headers).toMatchObject({ authorization: "Bearer file-token" });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dataDirectory, { recursive: true, force: true });
+    }
   });
 });

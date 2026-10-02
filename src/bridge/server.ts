@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -17,6 +18,9 @@ import { redactSecrets } from "../security/redaction.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+// Hostnames accepted in the Host header of a loopback Bridge, as URL.hostname
+// reports them. Anything else indicates DNS rebinding or a misrouted request.
+const LOOPBACK_HOST_HEADERS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 export interface BridgeServerOptions {
   host?: string;
@@ -130,7 +134,48 @@ async function jsonBody<S extends ZodTypeAny>(request: IncomingMessage, schema: 
 
 function bearerAuthorized(request: IncomingMessage, token: string | undefined): boolean {
   if (!token) return true;
-  return request.headers.authorization === `Bearer ${token}`;
+  const header = request.headers.authorization;
+  if (typeof header !== "string") return false;
+  const presented = Buffer.from(header);
+  const expected = Buffer.from(`Bearer ${token}`);
+  return presented.length === expected.length && timingSafeEqual(presented, expected);
+}
+
+function hostHeaderName(request: IncomingMessage): string | null {
+  const header = request.headers.host;
+  if (!header) return null;
+  try {
+    return new URL(`http://${header}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rejects requests a web page could cause. Bridge clients are local processes
+ * (hooks, plugins, MemoryProxy) that send no Origin or Fetch Metadata headers;
+ * browsers always attach them to cross-site requests. The Host check defeats
+ * DNS rebinding, where a page reaches loopback under its own hostname.
+ */
+function browserRequestRejection(request: IncomingMessage, loopback: boolean): ErrorPayload | null {
+  if (loopback) {
+    const hostname = hostHeaderName(request);
+    if (!hostname || !LOOPBACK_HOST_HEADERS.has(hostname)) {
+      return { error: { code: "FORBIDDEN_HOST", message: "Bridge only accepts requests addressed to a loopback host" } };
+    }
+  }
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (request.headers.origin !== undefined || (fetchSite !== undefined && fetchSite !== "none")) {
+    return { error: { code: "FORBIDDEN_ORIGIN", message: "Bridge does not accept browser cross-origin requests" } };
+  }
+  return null;
+}
+
+function isJsonRequest(request: IncomingMessage): boolean {
+  const header = request.headers["content-type"];
+  if (typeof header !== "string") return false;
+  const mediaType = header.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json";
 }
 
 function repositoryFor(
@@ -182,20 +227,32 @@ export async function startBridgeServer(options: BridgeServerOptions = {}): Prom
   if (!LOOPBACK_HOSTS.has(host) && !options.token) {
     throw new RepoMindError("INVALID_INPUT", "A bridge token is required when binding outside loopback");
   }
+  const loopback = LOOPBACK_HOSTS.has(host);
   const registry = new SessionRepositoryRegistry();
   const server = createServer(async (request, response) => {
     try {
+      const rejection = browserRequestRejection(request, loopback);
+      if (rejection) {
+        sendJson(response, 403, rejection);
+        return;
+      }
       if (!bearerAuthorized(request, options.token)) {
         sendJson(response, 401, { error: { code: "UNAUTHORIZED", message: "Invalid Bridge bearer token" } });
         return;
       }
-      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+      const url = new URL(request.url ?? "/", "http://localhost");
       if (request.method === "GET" && url.pathname === "/health") {
         sendJson(response, 200, { status: "ok", schemaVersion: 1 });
         return;
       }
       if (request.method !== "POST") {
         sendJson(response, 404, { error: { code: "NOT_FOUND", message: "Bridge route was not found" } });
+        return;
+      }
+      if (!isJsonRequest(request)) {
+        sendJson(response, 415, {
+          error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "Bridge requests must use Content-Type: application/json" },
+        });
         return;
       }
       if (url.pathname === "/v1/sessions/register") {

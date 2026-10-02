@@ -19,6 +19,19 @@ period; every behavioral change is listed with its migration impact.
 
 ### Security
 
+- The interactive Bridge now requires a bearer token by default. `repomind
+  bridge` and `repomind services start` generate a random owner-only token in
+  `<data dir>/bridge.token` on first start; the Claude hook, OpenCode plugin,
+  and MemoryProxy read it automatically, and `REPOMIND_BRIDGE_TOKEN` still
+  overrides it. Migration: restart a running Bridge after upgrading; a
+  MemoryProxy that cannot read the data directory needs the token configured.
+- The Bridge rejects requests a web page could send: any `Origin` header or
+  cross-site `Sec-Fetch-Site` (403 `FORBIDDEN_ORIGIN`), a non-loopback `Host`
+  header on a loopback bind (403 `FORBIDDEN_HOST`, defeating DNS rebinding),
+  and writes without `Content-Type: application/json` (415
+  `UNSUPPORTED_MEDIA_TYPE`). Previously a cross-site no-CORS `text/plain`
+  request could register sessions and record activity that later became
+  repository memory. Bearer tokens are compared in constant time.
 - MemoryProxy administration and session-management HTTP endpoints now fail
   closed when no administrator key is configured and consistently require the
   configured Bearer token.

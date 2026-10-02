@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { ensureBridgeToken, readBridgeToken } from "../bridge/token.js";
 import { dataRoot } from "../config/paths.js";
 import { RepoMindError } from "../errors.js";
 
@@ -183,12 +184,14 @@ async function health(url: string, headers?: Record<string, string>): Promise<{ 
   }
 }
 
-function definitions(options: ServiceManagerOptions): Record<ServiceName, ServiceDefinition> {
+function definitions(
+  options: ServiceManagerOptions,
+  token: string | undefined = readBridgeToken({ dataDirectory: options.dataDirectory }),
+): Record<ServiceName, ServiceDefinition> {
   const cliEntry = resolve(options.cliEntry);
   const proxyRoot = resolve(options.repoMindRoot, "services", "memory-proxy");
   const proxyEntry = join(proxyRoot, "src", "index.ts");
   const proxyConfig = join(proxyRoot, "config.yaml");
-  const token = process.env.REPOMIND_BRIDGE_TOKEN;
   return {
     bridge: {
       name: "bridge",
@@ -261,7 +264,7 @@ async function waitUntilReady(definition: ServiceDefinition, record: ServiceReco
   throw new RepoMindError("STORAGE_UNAVAILABLE", `${definition.name} did not become healthy; inspect ${record.logPath}`);
 }
 
-function spawnService(definition: ServiceDefinition, options: ServiceManagerOptions): ServiceRecord {
+function spawnService(definition: ServiceDefinition, options: ServiceManagerOptions, token: string): ServiceRecord {
   const directory = serviceDirectory(options.dataDirectory);
   mkdirSync(directory, { recursive: true });
   const logPath = join(directory, definition.logName);
@@ -276,6 +279,9 @@ function spawnService(definition: ServiceDefinition, options: ServiceManagerOpti
       env: {
         ...process.env,
         REPOMIND_BRIDGE_URL: process.env.REPOMIND_BRIDGE_URL ?? BRIDGE_URL,
+        // Both children share one token: the Bridge requires it and
+        // MemoryProxy presents it on write-through.
+        REPOMIND_BRIDGE_TOKEN: token,
         ...(options.dataDirectory ? { REPOMIND_DATA_DIR: resolve(options.dataDirectory) } : {}),
       },
     });
@@ -323,7 +329,8 @@ async function startSelectedServices(
   selected: readonly ServiceName[],
 ): Promise<ServicesResult> {
   const state = readState(options.dataDirectory);
-  const serviceDefinitions = definitions(options);
+  const { token } = ensureBridgeToken({ dataDirectory: options.dataDirectory });
+  const serviceDefinitions = definitions(options, token);
   if (selected.includes("memoryProxy")) validateProxy(serviceDefinitions.memoryProxy);
   const started: ServiceName[] = [];
   try {
@@ -341,7 +348,7 @@ async function startSelectedServices(
         throw new RepoMindError("INVALID_INPUT", `${definition.url} is already in use by an unmanaged service`);
       }
       delete state.services[name];
-      const record = spawnService(definition, options);
+      const record = spawnService(definition, options, token);
       state.services[name] = record;
       writeState(state, options.dataDirectory);
       started.push(name);
