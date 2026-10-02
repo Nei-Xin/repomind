@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { initializeRepository } from "../src/repository.js";
-import { redactSecrets } from "../src/security/redaction.js";
+import { redactDeep, redactSecrets } from "../src/security/redaction.js";
 import { createTestRepository, git } from "./helpers.js";
 
 describe("redactSecrets", () => {
@@ -180,5 +180,23 @@ describe("evidence and memory redaction", () => {
     expect(row.content).not.toContain("SECRET=abcdef123456");
     expect(JSON.parse(row.metadata_json)).toMatchObject({ excludedFiles: [".env"] });
     core.close();
+  });
+});
+
+describe("structured credential redaction", () => {
+  it("redacts sensitive keys recursively, including short values, without changing benign metadata", () => {
+    const input = {
+      toolInput: { password: "short", api_key: "synthetic-value-123", accessToken: "opaque" },
+      headers: { Authorization: "Basic synthetic", "X-API-Key": "another-value" },
+      credentials: [{ value: "nested" }], secrets: ["one", "two"],
+      inputTokens: 42, tokenizer: "unicode61", idempotency_key: "commit-123", tokenBudget: 12000,
+    };
+    const result = redactDeep(input);
+    expect(result.redactions).toBe(8);
+    expect(result.value.toolInput).toEqual({ password: "[REDACTED:credential]", api_key: "[REDACTED:credential]", accessToken: "[REDACTED:credential]" });
+    expect(result.value.credentials).toEqual([{ value: "[REDACTED:credential]" }]);
+    expect(result.value).toMatchObject({ inputTokens: 42, tokenizer: "unicode61", idempotency_key: "commit-123", tokenBudget: 12000 });
+    expect(redactDeep(result.value)).toEqual({ value: result.value, redactions: 0 });
+    expect(input.toolInput.password).toBe("short");
   });
 });

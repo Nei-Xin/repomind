@@ -64,15 +64,23 @@ export interface DeepRedactionResult<T> {
  */
 export function redactDeep<T>(value: T): DeepRedactionResult<T> {
   let redactions = 0;
-  const walk = (node: unknown): unknown => {
+  const sensitiveKey = (key: string): boolean => {
+    const normalized = key.replace(/([a-z0-9])([A-Z])/gu, "$1_$2");
+    return /(?:^|[_.-])(?:api[_-]?keys?|passwords?|passwd|secrets?|credentials?|(?:access[_-]|refresh[_-]|auth[_-]|bearer[_-])?tokens?|authorization)$/iu.test(normalized);
+  };
+  const walk = (node: unknown, sensitive = false): unknown => {
     if (typeof node === "string") {
+      if (sensitive && node && !/^\[REDACTED:[^\]]+\]$/u.test(node)) {
+        redactions++;
+        return "[REDACTED:credential]";
+      }
       const result = redactSecrets(node);
       redactions += result.redactions;
       return result.content;
     }
-    if (Array.isArray(node)) return node.map(walk);
+    if (Array.isArray(node)) return node.map((item) => walk(item, sensitive));
     if (node && typeof node === "object") {
-      return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([key, item]) => [key, walk(item)]));
+      return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([key, item]) => [key, walk(item, sensitive || sensitiveKey(key))]));
     }
     return node;
   };
