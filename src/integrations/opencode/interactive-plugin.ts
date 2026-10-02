@@ -44,6 +44,7 @@ interface OpenCodeMessage extends JsonObject {
 
 interface OpenCodeHooks {
   config(input: JsonObject): Promise<void>;
+  dispose(): Promise<void>;
   event(input: { event: unknown }): Promise<void>;
   "chat.message"(
     input: { sessionID: string; messageID?: string },
@@ -159,7 +160,25 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
     const repositoryPath = input.worktree || input.directory;
     const activeTasks = new Map<string, ActiveTask>();
     const queues = new Map<string, Promise<void>>();
+    // OpenCode may begin shutting down immediately after publishing
+    // `session.idle`. Keep every hook promise visible to dispose() so a
+    // one-shot `opencode run` cannot exit before the Bridge finish request.
+    const inFlight = new Set<Promise<unknown>>();
     const sessionRoots = new Map<string, string>();
+
+    const track = <T>(work: () => Promise<T>): Promise<T> => {
+      const promise = work();
+      inFlight.add(promise);
+      const settled = (): void => { inFlight.delete(promise); };
+      void promise.then(settled, settled);
+      return promise;
+    };
+
+    const drain = async (): Promise<void> => {
+      while (inFlight.size || queues.size) {
+        await Promise.allSettled([...inFlight, ...queues.values()]);
+      }
+    };
 
     const warn = async (message: string): Promise<void> => {
       options.onWarning?.(message);
@@ -308,7 +327,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         config.mcp = mcp;
       },
 
-      "chat.message": async (chat, output) => {
+      "chat.message": (chat, output) => track(async () => {
         await enqueue(chat.sessionID, async () => {
           try {
             if (await resolveRootSession(chat.sessionID) !== chat.sessionID) return;
@@ -325,7 +344,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
             await warn(`OpenCode task start skipped: ${error instanceof Error ? error.message : String(error)}`);
           }
         });
-      },
+      }),
 
       "experimental.chat.messages.transform": async (_transform, output) => {
         const lastUser = [...output.messages].reverse().find((entry) => entry.info.role === "user");
@@ -354,7 +373,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         output.messages[output.messages.indexOf(lastUser)] = { ...lastUser, parts };
       },
 
-      "tool.execute.before": async (tool, output) => {
+      "tool.execute.before": (tool, output) => track(async () => {
         try {
           const rootSessionID = await resolveRootSession(tool.sessionID);
           if (!activeTasks.has(rootSessionID)) return;
@@ -374,9 +393,9 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         } catch (error) {
           await warn(`OpenCode tool call was not recorded: ${error instanceof Error ? error.message : String(error)}`);
         }
-      },
+      }),
 
-      "tool.execute.after": async (tool, output) => {
+      "tool.execute.after": (tool, output) => track(async () => {
         try {
           const rootSessionID = await resolveRootSession(tool.sessionID);
           if (!activeTasks.has(rootSessionID)) return;
@@ -401,9 +420,9 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
         } catch (error) {
           await warn(`OpenCode tool result was not recorded: ${error instanceof Error ? error.message : String(error)}`);
         }
-      },
+      }),
 
-      event: async ({ event }) => {
+      event: ({ event }) => track(async () => {
         const value = objectValue(event);
         const properties = objectValue(value.properties);
         if (value.type === "message.part.updated") {
@@ -436,7 +455,8 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
           return;
         }
 
-        if (value.type === "session.idle") {
+        const idleStatus = objectValue(properties.status).type === "idle";
+        if (value.type === "session.idle" || (value.type === "session.status" && idleStatus)) {
           const sessionID = stringValue(properties.sessionID);
           if (!sessionID) return;
           try {
@@ -483,7 +503,8 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
             await warn(`OpenCode task abort skipped: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
-      },
+      }),
+      dispose: drain,
     };
   };
 }

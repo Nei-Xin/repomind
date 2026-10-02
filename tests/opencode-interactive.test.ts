@@ -306,4 +306,92 @@ describe("OpenCode transparent interactive integration", () => {
     expect(() => installOpenCodeInteractivePlugin({ repository: otherRepository, pluginEntry: entry }))
       .toThrow(/Refusing to replace an unmanaged OpenCode plugin/u);
   });
+
+  it("drains an idle finish before a one-shot OpenCode process disposes the plugin", async () => {
+    const fixture = initializedFixture();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const plugin = await createOpenCodeInteractivePlugin({ bridgeUrl: bridge.url })({
+      directory: fixture.repository,
+      worktree: fixture.repository,
+      client: {
+        session: {
+          get: async () => ({ data: { id: "one-shot" } }),
+          messages: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            return { data: [{
+              info: {
+                id: "assistant-one-shot", role: "assistant", parentID: "user-one-shot",
+                finish: "stop", time: { completed: Date.now() },
+              },
+              parts: [{ type: "text", text: "The one-shot task completed." }],
+            }] };
+          },
+        },
+      },
+    });
+    await plugin["chat.message"](
+      { sessionID: "one-shot", messageID: "user-one-shot" },
+      userMessage("one-shot", "user-one-shot", "Inspect the repository"),
+    );
+    const idle = plugin.event({ event: { type: "session.idle", properties: { sessionID: "one-shot" } } });
+    await plugin.dispose();
+
+    const core = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
+    try {
+      expect(core.context.database.raw.prepare(
+        "SELECT status FROM sessions WHERE client_session_id='one-shot'",
+      ).get()).toEqual({ status: "committed" });
+    } finally {
+      core.close();
+      await idle;
+    }
+  });
+
+  it("finishes when OpenCode reports idle through session.status", async () => {
+    const fixture = initializedFixture();
+    const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const plugin = await createOpenCodeInteractivePlugin({ bridgeUrl: bridge.url })({
+      directory: fixture.repository,
+      worktree: fixture.repository,
+      client: {
+        session: {
+          get: async () => ({ data: { id: "status-idle" } }),
+          messages: async () => ({ data: [{
+            info: { role: "assistant", parentID: "user-status-idle", finish: "stop", time: { completed: Date.now() } },
+            parts: [{ type: "text", text: "Finished through status idle." }],
+          }] }),
+        },
+      },
+    });
+    await plugin["chat.message"](
+      { sessionID: "status-idle", messageID: "user-status-idle" },
+      userMessage("status-idle", "user-status-idle", "Inspect the repository"),
+    );
+    await plugin.event({ event: {
+      type: "session.status",
+      properties: { sessionID: "status-idle", status: { type: "busy" } },
+    } });
+    const core = new RepositoryMemoryCore(fixture.repository, { dataDirectory: fixture.dataDirectory });
+    try {
+      expect(core.context.database.raw.prepare("SELECT status FROM sessions").get()).toEqual({ status: "open" });
+      const statusIdle = plugin.event({ event: {
+        type: "session.status",
+        properties: { sessionID: "status-idle", status: { type: "idle" } },
+      } });
+      const legacyIdle = plugin.event({ event: {
+        type: "session.idle", properties: { sessionID: "status-idle" },
+      } });
+      await plugin.dispose();
+      expect(core.context.database.raw.prepare(
+        "SELECT status FROM sessions WHERE client_session_id='status-idle'",
+      ).get()).toEqual({ status: "committed" });
+      expect(core.context.database.raw.prepare("SELECT count(*) AS n FROM commit_receipts").get()).toEqual({ n: 1 });
+      await Promise.all([statusIdle, legacyIdle]);
+      await plugin.dispose(); // Repeated cleanup does not finalize again.
+    } finally {
+      core.close();
+    }
+  });
 });

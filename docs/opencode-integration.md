@@ -34,7 +34,8 @@ separate untrusted repository context from the current user request. Native
 message history, attachments, and remaining parts are preserved. Root-session
 and delegated child-session tool calls, results, and failures are recorded
 automatically against the root task while
-preserving the originating Session ID. On root `session.idle`, the plugin checks
+preserving the originating Session ID. On root `session.status` with an `idle`
+status, or the legacy `session.idle` event, the plugin checks
 the assistant response belonging to the current user message. A completed
 response with no error and a `stop` finish reason commits Git, command, and test
 evidence, then performs the existing best-effort L2/L3/L4 maintenance. Cancelled
@@ -42,6 +43,13 @@ or unfinished turns are abandoned; upstream errors are failed, and truncated
 responses are partial. These outcomes do not trigger successful-task memory
 maintenance. Cancelling a turn still permits another prompt in the same OpenCode
 session. Bridge failures are logged and do not prevent OpenCode from continuing.
+
+During normal OpenCode shutdown, the plugin's `dispose` hook waits for in-flight
+hooks and queued Bridge writes, including the task finish request. This also
+applies to standalone `opencode run`: completion is persisted before the process
+exits, without requiring a persistent `opencode serve`. Duplicate idle events
+share the same per-session queue and do not commit the task twice. Forced process
+termination or an unavailable Bridge cannot provide this completion guarantee.
 
 Child-session user messages do not create separate RepoMind tasks, and child
 `session.idle` or deletion events do not finish or abort the root task. Nested
@@ -67,6 +75,11 @@ is removed or disabled explicitly:
   }
 }
 ```
+
+Interactive OpenCode tasks follow the same memory rules as Claude: solutions
+need a repository outcome, repeated passing commands revalidate one memory,
+only unresolved verification makes a task partial, and each task's recall is
+recorded. See [what interactive tasks remember](claude-interactive.md#what-interactive-tasks-remember).
 
 ## MCP-managed lifecycle
 

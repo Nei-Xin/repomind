@@ -1,5 +1,18 @@
 # OpenCode 集成
 
+## 插件自动管理生命周期
+
+运行 `repomind opencode setup --repo <仓库路径>` 安装项目插件后，可以直接使用
+`opencode` 或一次性的 `opencode run`。插件通过本机 Bridge 自动记录任务与工具活动。
+根会话发出 `session.status` 的 `idle` 状态或旧版 `session.idle` 事件时，插件检查
+最终回答并提交任务。重复 idle 通知只提交一次。
+
+OpenCode 正常退出时，插件的 `dispose()` 会等待尚未完成的钩子及 Bridge 写入，
+包括任务收尾请求；无需启动常驻 `opencode serve` 来避免退出竞态。强制终止进程或
+Bridge 不可用不在此保证范围内。使用插件时不要同时启用 RepoMind MCP 生命周期。
+
+## MCP 管理生命周期
+
 RepoMind 可以作为项目本地 stdio MCP 服务器在 OpenCode 中运行。请先构建 RepoMind：
 
 ```powershell
@@ -32,7 +45,7 @@ OpenCode 应报告 `repomind` 已连接。请从仓库根目录启动 OpenCode�
 
 为了保持工具用法一致，请将 `examples/opencode/AGENTS.md` 中的工作流应用到目标仓库的 Agent 说明。
 
-RepoMind 无法自动观察 OpenCode 的其他工具。Agent 必须显式启动并提交 RepoMind Session。
+仅使用 MCP 时，RepoMind 无法自动观察 OpenCode 的其他工具。Agent 必须显式启动并提交 RepoMind Session。
 
 ## Host-managed 生命周期
 
