@@ -334,43 +334,51 @@ export class RepositoryMemoryCore {
   }
 
   startSession(input: StartSessionInput): StartSessionResult {
+    return this.prepareSessionStart(input)();
+  }
+
+  /** Collect Git before an enclosing lifecycle transaction acquires its lock.
+   * The returned writer must be consumed immediately by the same Core. */
+  prepareSessionStart(input: StartSessionInput): () => StartSessionResult {
     if (!input.task.trim()) throw new RepoMindError("INVALID_INPUT", "task must not be empty");
     const maxMemories = input.maxMemories ?? 5;
     const snapshot = inspectGit(this.context.root);
     const worktreeFiles = inspectWorktreeFiles(this.context.root);
-    const sessionId = `ses_${randomUUID()}`;
-    const rawTask = input.task.trim();
-    const task = redactSecrets(rawTask).content;
-    const now = Date.now();
-    const db = this.context.database;
-    db.transaction(() => {
-      db.raw.prepare(`
-        INSERT INTO sessions(id, repository_id, checkout_id, client_name, client_session_id, task, status,
-          baseline_branch, baseline_head, baseline_dirty, started_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
-      `).run(
-        sessionId, this.context.marker.projectId, this.context.checkoutId,
-        input.clientName ?? null, input.clientSessionId ?? null, task,
-        snapshot.branch, snapshot.head, snapshot.dirty ? 1 : 0, now,
-      );
-      // Passed unredacted so insertEvidence records how many secrets it removed.
-      this.insertEvidence(sessionId, "user_requirement", rawTask, {}, null);
-      this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline", worktreeFiles }, snapshot.head);
-    });
-    try {
-      const repositoryProfile = input.includeRepositoryProfile === false ? null : this.getRepositoryProfile();
-      return {
-        sessionId,
-        repositoryId: this.context.marker.projectId,
-        baseline: snapshot,
-        memories: maxMemories === 0 ? [] : this.search(task, { limit: maxMemories }),
-        moduleNarratives: this.searchModuleNarratives(task),
-        ...(repositoryProfile?.current ? { repositoryProfile } : {}),
-      };
-    } catch (error) {
-      try { this.abandonSession(sessionId); } catch { /* preserve the retrieval error */ }
-      throw error;
-    }
+    return () => {
+      const sessionId = `ses_${randomUUID()}`;
+      const rawTask = input.task.trim();
+      const task = redactSecrets(rawTask).content;
+      const now = Date.now();
+      const db = this.context.database;
+      db.transaction(() => {
+        db.raw.prepare(`
+          INSERT INTO sessions(id, repository_id, checkout_id, client_name, client_session_id, task, status,
+            baseline_branch, baseline_head, baseline_dirty, started_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+        `).run(
+          sessionId, this.context.marker.projectId, this.context.checkoutId,
+          input.clientName ?? null, input.clientSessionId ?? null, task,
+          snapshot.branch, snapshot.head, snapshot.dirty ? 1 : 0, now,
+        );
+        // Passed unredacted so insertEvidence records how many secrets it removed.
+        this.insertEvidence(sessionId, "user_requirement", rawTask, {}, null);
+        this.insertEvidence(sessionId, "git_snapshot", JSON.stringify(snapshot), { phase: "baseline", worktreeFiles }, snapshot.head);
+      });
+      try {
+        const repositoryProfile = input.includeRepositoryProfile === false ? null : this.getRepositoryProfile();
+        return {
+          sessionId,
+          repositoryId: this.context.marker.projectId,
+          baseline: snapshot,
+          memories: maxMemories === 0 ? [] : this.search(task, { limit: maxMemories }),
+          moduleNarratives: this.searchModuleNarratives(task),
+          ...(repositoryProfile?.current ? { repositoryProfile } : {}),
+        };
+      } catch (error) {
+        try { this.abandonSession(sessionId); } catch { /* preserve the retrieval error */ }
+        throw error;
+      }
+    };
   }
 
   async startSessionHybrid(input: StartSessionInput): Promise<StartSessionResult> {
@@ -390,7 +398,13 @@ export class RepositoryMemoryCore {
     }
   }
 
-  commitSession(input: CommitSessionInput, sources: {
+  commitSession(input: CommitSessionInput, sources: Parameters<RepositoryMemoryCore["prepareSessionCommit"]>[1] = {}): CommitSessionResult {
+    return this.prepareSessionCommit(input, sources)();
+  }
+
+  /** Collect Git/diffs without a write lock, then return an atomic writer.
+   * The writer rechecks receipts and session status before persisting. */
+  prepareSessionCommit(input: CommitSessionInput, sources: {
     tests?: CommandEvidenceSource;
     commands?: CommandEvidenceSource;
     /** Collector-owned final-answer/loss checks; never read from CLI/MCP input. */
@@ -401,7 +415,7 @@ export class RepositoryMemoryCore {
      * changed files or passed a test, so a read-only answer stays Evidence.
      */
     solutionPolicy?: "always" | "repository-outcome";
-  } = {}): CommitSessionResult {
+  } = {}): () => CommitSessionResult {
     if (!input.idempotencyKey.trim()) throw new RepoMindError("INVALID_INPUT", "idempotencyKey must not be empty");
     if (sources.hostHandoff && input.handoff !== undefined) throw new RepoMindError("INVALID_INPUT", "Cannot combine explicit and Host handoffs");
     const handoff = sources.hostHandoff ? prepareHostHandoff(input.summary, sources.hostHandoff)
@@ -437,7 +451,7 @@ export class RepositoryMemoryCore {
       return JSON.parse(receipt.result_json) as CommitSessionResult;
     };
     const receipt = readReceipt();
-    if (receipt) return receipt;
+    if (receipt) return () => receipt;
 
     const session = db.raw.prepare(
       "SELECT status, baseline_head, task FROM sessions WHERE id=? AND repository_id=?",
@@ -445,7 +459,7 @@ export class RepositoryMemoryCore {
     if (!session) throw new RepoMindError("SESSION_NOT_FOUND", `Session ${input.sessionId} was not found`);
     if (session.status !== "open") {
       const repeated = readReceipt();
-      if (repeated) return repeated;
+      if (repeated) return () => repeated;
       throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${session.status}`);
     }
 
@@ -476,7 +490,7 @@ export class RepositoryMemoryCore {
     `).get(input.sessionId) as { count: number }).count) > 0;
     const finalStatus = input.status === "success" ? "committed" : input.status;
 
-    return db.transaction(() => {
+    return () => db.transaction(() => {
       // Git collection runs outside the write lock; another process may have committed meanwhile.
       const repeated = readReceipt();
       if (repeated) return repeated;

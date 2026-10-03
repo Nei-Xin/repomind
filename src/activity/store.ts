@@ -199,74 +199,98 @@ export class InteractiveActivityStore {
   }
 
   startTask(input: StartInteractiveTaskRequest): InteractiveTaskStartResult {
-    return this.core.context.database.transaction(() => this.startTaskInTransaction(input));
+    const db = this.core.context.database;
+    // Another process may finish/replace the task while Git runs. Discard that
+    // preparation and retry from the new state instead of closing the wrong task.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.priorTaskStart(input)) {
+        const resumed = db.transaction(() => this.resumeTaskStart(input));
+        if (resumed) return resumed;
+      }
+      const expected = this.taskStartState(input);
+      let supersede: (() => CommitSessionResult) | undefined;
+      let begin: ReturnType<RepositoryMemoryCore["prepareSessionStart"]>;
+      try {
+        if (expected?.current_session_id && expected.session_status === "open") {
+          supersede = this.core.prepareSessionCommit({
+            sessionId: expected.current_session_id,
+            idempotencyKey: `interactive:superseded:${input.eventId}`,
+            status: "partial",
+            summary: "The interactive task was superseded by a new user prompt before a final event was observed.",
+            remainingWork: ["Review the previous task before treating its result as complete."],
+          });
+        }
+        begin = this.core.prepareSessionStart({
+          task: input.task, clientName: interactiveClientName(input.agent),
+          clientSessionId: input.agentSessionId, maxMemories: input.maxMemories ?? 5,
+        });
+      } catch (error) {
+        if (error instanceof RepoMindError && error.code === "SESSION_NOT_OPEN"
+          && stableJson(expected) !== stableJson(this.taskStartState(input))) continue;
+        throw error;
+      }
+      const result = db.transaction(() => {
+        const resumed = this.resumeTaskStart(input);
+        if (resumed) return resumed;
+        if (stableJson(expected) !== stableJson(this.taskStartState(input))) return null;
+        const registered = this.register(input);
+        supersede?.();
+        const started = begin();
+        const { context, recall } = renderInteractiveRecall(started.memories, started.moduleNarratives, started.repositoryProfile);
+        db.raw.prepare(`
+          UPDATE agent_sessions SET current_session_id=?, current_task_event_id=?, status='active',
+            last_seen_at=?, ended_at=NULL WHERE id=?
+        `).run(started.sessionId, input.eventId, input.timestamp ?? Date.now(), registered.agentSessionId);
+        this.insertActivity(registered.agentSessionId, started.sessionId, {
+          schemaVersion: 1, eventId: `activity:${input.eventId}`,
+          agent: input.agent, agentSessionId: input.agentSessionId, repositoryPath: input.repositoryPath,
+          source: interactiveActivitySource(input.agent), type: "user_message", timestamp: input.timestamp,
+          payload: { text: input.task, taskStartEventId: input.eventId, maxMemories: input.maxMemories ?? 5, recall },
+        });
+        return {
+          agentSessionId: input.agentSessionId, sessionId: started.sessionId, repositoryId: started.repositoryId,
+          recalled: { memories: recall.memoryIds.length, modules: recall.moduleIds.length, profile: recall.profileId !== null },
+          context, resumed: false,
+        };
+      });
+      if (result) return result;
+    }
+    throw new RepoMindError("STORAGE_UNAVAILABLE", "Interactive task changed repeatedly during Git collection; retry task start");
   }
 
-  private startTaskInTransaction(input: StartInteractiveTaskRequest): InteractiveTaskStartResult {
-    const registered = this.register(input);
-    const row = this.agentSession(input.agent, input.agentSessionId);
-    const prior = this.core.context.database.raw.prepare(
+  private taskStartState(input: StartInteractiveTaskRequest): (AgentSessionRow & { session_status: string | null }) | null {
+    return this.core.context.database.raw.prepare(`
+      SELECT a.id, a.current_session_id, a.last_session_id, a.current_task_event_id, a.status,
+        s.status AS session_status FROM agent_sessions a LEFT JOIN sessions s ON s.id=a.current_session_id
+      WHERE a.repository_id=? AND a.agent=? AND a.external_session_id=?
+    `).get(this.core.context.marker.projectId, input.agent, input.agentSessionId) as
+      (AgentSessionRow & { session_status: string | null }) | undefined ?? null;
+  }
+
+  private priorTaskStart(input: StartInteractiveTaskRequest) {
+    return this.core.context.database.raw.prepare(
       "SELECT session_id, agent_session_id, payload_json FROM activity_events WHERE id=? AND repository_id=?",
     ).get(`activity:${input.eventId}`, this.core.context.marker.projectId) as {
       session_id: string; agent_session_id: string; payload_json: string;
     } | undefined;
-    if (prior) {
-      const payload = objectValue(JSON.parse(prior.payload_json));
-      if (prior.agent_session_id !== registered.agentSessionId || payload.text !== redactDeep(input.task).value
-        || (payload.maxMemories !== undefined && payload.maxMemories !== (input.maxMemories ?? 5))) {
-        throw new RepoMindError("INVALID_INPUT", "Task start event was reused with different input");
-      }
-      if (row.current_session_id !== prior.session_id) {
-        throw new RepoMindError("SESSION_NOT_OPEN", "This task start event belongs to a completed or superseded task");
-      }
-      return this.renderStartResult(input, prior.session_id, true);
-    }
-    if (row.current_session_id) {
-      this.core.commitSession({
-        sessionId: row.current_session_id,
-        idempotencyKey: `interactive:superseded:${input.eventId}`,
-        status: "partial",
-        summary: "The interactive task was superseded by a new user prompt before a final event was observed.",
-        remainingWork: ["Review the previous task before treating its result as complete."],
-      });
-    }
+  }
 
-    const started = this.core.startSession({
-      task: input.task,
-      clientName: interactiveClientName(input.agent),
-      clientSessionId: input.agentSessionId,
-      maxMemories: input.maxMemories ?? 5,
-    });
-    const { context, recall } = renderInteractiveRecall(started.memories, started.moduleNarratives, started.repositoryProfile);
-    this.core.context.database.transaction(() => {
-      this.core.context.database.raw.prepare(`
-        UPDATE agent_sessions SET current_session_id=?, current_task_event_id=?, status='active',
-          last_seen_at=?, ended_at=NULL WHERE id=?
-      `).run(started.sessionId, input.eventId, input.timestamp ?? Date.now(), registered.agentSessionId);
-      this.insertActivity(registered.agentSessionId, started.sessionId, {
-        schemaVersion: 1,
-        eventId: `activity:${input.eventId}`,
-        agent: input.agent,
-        agentSessionId: input.agentSessionId,
-        repositoryPath: input.repositoryPath,
-        source: interactiveActivitySource(input.agent),
-        type: "user_message",
-        timestamp: input.timestamp,
-        payload: { text: input.task, taskStartEventId: input.eventId, maxMemories: input.maxMemories ?? 5, recall },
-      });
-    });
-    return {
-      agentSessionId: input.agentSessionId,
-      sessionId: started.sessionId,
-      repositoryId: started.repositoryId,
-      recalled: {
-        memories: recall.memoryIds.length,
-        modules: recall.moduleIds.length,
-        profile: recall.profileId !== null,
-      },
-      context,
-      resumed: false,
-    };
+  /** Called under the write lock so replay validation and its recall audit agree. */
+  private resumeTaskStart(input: StartInteractiveTaskRequest): InteractiveTaskStartResult | null {
+    const prior = this.priorTaskStart(input);
+    if (!prior) return null;
+    const payload = objectValue(JSON.parse(prior.payload_json));
+    const expectedId = agentSessionId(this.core.context.marker.projectId, input.agent, input.agentSessionId);
+    if (prior.agent_session_id !== expectedId || payload.text !== redactDeep(input.task).value
+      || (payload.maxMemories !== undefined && payload.maxMemories !== (input.maxMemories ?? 5))) {
+      throw new RepoMindError("INVALID_INPUT", "Task start event was reused with different input");
+    }
+    const current = this.taskStartState(input);
+    if (current?.current_session_id !== prior.session_id || current.session_status !== "open") {
+      throw new RepoMindError("SESSION_NOT_OPEN", "This task start event belongs to a completed or superseded task");
+    }
+    this.register(input);
+    return this.renderStartResult(input, prior.session_id, true);
   }
 
   record(input: RecordActivityRequest): ActivityRecordResult {
@@ -326,8 +350,8 @@ export class InteractiveActivityStore {
       : null;
     this.core.context.database.raw.prepare(`
       UPDATE agent_sessions SET current_session_id=NULL, last_session_id=?, current_task_event_id=NULL,
-        last_seen_at=? WHERE id=?
-    `).run(sessionId, input.timestamp ?? Date.now(), registered.agentSessionId);
+        last_seen_at=? WHERE id=? AND current_session_id=?
+    `).run(sessionId, input.timestamp ?? Date.now(), registered.agentSessionId, sessionId);
     return {
       sessionId,
       status: result.status,
@@ -341,6 +365,10 @@ export class InteractiveActivityStore {
   }
 
   abort(input: AbortInteractiveTaskRequest): { sessionId: string | null; status: "abandoned" | "idle" } {
+    return this.core.context.database.transaction(() => this.abortInTransaction(input));
+  }
+
+  private abortInTransaction(input: AbortInteractiveTaskRequest): { sessionId: string | null; status: "abandoned" | "idle" } {
     const registered = this.register(input);
     const current = this.agentSession(input.agent, input.agentSessionId);
     if (!current.current_session_id) {

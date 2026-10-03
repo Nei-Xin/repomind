@@ -1,5 +1,13 @@
 # Daily repository workflow
 
+Interactive task starts collect Git snapshots and any superseded task's diff
+before acquiring the SQLite write lock. A short transaction rechecks the active
+task, commits its replacement status, creates the new session and records its
+first activity together. Concurrent state changes discard the collected data
+and retry (up to three attempts); persistent contention returns a retryable
+start error without leaving an orphan session. Duplicate start events resume
+only an open matching task. A late finish cannot clear a newer task's binding.
+
 Host and interactive automatic tasks share ordered test/build outcome tracking.
 Failed exploration (`ls`, `cat`, `rg`, `git status`) remains evidence without
 independently making a task partial. The latest result for each recognized
