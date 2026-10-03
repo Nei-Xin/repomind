@@ -137,12 +137,12 @@ describe("verification identity and shell semantics", () => {
   });
 
   it.each(["npm test || true", "npm test | tail", "npm test; echo done", "npm test &", "false || npm test"])("does not use a masked status to verify %s", (command) => {
-    expect(verificationSteps(command, 0)).toEqual([{ key: "npm test", passed: false }]);
+    expect(verificationSteps(command, 0)).toEqual([{ key: "npm test", passed: false, outcome: "unknown" }]);
   });
 
   it("tracks every verification step and preserves execution context", () => {
     expect(verificationSteps("npm run build && npm test", 1)).toEqual([
-      { key: "npm run build", passed: false }, { key: "npm test", passed: false },
+      { key: "npm run build", passed: false, outcome: "failed" }, { key: "npm test", passed: false, outcome: "failed" },
     ]);
     expect(verificationSteps("npm run build && npm test", 0).every((step) => step.passed)).toBe(true);
     expect(verificationKey("cd a && ls && npm test")).toBe("cd a && npm test");

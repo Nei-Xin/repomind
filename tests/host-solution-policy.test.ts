@@ -81,7 +81,7 @@ describe("automatic Host solution eligibility", () => {
         task: "How is storage verified?", adapter: runner === "opencode" ? createOpenCodeHostAdapter({ execute }) : createClaudeHostAdapter({ execute }),
         ...(scenario.verification ? { verify: () => ({ checks: [check], evidence: scenario.verification === "public" ? [check] : [] }) } : {}),
       });
-      expect(report.session.status).toBe(scenario.unknown || scenario.name === "masked test exit" ? "partial" : "committed");
+      expect(report.session.status).toBe(scenario.unknown ? "partial" : "committed");
       const solutions = core.context.database.raw.prepare("SELECT id FROM memories WHERE type='solution'").all();
       expect(solutions).toHaveLength(scenario.eligible ? 1 : 0);
       if (!scenario.eligible) expect(core.context.database.raw.prepare("SELECT id FROM memories WHERE type IN ('decision','architecture')").all()).toEqual([]);

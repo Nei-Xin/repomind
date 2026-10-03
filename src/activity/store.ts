@@ -17,6 +17,7 @@ import type {
   StartInteractiveTaskRequest,
 } from "../protocol/activity.js";
 import { redactDeep } from "../security/redaction.js";
+import { referencesSensitivePath } from "../security/tool-output.js";
 import { renderInteractiveRecall, type InteractiveRecallRecord } from "./context.js";
 import { assessCommandVerification, verifyingTestCommand } from "./test-command.js";
 
@@ -156,8 +157,8 @@ function commandEvidence(rows: readonly ActivityRow[]): Array<Omit<TestEvidenceI
 
 /**
  * A task is incomplete only when a verification step (test, build, type-check,
- * lint) did not end in a pass: the latest run of each step decides, so a fix
- * followed by a passing re-run completes the task. Failed exploratory commands
+ * lint) failed or lacks a collector result. Masked results prove neither pass
+ * nor failure and cannot clear a prior failure. Failed exploratory commands
  * (`ls`, `cat`, `grep`) stay in the Evidence without downgrading the task.
  */
 function hasUnresolvedVerification(commands: ReturnType<typeof commandEvidence>): boolean {
@@ -431,7 +432,15 @@ export class InteractiveActivityStore {
     sessionId: string | null,
     input: RecordActivityRequest,
   ): ActivityRecordResult {
-    const redacted = redactDeep(input.payload);
+    let capturedPayload = input.payload;
+    const toolPayload = objectValue(input.payload);
+    if (input.type === "tool_result" && referencesSensitivePath(toolPayload.toolInput ?? toolPayload.tool_input)) {
+      // String responses may carry the only exit status. Preserve the status
+      // before suppressing their file content, without inventing unknown exits.
+      const exitCode = commandExitCode(input.type, toolPayload.toolResponse ?? toolPayload.tool_response ?? toolPayload.error);
+      if (exitCode !== null) capturedPayload = { ...toolPayload, observedExitCode: exitCode };
+    }
+    const redacted = redactDeep(capturedPayload);
     const payload = stableJson(redacted.value);
     const contentHash = hash(stableJson({
       repositoryId: this.core.context.marker.projectId,

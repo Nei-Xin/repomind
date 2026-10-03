@@ -25,8 +25,12 @@ const cases: Array<{ name: string; commands: Command[]; status: "success" | "par
   { name: "build recovered", commands: [cmd("npm run build", 1), cmd("npm run build", 0)], status: "success" },
   { name: "unknown test recovered", commands: [cmd("npm test", null), cmd("npm test", 0)], status: "success" },
   { name: "unknown test unresolved", commands: [cmd("npm test", null)], status: "partial" },
-  { name: "masked pass", commands: [cmd("npm test || true", 0)], status: "partial" },
-  { name: "piped pass", commands: [cmd("npm test | tail", 0)], status: "partial" },
+  { name: "masked pass", commands: [cmd("npm test || true", 0)], status: "success" },
+  { name: "piped pass", commands: [cmd("npm test 2>&1 | tail -20", 0)], status: "success" },
+  { name: "piped shell failure", commands: [cmd("npm test | tail", 1)], status: "success" },
+  { name: "failure then pipe", commands: [cmd("npm test", 1), cmd("npm test | tail", 0)], status: "partial" },
+  { name: "failure then mask", commands: [cmd("npm test", 1), cmd("npm test || true", 0)], status: "partial" },
+  { name: "pass then pipe", commands: [cmd("npm test", 0), cmd("npm test | tail", 0)], status: "success" },
   { name: "unrelated pass", commands: [cmd("npm test -- storage", 1), cmd("npm test -- billing", 0)], status: "partial" },
   { name: "different directory", commands: [cmd("cd a && npm test", 1), cmd("cd b && npm test", 0)], status: "partial" },
   { name: "different environment", commands: [cmd("NODE_ENV=a npm test", 1), cmd("NODE_ENV=b npm test", 0)], status: "partial" },
@@ -80,7 +84,7 @@ describe("automatic lifecycle status parity", () => {
     rmSync(repository, { recursive: true, force: true });rmSync(dataDirectory, { recursive: true, force: true });
   });
   describe.each(["interactive", "opencode", "claude"] as const)("%s", runner => {
-    it.each(cases.filter(c => ["failed exploration", "unknown exploration", "test recovered", "unknown test recovered", "masked pass", "incomplete chain recovery"].includes(c.name)))("$name", async ({ commands, status }) => {
+    it.each(cases.filter(c => ["failed exploration", "unknown exploration", "test recovered", "unknown test recovered", "masked pass", "piped pass", "piped shell failure", "failure then pipe", "failure then mask", "incomplete chain recovery"].includes(c.name)))("$name", async ({ commands, status }) => {
       let sessionId: string;
       const mutate = () => writeFileSync(join(repository, "result.txt"), "actual task change\n");
       if (runner === "interactive") {
@@ -116,6 +120,7 @@ describe("automatic lifecycle status parity", () => {
       }
       expect(core.context.database.raw.prepare("SELECT status FROM sessions WHERE id=?").get(sessionId)).toEqual({ status: status === "success" ? "committed" : "partial" });
       expect(core.context.database.raw.prepare("SELECT id FROM memories WHERE type='solution'").all()).toHaveLength(status === "success" ? 1 : 0);
+      if (commands.every(c => c.command.includes("|") )) expect(core.context.database.raw.prepare("SELECT id FROM memories WHERE type='command'").all()).toHaveLength(0);
       const rows = core.context.database.raw.prepare("SELECT metadata_json FROM evidence WHERE session_id=? AND kind IN ('test_result','command_result') ORDER BY created_at,id").all(sessionId) as Array<{ metadata_json: string }>;
       expect(rows).toHaveLength(commands.filter(c=>c.exitCode!==null).length);
       expect(rows.map(r=>JSON.parse(r.metadata_json).exitCode).sort()).toEqual(commands.filter(c=>c.exitCode!==null).map(c=>c.exitCode).sort());

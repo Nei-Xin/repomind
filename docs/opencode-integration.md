@@ -178,10 +178,10 @@ abandoned runs skip all three stages. L4 maintenance only generates or refreshes
 review-required candidates; it never approves, exports, installs, or executes
 them.
 
-A normal Agent process exit is not sufficient for success. Every observed
-`bash` or `shell` command must have exit code zero; any observed nonzero command
-commits the Session as `partial`, marks the Host report unsuccessful, and skips
-derived maintenance. The Host still does not require that at least one test was
+A normal Agent process exit is not sufficient for success. Unresolved test/build
+verification commits the Session as `partial` and skips derived maintenance.
+Exploration failures and masked test outcomes alone do not block success; see
+[the shared outcome rules](daily-workflow.md). The Host still does not require that at least one test was
 observed unless an external acceptance harness supplies that policy.
 
 OpenCode configuration is overlaid through `OPENCODE_CONFIG_CONTENT`; the
@@ -226,8 +226,9 @@ but can still contain non-secret source code and command output.
 
 A normal Agent exit is committed as failed when its exit code is nonzero,
 preserving failure evidence; the command returns that exit code. With Agent exit
-zero, any observed nonzero shell command or truncated stdout produces a partial
-Session instead of successful memories. A timeout, signal, spawn failure, or
+zero, unresolved test/build verification or truncated stdout produces a partial
+Session. Exploratory command failures and masked test outcomes alone do not;
+masked results also cannot prove a passing test. A timeout, signal, spawn failure, or
 invalid process completion abandons the Session and exits nonzero. `SIGINT` and
 `SIGTERM` map to exit codes 130 and 143. Every handled path ends committed,
 partial, failed, or abandoned rather than remaining open.

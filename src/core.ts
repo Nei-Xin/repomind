@@ -215,10 +215,12 @@ function titleFrom(text: string, fallback: string, maxChars = 96): string {
     return clean && !/[:：]$/u.test(clean) ? [clean] : [];
   });
   const line = lines[0];
-  if (!line) return fallback;
+  const suffix = createHash("sha256").update(text.trim()).digest("hex").slice(0, 12);
+  if (!line) return `${fallback} [${suffix}]`;
   const sentence = line.match(/^.*?[。！？!?](?:\s|$)|^.*?\.(?:\s|$)/u)?.[0]?.trim() ?? line;
-  // Do not turn an overlong sentence into an incomplete statement.
-  return sentence.length <= maxChars ? sentence : fallback;
+  // Decision titles participate in conflict identity. Preserve a readable
+  // prefix and distinguish even decisions with an identical long first line.
+  return sentence.length <= maxChars ? sentence : `${sentence.slice(0, maxChars - 16).trimEnd()}… [${suffix}]`;
 }
 
 function decisionSubject(title: string, content: string): string | null {
@@ -573,7 +575,7 @@ export class RepositoryMemoryCore {
           }),
         ];
         for (const entry of commandMemories) {
-          const test = entry.test;
+          const test = redactDeep(entry.test).value;
           if (test.exitCode !== 0) continue;
           const evidenceId = entry.evidenceId;
           if (!evidenceId) continue;
@@ -1534,7 +1536,10 @@ export class RepositoryMemoryCore {
 
   private insertEvidence(sessionId: string | null, kind: EvidenceKind, content: string, metadata: Record<string, unknown>, commitHash: string | null): string {
     const id = `evd_${randomUUID()}`;
-    const redacted = redactSecrets(content);
+    // Keep command structure available to sensitive-path filtering before
+    // serializing it into an Evidence body (including explicit/Host checks).
+    const structured = kind === "test_result" || kind === "command_result" ? redactDeep(JSON.parse(content)) : null;
+    const redacted = structured ? { content: JSON.stringify(structured.value), redactions: structured.redactions } : redactSecrets(content);
     const redactedMetadata = redactDeep(metadata);
     const totalRedactions = redacted.redactions + redactedMetadata.redactions;
     const enrichedMetadata = totalRedactions ? { ...redactedMetadata.value, redactions: totalRedactions } : redactedMetadata.value;

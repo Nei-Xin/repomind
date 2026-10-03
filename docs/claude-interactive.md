@@ -128,7 +128,9 @@ own behavior.
 - **Recovery needs a trustworthy pass of the same check.** Every test, build,
   type-check, or lint step in a compound command is tracked. A different
   directory's test cannot clear a failure. `npm test || true`, background runs,
-  and pipelines do not establish a passing test and leave verification unresolved.
+  and pipelines do not establish a passing test. A masked shell result alone
+  does not make a task partial, but cannot clear an earlier failure. Missing,
+  interrupted or background results still leave verification unresolved.
   Exploratory commands such as `ls test` and `cat` are not tests. Recognition is
   conservative and supports known runners and simple shell syntax, not arbitrary
   aliases, custom scripts, subshells, or complete shell interpretation.

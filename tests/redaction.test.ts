@@ -8,6 +8,21 @@ import { redactDeep, redactSecrets } from "../src/security/redaction.js";
 import { createTestRepository, git } from "./helpers.js";
 
 describe("redactSecrets", () => {
+  it.each([
+    `sk_live_${"a".repeat(24)}`, `rk_test_${"b".repeat(24)}`,
+    `AIza${"c".repeat(35)}`, `glpat-${"d".repeat(20)}`,
+    `github_pat_${"e".repeat(82)}`,
+    "postgresql://user:short@localhost/db", "mongodb+srv://user:p%40ss@cluster/db",
+    "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=opaqueValue==;EndpointSuffix=core.windows.net",
+    "Cookie: session=opaque; csrf=short", "Set-Cookie: session=opaque; HttpOnly",
+  ])("redacts credential format %s idempotently", (secret) => {
+    const clean = redactSecrets(secret);
+    expect(clean.redactions).toBeGreaterThan(0);
+    expect(clean.content).not.toContain(secret);
+    expect(clean.content).not.toMatch(/short|opaque|p%40ss/);
+    expect(redactSecrets(clean.content)).toEqual({ content: clean.content, redactions: 0 });
+  });
+
   it("redacts common token shapes with typed markers", () => {
     const input = [
       "aws AKIAIOSFODNN7EXAMPLE",
@@ -184,6 +199,10 @@ describe("evidence and memory redaction", () => {
 });
 
 describe("structured credential redaction", () => {
+  it("redacts structured cookies and connection credentials with short values", () => {
+    const value = redactDeep({ Cookie: "a=b", "Set-Cookie": "x=y", AccountKey: "abc", connectionString: "x", SharedAccessKey: "z" }).value;
+    expect(Object.values(value)).toEqual(Array(5).fill("[REDACTED:credential]"));
+  });
   it("redacts sensitive keys recursively, including short values, without changing benign metadata", () => {
     const input = {
       toolInput: { password: "short", api_key: "synthetic-value-123", accessToken: "opaque" },

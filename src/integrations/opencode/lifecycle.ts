@@ -69,6 +69,8 @@ export interface HostOutcomeAssessment {
     unrecovered: number;
     /** Failed/unknown commands without recognized verification steps; retained but not status-blocking. */
     nonVerificationFailures?: number;
+    /** Shell failures whose masked verification result is unknown. */
+    unverifiedFailures?: number;
   };
   /** Absent in older reports. Unique verification keys and those still unresolved after Host checks. */
   verification?: { steps: number; unresolved: number };
@@ -321,6 +323,9 @@ export function assessOpenCodeOutcome(input: {
   })));
   const nonVerificationFailures = verification.commands.filter((command, index) =>
     failedCommands[index] && command.steps.length === 0).length;
+  const unverified = verification.commands.map((command) => command.steps.length > 0
+    && command.steps.every((step) => step.outcome === "unknown"));
+  const unverifiedFailures = unverified.filter((value, index) => value && failedCommands[index]).length;
   const authoritativeChecks = input.authoritativeChecks ?? [];
   const authoritativePassed = !authoritativeChecks.length
     ? null
@@ -351,8 +356,8 @@ export function assessOpenCodeOutcome(input: {
     && !input.stdoutTruncated
     && !protocolViolation;
   const recovered = verification.commands.filter((command, index) => failedCommands[index]
-    && command.steps.length > 0 && (command.resolved || recoveryAuthorized)).length;
-  const unrecovered = failed - recovered - nonVerificationFailures;
+    && !unverified[index] && command.steps.length > 0 && (command.resolved || recoveryAuthorized)).length;
+  const unrecovered = failed - recovered - nonVerificationFailures - unverifiedFailures;
   const unresolvedVerification = recoveryAuthorized ? 0 : verification.unresolved;
   const qualityFlags: HostOutcomeQualityFlag[] = [];
   if (recovered > 0) qualityFlags.push("recovered-command-failure");
@@ -391,7 +396,8 @@ export function assessOpenCodeOutcome(input: {
     status,
     maintenanceEligible: status === "success",
     qualityFlags,
-    commands: { observed: input.commands.length, failed, recovered, unrecovered, nonVerificationFailures },
+    commands: { observed: input.commands.length, failed, recovered, unrecovered, nonVerificationFailures,
+      ...(unverifiedFailures ? { unverifiedFailures } : {}) },
     verification: { steps: verification.steps, unresolved: unresolvedVerification },
     authoritativeVerification: {
       authority: authoritativeChecks.length ? input.authoritativeVerificationAuthority ?? "host-config" : "none",

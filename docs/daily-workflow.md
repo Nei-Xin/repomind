@@ -8,6 +8,10 @@ a later failure reopens it. Directory, environment, and argument differences
 remain distinct; both steps of `build && test` must resolve. Masked exits from
 pipes or `|| true`, and unknown test exits, cannot establish a pass. Recognition
 uses the built-in command parser, not arbitrary custom-script or shell analysis.
+An observed shell exit with a masked test result is inconclusive, not a test
+failure: it does not make a changed-file task partial by itself, and cannot
+clear a prior failure or earn a verified-command memory. Missing collector
+results still leave verification unresolved until a trustworthy rerun.
 
 Host integrity gates remain separate: malformed/incomplete events, truncated
 output, and protocol violations still produce partial outcomes. Provider nonzero
@@ -16,7 +20,8 @@ the abandoned lifecycle. Passing authoritative verification on a stable snapshot
 can still resolve verification failures. Unknown exits attributed to exploratory
 commands are diagnostic only; unattributed missing results remain inconclusive.
 `quality.commands.failed` retains nonzero/unknown command counts;
-`nonVerificationFailures` counts those that do not block status, while
+`nonVerificationFailures` counts exploratory failures; `unverifiedFailures`
+counts shell failures with masked verification outcomes, while
 `recovered/unrecovered` count verification command failures.
 `quality.verification` reports distinct verification keys and unresolved keys.
 An `unknown-command-result` flag alone no longer implies a partial task.
@@ -32,6 +37,10 @@ passed test. Hidden checks without persisted public evidence do not qualify on
 their own. Unknown exits remain in traces/activity instead of command Evidence.
 Explicit CLI/MCP commits retain their existing submission semantics; historical
 memories and sessions are not migrated.
+
+Long explicit decision titles retain a readable prefix and a stable content
+digest, so unrelated decisions do not conflict through a shared fallback title.
+Matching named decision subjects still participate in conflict detection.
 
 Passing tool-collected tests use their canonical test command as the command-memory
 identity. A later passing run in another session updates that same memory, links new

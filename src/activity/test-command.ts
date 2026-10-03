@@ -225,11 +225,19 @@ export function verificationKey(command: string): string | null {
   return verificationSteps(command, null).at(-1)?.key ?? null;
 }
 
-export function verificationSteps(command: string, exitCode: number | null): Array<{ key: string; passed: boolean }> {
+interface VerificationStep {
+  key: string;
+  passed: boolean;
+  outcome: "passed" | "failed" | "unknown" | "missing";
+}
+
+export function verificationSteps(command: string, exitCode: number | null): VerificationStep[] {
   const segments = splitCommandLine(command);
   return segments.flatMap((segment, index) => {
     if (!isTestInvocation(segment.text) && !isBuildInvocation(segment.text)) return [];
-    return [{ key: stepKey(segments, index), passed: exitCode === 0 && canVerify(segments, index) }];
+    const outcome: VerificationStep["outcome"] = exitCode === null ? "missing"
+      : !canVerify(segments, index) ? "unknown" : exitCode === 0 ? "passed" : "failed";
+    return [{ key: stepKey(segments, index), passed: outcome === "passed", outcome }];
   });
 }
 
@@ -237,16 +245,20 @@ export function verificationSteps(command: string, exitCode: number | null): Arr
 export function assessCommandVerification(commands: readonly {
   command: string; invokedAs?: string; exitCode: number | null;
 }[]): {
-  commands: Array<{ steps: Array<{ key: string; passed: boolean }>; resolved: boolean }>;
+  commands: Array<{ steps: VerificationStep[]; resolved: boolean }>;
   steps: number;
   unresolved: number;
 } {
   const stepsByCommand = commands.map((command) => verificationSteps(command.invokedAs ?? command.command, command.exitCode));
-  const latest = new Map<string, boolean>();
-  for (const steps of stepsByCommand) for (const step of steps) latest.set(step.key, step.passed);
+  const latest = new Map<string, VerificationStep["outcome"]>();
+  for (const steps of stepsByCommand) for (const step of steps) {
+    // Masking provides no evidence either way. It cannot erase an earlier
+    // failure or incomplete collection, and never counts as a verified pass.
+    if (step.outcome !== "unknown" || !latest.has(step.key)) latest.set(step.key, step.outcome);
+  }
   return {
-    commands: stepsByCommand.map((steps) => ({ steps, resolved: steps.every((step) => latest.get(step.key) === true) })),
+    commands: stepsByCommand.map((steps) => ({ steps, resolved: steps.every((step) => latest.get(step.key) === "passed") })),
     steps: latest.size,
-    unresolved: [...latest.values()].filter((passed) => !passed).length,
+    unresolved: [...latest.values()].filter((outcome) => outcome === "failed" || outcome === "missing").length,
   };
 }

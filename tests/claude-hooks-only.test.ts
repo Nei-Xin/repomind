@@ -256,13 +256,13 @@ describe("Claude hook sessions without MemoryProxy", () => {
     }
   });
 
-  it("keeps a piped test result inconclusive without claiming the test was verified", async () => {
+  it("commits a piped test observation without claiming the test was verified", async () => {
     const fixture = repository();
     const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });
     running.push(bridge);
     await session(fixture, bridge, "claude-piped", { command: "node --test storage.test.mjs 2>&1 | tail -30" }, passed);
     const result = outcome(fixture);
-    expect(result.sessions).toEqual(["partial"]);
+    expect(result.sessions).toEqual(["committed"]);
     // Nothing changed and nothing verified: the answer stays Evidence only.
     expect(result.memories).toEqual([]);
   });

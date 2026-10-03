@@ -13,7 +13,7 @@ import type {
 } from "../../domain/types.js";
 import { RepoMindError } from "../../errors.js";
 import { inspectGit, locateGitRoot } from "../../git/git-inspector.js";
-import { redactDeep, redactSecrets } from "../../security/redaction.js";
+import { redactAgentTranscript, redactDeep, redactSecrets } from "../../security/redaction.js";
 import type { AgentEventMetrics } from "../../eval/agent/events.js";
 import {
   abandonHostLifecycle,
@@ -427,7 +427,7 @@ export async function runAgentHost<TId extends string>(
       mkdirSync(attemptDirectory, { recursive: true });
       const stdoutPath = join(attemptDirectory, "stdout.log");
       const attemptStderrPath = join(attemptDirectory, "stderr.log");
-      const redactedStdout = redactSecrets(currentExecution.process.stdout);
+      const redactedStdout = redactAgentTranscript(currentExecution.process.stdout);
       const redactedAttemptStderr = redactSecrets(currentExecution.process.stderr);
       writeFileSync(stdoutPath, redactedStdout.content, "utf8");
       writeFileSync(attemptStderrPath, redactedAttemptStderr.content, "utf8");
@@ -456,7 +456,7 @@ export async function runAgentHost<TId extends string>(
           stdoutTruncated: currentExecution.process.stdoutTruncated,
           stderrTruncated: currentExecution.process.stderrTruncated,
         },
-        outcome: currentExecution.outcome,
+        outcome: redactDeep(currentExecution.outcome).value,
         events: currentExecution.events,
         retry: {
           ...assessment,
@@ -542,7 +542,7 @@ export async function runAgentHost<TId extends string>(
       // Unknown exits stay in the trace; never let a placeholder exit code
       // qualify a read-only task for solution memory.
       const commands = outcome.commands.filter((command) => command.exitCodeKnown)
-        .map(({ isTest: _isTest, exitCodeKnown: _exitCodeKnown, ...command }) => command);
+        .map(({ isTest: _isTest, exitCodeKnown: _exitCodeKnown, ...command }) => redactDeep(command).value);
       const commit = commitHostLifecycle({
         repository,
         ...(options.dataDirectory ? { dataDirectory: options.dataDirectory } : {}),
@@ -566,7 +566,7 @@ export async function runAgentHost<TId extends string>(
       sessionStatus = commit.result.status as AgentHostRunReport<TId>["session"]["status"];
     }
 
-    const redactedEvents = redactSecrets(agent.stdout);
+    const redactedEvents = redactAgentTranscript(agent.stdout);
     const redactedStderr = redactSecrets(agent.stderr);
     writeFileSync(eventsPath, redactedEvents.content, "utf8");
     writeFileSync(stderrPath, redactedStderr.content, "utf8");

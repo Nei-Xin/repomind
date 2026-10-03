@@ -80,7 +80,7 @@ repomind run `
 
 三个派生维护阶段都是独立报告的 best-effort 操作。没有符合条件的 L3 来源时记为 skipped，而不是 failed。维护失败不会回滚已经 committed 的 Session，也不会改变原本成功的 Host-run 结果。partial、failed 和 abandoned Run 跳过全部三个阶段。L4 维护只生成或刷新需要审查的 Candidate，绝不会自动 approve、export、install 或 execute。
 
-Agent 进程正常退出不足以判定成功。所有观察到的 `bash`/`shell` 命令都必须为 exit code 0；任一非零命令都会把 Session Commit 为 `partial`、令 Host 报告失败并跳过派生维护。除非外部 Acceptance Harness 提供策略，Host 仍不强制至少观察到一项测试。
+Agent 进程正常退出不足以判定成功。未解决的测试/构建验证会把 Session 提交为 `partial` 并跳过派生维护；探索失败和被掩盖的测试结果本身不阻止成功，详见[统一状态规则](daily-workflow.md)。除非外部 Acceptance Harness 提供策略，Host 仍不强制至少观察到一项测试。
 
 OpenCode 配置通过 `OPENCODE_CONFIG_CONTENT` 覆盖；仓库的 `opencode.json` 不会被改写。覆盖配置会禁用常规 `mcp.repomind` 条目，宿主提示也会禁止 RepoMind 调用。若观察到 Agent 侧 RepoMind 调用，将视为生命周期违规，该运行不能成功。其他 OpenCode MCP 配置仍然可用，而外部插件会被 `--pure` 禁用，以保证可复现性。专用 Host Agent 还会把 OpenCode 的 `external_directory` 权限设为 `deny`，使仓库任务不能通过 OpenCode 工具读取相邻的实验制品或数据目录。这是 Host 策略边界，不能替代针对恶意进程的操作系统或容器级沙箱。
 
@@ -105,7 +105,7 @@ $result.artifacts.report
 
 Secret 脱敏是确定性的模式匹配，不能替代“不要把凭证放入任务提示和仓库”这一原则。制品保存在本地，但仍可能包含非 Secret 的源代码和命令输出。
 
-即使 Agent 退出码非零，只要是正常退出，仍会以 failed 状态提交并保留失败 Evidence；命令会返回该退出码。Agent exit 0 时，任一观察到的非零 shell 命令或 stdout 捕获截断都会生成 partial Session，而不是 success Memory。超时、信号、启动失败或无效的进程完成状态会放弃 Session，并以非零状态退出。`SIGINT` 和 `SIGTERM` 分别映射到退出码 130 和 143。所有受处理的路径都会使 Session 结束为 committed、partial、failed 或 abandoned，而不是停留在 open。
+即使 Agent 退出码非零，只要是正常退出，仍会以 failed 状态提交并保留失败 Evidence；命令会返回该退出码。Agent exit 0 时，未解决的测试/构建验证或 stdout 捕获截断会生成 partial Session。探索失败和被掩盖的测试结果本身不阻止成功，但后者也不能证明测试通过。超时、信号、启动失败或无效的进程完成状态会放弃 Session，并以非零状态退出。`SIGINT` 和 `SIGTERM` 分别映射到退出码 130 和 143。所有受处理的路径都会使 Session 结束为 committed、partial、failed 或 abandoned，而不是停留在 open。
 
 无需扫描制品目录即可查询持久运行目录：
 

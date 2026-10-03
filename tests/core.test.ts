@@ -409,6 +409,39 @@ describe("repository memory core", () => {
     },
   );
 
+  it("keeps unrelated long decisions distinct, including shared prefixes, and deduplicates repeats", () => {
+    const core = new RepositoryMemoryCore(repository);
+    const decisions = [
+      "Store invoice amounts as integer cents throughout the accounting system so calculations never introduce binary floating point rounding errors.",
+      "Retry failed webhook deliveries using exponential backoff and random jitter for transient transport errors while preserving each original event identifier.",
+      ...["billing records.", "webhook records."].map(tail => "Preserve the original immutable identifiers across every transaction and keep the full audit history for all " + tail),
+    ];
+    try {
+      for (const [index, decision] of [...decisions, decisions[0]!].entries()) {
+        const session = core.startSession({ task: "Record a design decision" });
+        core.commitSession({ sessionId: session.sessionId, idempotencyKey: `long-decision-${index}`, status: "success", summary: "Recorded a design choice.", decisions: [decision] });
+      }
+      const rows = core.context.database.raw.prepare("SELECT title, content, status FROM memories WHERE type='decision'").all() as Array<{ title: string; content: string; status: string }>;
+      expect(rows).toHaveLength(4);
+      expect(new Set(rows.map(row => row.title)).size).toBe(4);
+      expect(rows.every(row => row.status === "active" && row.title.length <= 96)).toBe(true);
+      expect(rows.map(row => row.content).sort()).toEqual([...decisions].sort());
+    } finally { core.close(); }
+  });
+
+  it("still conflicts long explicit decisions with the same named subject", () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      for (const [index, rule] of ["integer values only", "fractional values too"].entries()) {
+        const session = core.startSession({ task: "Record a design decision" });
+        core.commitSession({ sessionId: session.sessionId, idempotencyKey: `subject-${index}`, status: "success", summary: "Recorded a design choice.",
+          decisions: [`The validation policy for \`windowMs\` must apply consistently across all callers and all transport layers and accept ${rule}.`] });
+      }
+      const rows = core.context.database.raw.prepare("SELECT status FROM memories WHERE type='decision'").all() as Array<{ status: string }>;
+      expect(rows.map(row => row.status).sort()).toEqual(["active", "uncertain"]);
+    } finally { core.close(); }
+  });
+
   it("keeps a newer extracted decision active while making its old subject conflict uncertain", () => {
     const core = new RepositoryMemoryCore(repository);
     try {

@@ -39,6 +39,13 @@ The security properties it aims to hold:
 - **Secret redaction.** Content entering long-term storage passes through
   deterministic redaction that replaces recognized secrets with a visible
   `[REDACTED:kind]` marker, and diff capture excludes sensitive paths outright.
+  Recognized formats include Stripe, Google API, GitHub/GitLab tokens,
+  password-bearing URLs, Azure connection keys and Cookie headers. Structured
+  credential fields are redacted even when their values are short.
+  Interactive tool payloads and Host transcripts suppress file bodies and
+  outputs referencing sensitive paths before persistence, including paired
+  Claude tool results. Invocation paths/commands, numeric exit codes and
+  interruption flags remain available, with credential patterns still applied.
 - **Authenticated local Bridge.** The interactive Bridge (`127.0.0.1:7345`)
   accepts writes that become memories an agent later reads, so it treats any
   other local origin as hostile. It requires a bearer token by default: the
@@ -65,11 +72,16 @@ guarantee:
 - A secret in a shape no rule recognizes (an unusual internal token format, a
   high-entropy string with no keyword nearby) will be stored verbatim.
 - Redaction runs at write time. Data captured by an earlier version is not
-  retroactively cleaned; use `repomind forget` to remove it, which physically
-  deletes the memory and any evidence only it referenced.
+  retroactively cleaned. `repomind forget` deletes a memory and evidence only
+  it referenced, but does not purge L0 activities, existing Host artifacts or
+  backups. Those copies require separate cleanup; rotate exposed credentials.
 - Sensitive-path exclusion covers common cases (`.env*`, `*.pem`, `*.key`,
   `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `.npmrc`). Project-specific
-  secret locations are not known to RepoMind.
+  secret locations are not known to RepoMind. Tool-path filtering is lexical:
+  scripts, aliases, symlinks and computed paths can hide the actual source.
+  Opaque inline shell literals and repeated contents in unrelated agent prose
+  cannot reliably be traced back to their source. These controls are not a general data-loss prevention
+  system.
 - If you configure the optional remote embedding provider, redaction is what
   stands between memory titles/content and that provider. Evidence bodies and
   Git diffs are not sent for embedding. Review the redaction limits and your

@@ -6,13 +6,17 @@ Host 与交互式自动任务共用测试/构建步骤的状态判定：`ls`、`
 目录、环境和参数不同的步骤分别跟踪；`build && test` 两步都需要解决。管道、
 `|| true` 等掩盖退出状态的命令不算通过，未知测试退出码也必须有后续有效验证。
 分类复用内置命令识别器，不声称支持所有自定义脚本或 Shell 语法。
+采集到了 Shell 退出码、但测试结果被管道等掩盖时，测试记为“未知”而非“失败”：
+它本身不阻止有文件变更的任务保存 solution，也不能解除先前的失败或生成已验证
+命令记忆。采集器缺失退出结果仍属于验证未完成，需要后续可信的重跑。
 
 Host 额外保留运行完整性检查：事件畸形/不完整、输出截断、协议违规仍导致 partial；
 进程非零退出或权威验证失败仍为 failed。权威验证全部通过且仓库快照稳定时，
 仍可按原规则解除验证失败。可归属到已知探索命令的未知退出结果仅作诊断；无法
 归属的缺失命令结果仍视为采集不完整。超时/中断沿用 abandoned 生命周期。
 Host 报告的 `quality.commands.failed` 保留原始非零/未知命令次数，
-`nonVerificationFailures` 单列不阻断状态的次数，`recovered/unrecovered` 统计
+`nonVerificationFailures` 单列探索失败，`unverifiedFailures` 单列测试结果被掩盖的
+Shell 失败次数，`recovered/unrecovered` 统计
 验证命令失败的恢复情况；`quality.verification` 记录验证键数量和最终未解决数量。
 `unknown-command-result` 可以是成功任务中的诊断标记，不应单凭该标记推断 partial。
 
@@ -24,6 +28,9 @@ Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution �
 测试证据。隐藏检查若未作为公开 Evidence 保存，也不会单独触发 solution。
 未知退出码只保留在 trace/活动记录，不伪造命令 Evidence。显式 CLI/MCP 提交仍
 保留原有主动提交语义；不迁移旧记忆或重算历史会话。
+
+过长的显式决策标题保留可读前缀和稳定的内容摘要，避免无关决策因共用兜底标题而
+互相冲突；同一命名决策对象的冲突检测仍然生效。
 
 工具采集的通过测试会使用规范化测试命令进入命令记忆；后续跨会话通过会更新同一
 条记忆、追加新的 `test_result`/`command_result` Evidence 并刷新校验时间。已标记
