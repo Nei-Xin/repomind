@@ -1,0 +1,74 @@
+[
+  {
+    "id": "eff-dependency-boundary-1",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "0572bb000e46fc317430c946d935df07b37525515db4868f4e9a2660188e0a8b"
+    },
+    "summary": "Completed the coordination-only change.\n\n- Deleted only `ops/dependency-boundary-review.txt`.\n- No application code, package files, tests, or other tracked files were modified.\n- Current tests pass: **4 passed, 0 failed** (`npm test`).\n- `git diff --check` passes.\n\nPreserved handoff decision for the separate `stableDigest` follow-up:\n\n- Use Node’s built-in `node:crypto` `createHash`.\n- Do not add a third-party hashing dependency.\n- Hash the UTF-8 input with SHA-256.\n- Return lowercase hexadecimal output.",
+    "expectedContent": "Preserved handoff decision for the separate `stableDigest` follow-up:\n\n- Use Node’s built-in `node:crypto` `createHash`.\n- Do not add a third-party hashing dependency.\n- Hash the UTF-8 input with SHA-256.\n- Return lowercase hexadecimal output.\n\n- Deleted only `ops/dependency-boundary-review.txt`.\n- No application code, package files, tests, or other tracked files were modified.\n- Current tests pass: **4 passed, 0 failed** (`npm test`).\n- `git diff --check` passes.",
+    "expectedTitle": "Use Node’s built-in `node:crypto` `createHash`."
+  },
+  {
+    "id": "eff-gateway-history-1",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "abff24022d54db21a895fec711b95279bad45f22b65396c746b352fdd4093371"
+    },
+    "summary": "Completed the coordination-only change:\n\n- Deleted only `ops/nimbus-gateway-cutover.txt`.\n- Left application code, package files, tests, and all other tracked files unchanged.\n- Ran `npm test`: **4 passed, 0 failed**.\n\nDurable compatibility constraints preserved for the next maintainer:\n\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `\"4\"`.\n- `x-gateway-retry-attempt` must contain the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- The attempt number is an integer from `0` through `4`, inclusive.\n- Retry-header implementation remains a separate follow-up; it was not changed here.",
+    "expectedContent": "Durable compatibility constraints preserved for the next maintainer:\n\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `\"4\"`.\n- `x-gateway-retry-attempt` must contain the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- The attempt number is an integer from `0` through `4`, inclusive.\n- Retry-header implementation remains a separate follow-up; it was not changed here.\n\n- Deleted only `ops/nimbus-gateway-cutover.txt`.\n- Left application code, package files, tests, and all other tracked files unchanged.\n- Ran `npm test`: **4 passed, 0 failed**.",
+    "expectedTitle": "`x-gateway-retry-policy` must be exactly `bounded-exponential-v2`."
+  },
+  {
+    "id": "eff-dependency-boundary-2",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "1e9a2dcc40c67ff3411a908b9dc9722532c49d05f9ca15fcdd4adc2bd1a18234"
+    },
+    "summary": "Completed the coordination-only change.\n\n- Deleted `ops/dependency-boundary-review.txt`.\n- Made no changes to application code, package files, or tests.\n- Preserved the approved implementation for the follow-up:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - No third-party hashing dependency.\n  - Hash UTF-8 input with SHA-256.\n  - Emit lowercase hexadecimal output for cache keys.\n- Tests passed: `npm test` — 4 passing, 0 failing.\n- Verified that the deleted review file is the only tracked change.",
+    "expectedContent": "- Preserved the approved implementation for the follow-up:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - No third-party hashing dependency.\n  - Hash UTF-8 input with SHA-256.\n  - Emit lowercase hexadecimal output for cache keys.\n- Tests passed: `npm test` — 4 passing, 0 failing.\n- Verified that the deleted review file is the only tracked change.\n\n- Deleted `ops/dependency-boundary-review.txt`.\n- Made no changes to application code, package files, or tests.",
+    "expectedTitle": "Use Node’s built-in `node:crypto` `createHash`."
+  },
+  {
+    "id": "eff-gateway-history-2",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "704e137075920897919ca566edc96de0e0b5652643811a62b0d409d9454d1ee2"
+    },
+    "summary": "Deleted only `ops/nimbus-gateway-cutover.txt`. No application code, package files, or tests were changed.\n\n**Handoff constraints to preserve for the retry-header follow-up:**\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `4`.\n- `x-gateway-retry-attempt` must carry the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- The attempt number must be an integer from 0 through 4, inclusive.\n\n**Verification:** `npm test` passed (4 tests). Git status showed only the requested note deletion.",
+    "expectedContent": "**Handoff constraints to preserve for the retry-header follow-up:**\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `4`.\n- `x-gateway-retry-attempt` must carry the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- The attempt number must be an integer from 0 through 4, inclusive.\n\n**Verification:** `npm test` passed (4 tests). Git status showed only the requested note deletion.\n\nDeleted only `ops/nimbus-gateway-cutover.txt`. No application code, package files, or tests were changed.",
+    "expectedTitle": "`x-gateway-retry-policy` must be exactly `bounded-exponential-v2`."
+  },
+  {
+    "id": "eff-dependency-boundary-3",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "0cbbdda3a50714e8d2e8ec9c01749bcad99d57761dedcbb03162dfaec064f110"
+    },
+    "summary": "Completed the coordination-only cleanup.\n\n- Deleted only `ops/dependency-boundary-review.txt`.\n- Left application code, `package.json`, tests, and all other tracked files unchanged.\n- Ran `npm test`: all 4 tests passed.\n- Verified the diff contains only the intended deletion.\n\nPreserved for the next maintainer: implement `stableDigest` using Node’s built-in `node:crypto` `createHash`, with no third-party dependency. The dependency boundary is the built-in crypto module; use lowercase SHA-256 hexadecimal output over the UTF-8 input.",
+    "expectedContent": "implement `stableDigest` using Node’s built-in `node:crypto` `createHash`, with no third-party dependency. The dependency boundary is the built-in crypto module; use lowercase SHA-256 hexadecimal output over the UTF-8 input.\n\n- Deleted only `ops/dependency-boundary-review.txt`.\n- Left application code, `package.json`, tests, and all other tracked files unchanged.\n- Ran `npm test`: all 4 tests passed.\n- Verified the diff contains only the intended deletion.",
+    "expectedTitle": "implement `stableDigest` using Node’s built-in `node:crypto` `createHash`, with no third-party dependency."
+  },
+  {
+    "id": "eff-gateway-history-3",
+    "source": {
+      "experiment": "summary-ab-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "6ddd24e613200c4cd14d6ddc5e8b72051151907f7b1757bb61179d2514aa9001"
+    },
+    "summary": "Completed the coordination-only change.\n\n- Deleted only `ops/nimbus-gateway-cutover.txt`.\n- Made no application, package, or test changes.\n- Verified `npm test`: **4 passed, 0 failed**.\n- Verified the working-tree diff contains only the note deletion.\n\nDurable compatibility constraints preserved for the next maintainer:\n\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `\"4\"`.\n- `x-gateway-retry-attempt` must contain the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- Attempt numbers are integers from **0 through 4 inclusive**.\n- Retry-header implementation remains a separate follow-up; no application changes were made.",
+    "expectedContent": "Durable compatibility constraints preserved for the next maintainer:\n\n- `x-gateway-retry-policy` must be exactly `bounded-exponential-v2`.\n- `x-gateway-retry-limit` must be the string `\"4\"`.\n- `x-gateway-retry-attempt` must contain the attempt number as a decimal string.\n- `x-request-id` must carry the caller-provided request ID unchanged.\n- Attempt numbers are integers from **0 through 4 inclusive**.\n- Retry-header implementation remains a separate follow-up; no application changes were made.\n\n- Deleted only `ops/nimbus-gateway-cutover.txt`.\n- Made no application, package, or test changes.\n- Verified `npm test`: **4 passed, 0 failed**.\n- Verified the working-tree diff contains only the note deletion.",
+    "expectedTitle": "`x-gateway-retry-policy` must be exactly `bounded-exponential-v2`."
+  }
+]

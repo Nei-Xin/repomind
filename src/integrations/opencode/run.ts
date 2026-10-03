@@ -31,6 +31,7 @@ export interface RunOpenCodeHostOptions {
   model?: string;
   maxMemories?: number;
   contextBudgetChars?: number;
+  structuredHandoff?: boolean;
   timeoutMs?: number;
   outputDirectory?: string;
   dataDirectory?: string;
@@ -71,6 +72,7 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
     model,
     maxMemories,
     contextBudgetChars,
+    structuredHandoff,
     timeoutMs,
     outputDirectory,
     dataDirectory,
@@ -95,6 +97,7 @@ export async function runOpenCodeHost(options: RunOpenCodeHostOptions): Promise<
     ...(model === undefined ? {} : { model }),
     ...(maxMemories === undefined ? {} : { maxMemories }),
     ...(contextBudgetChars === undefined ? {} : { contextBudgetChars }),
+    ...(structuredHandoff === undefined ? {} : { structuredHandoff }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(outputDirectory === undefined ? {} : { outputDirectory }),
     ...(dataDirectory === undefined ? {} : { dataDirectory }),

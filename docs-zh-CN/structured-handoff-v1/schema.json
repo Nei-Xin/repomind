@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoMind StructuredHandoffV1",
+  "description": "Agent-authored annotations only. Complete unique source paragraphs, total length and ordering require semantic validation against summary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "constraints", "remainingWork"],
+  "properties": {
+    "version": { "const": 1 },
+    "constraints": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceParagraph" }
+    },
+    "remainingWork": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceParagraph" }
+    }
+  },
+  "$defs": {
+    "sourceParagraph": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    }
+  }
+}

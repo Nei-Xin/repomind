@@ -5,6 +5,8 @@ import type {
   RepositoryProfileSummary,
 } from "../../domain/types.js";
 import { RepoMindError } from "../../errors.js";
+import { memoryTextWithoutDuplicateTitle } from "../../extraction/solution-summary.js";
+import { STRUCTURED_HANDOFF_INSTRUCTION } from "../../extraction/host-handoff.js";
 
 export const HOST_CONTEXT_MIN_BUDGET_CHARS = 1_000;
 export const HOST_CONTEXT_DEFAULT_BUDGET_CHARS = 12_000;
@@ -82,6 +84,7 @@ export interface RenderHostContextInput {
   moduleNarratives: readonly ModuleNarrativeSummary[];
   repositoryProfile: RepositoryProfileSummary | undefined;
   budgetChars?: number;
+  structuredHandoff?: boolean;
 }
 
 export interface RenderHostContextResult {
@@ -133,7 +136,8 @@ function truncate(value: string, maxChars: number): { content: string; truncated
 
 function renderMemory(memory: MemoryResult, index: number): string {
   const warning = memory.warning ? `\nWarning: ${normalize(memory.warning)}` : "";
-  return quoteUntrusted(`[${index + 1}] ${memory.type} / ${memory.status} / ${memory.id}\n${normalize(memory.title)}\n${normalize(memory.content)}${warning}`);
+  const text = memoryTextWithoutDuplicateTitle(normalize(memory.title), normalize(memory.content));
+  return quoteUntrusted(`[${index + 1}] ${memory.type} / ${memory.status} / ${memory.id}\n${text}${warning}`);
 }
 
 function renderModule(narrative: ModuleNarrativeSummary, index: number): string {
@@ -343,7 +347,8 @@ export function renderHostContext(input: RenderHostContextInput): RenderHostCont
     sourceChars: originalL3Entries.length ? originalL3Entries.join("\n\n").length : 0,
   });
   const contextChars = l1.stats.sectionChars + l2.stats.sectionChars + l3.stats.sectionChars;
-  const prompt = compose(l3.content, l2.content, l1.content, task);
+  const basePrompt = compose(l3.content, l2.content, l1.content, task);
+  const prompt = input.structuredHandoff ? `${basePrompt}\n\n${STRUCTURED_HANDOFF_INSTRUCTION}` : basePrompt;
   if (contextChars > budgetChars) throw new Error("Host context renderer exceeded its validated character budget");
 
   return {

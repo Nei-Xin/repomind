@@ -7,6 +7,7 @@ import {
   type CrossSessionRunner,
 } from "./cross-session-manifest.js";
 import type { AgentEventMetrics } from "./events.js";
+import type { EvaluationEnvironmentReport } from "./environment.js";
 import type { CheckResult } from "./report.js";
 
 export type CrossSessionArm = "isolated" | "shared";
@@ -37,6 +38,8 @@ export interface CrossSessionMemoryState {
 }
 
 export interface CrossSessionStageRun {
+  /** Absent in reports produced before environment monitoring was added. */
+  timing?: { observationGaps: number };
   sequenceId: string;
   arm: CrossSessionArm;
   iteration: number;
@@ -68,6 +71,7 @@ export interface CrossSessionStageRun {
     commitMs: number | null;
     commitSucceeded: boolean;
     maintenanceMs: number | null;
+    abandonMs?: number | null;
     hostLifecycleMs: number;
     retrievedMemoryIds: string[];
     retrievedModuleNarrativeIds: string[];
@@ -116,6 +120,7 @@ export interface CrossSessionAcceptanceCheck {
 }
 
 export interface CrossSessionEvalReport {
+  environment?: EvaluationEnvironmentReport;
   version: 4;
   generatedAt: string;
   name: string;
@@ -175,6 +180,7 @@ export interface CrossSessionEvalReport {
 }
 
 export interface BuildCrossSessionReportInput {
+  environment?: EvaluationEnvironmentReport;
   name: string;
   repeat: number;
   outputDirectory: string;
@@ -343,8 +349,15 @@ function integrityFailures(input: BuildCrossSessionReportInput): string[] {
     if (run.requestedCommit !== run.baseCommit) failures.push(`${label}: checked out ${run.baseCommit}, expected ${run.requestedCommit}`);
     if (!run.initialWorktreeClean) failures.push(`${label}: stage did not begin from a clean checkout`);
     if (run.unexpectedChanges.length) failures.push(`${label}: unexpected changes ${run.unexpectedChanges.join(", ")}`);
+    const interrupted = run.agent.timedOut || run.agent.aborted || run.agent.signal !== null
+      || run.agent.error !== null || run.agent.exitCode === null;
     if (run.agent.exitCode !== 0 || run.agent.signal || run.agent.timedOut || run.agent.aborted || run.agent.error) {
-      failures.push(`${label}: Agent did not exit cleanly`);
+      failures.push(`${label}: ${run.agent.timedOut ? "Agent timed out" : run.agent.aborted ? "Agent was aborted" : "Agent did not exit cleanly"}`);
+    }
+    if (run.timing && (!Number.isInteger(run.timing.observationGaps) || run.timing.observationGaps < 0)) {
+      failures.push(`${label}: timing observation gap count is invalid`);
+    } else if ((run.timing?.observationGaps ?? 0) > 0) {
+      failures.push(`${label}: timing contains scheduling or clock gaps; duration comparison excluded`);
     }
     if (!Number.isInteger(run.agent.attempts) || run.agent.attempts < 1
       || !Number.isInteger(run.agent.infrastructureRetries) || run.agent.infrastructureRetries < 0
@@ -355,24 +368,33 @@ function integrityFailures(input: BuildCrossSessionReportInput): string[] {
     if (!run.lifecycle.commitSucceeded) failures.push(`${label}: RepoMind session commit did not complete`);
     if (run.events.repoMindCalls !== 0) failures.push(`${label}: Host-managed Agent called RepoMind MCP`);
     const checks = [...run.publicChecks, ...run.hiddenChecks];
-    if (run.stageIndex === 0 && !passedChecks(run.hiddenChecks)) {
+    if (run.stageIndex === 0 && checks.length > 0 && !passedChecks(run.hiddenChecks)) {
       failures.push(`${label}: producer hidden checks did not all pass`);
     }
-    const expectedVerification = checks.some((check) => check.exitCode !== null && check.exitCode !== 0)
+    const verification = run.quality.authoritativeVerification;
+    const expectedVerification = checks.length === 0 ? null : checks.some((check) => check.exitCode !== null && check.exitCode !== 0)
       ? false
       : checks.some((check) => check.exitCode === null) ? null : true;
-    if (run.quality.authoritativeVerification.authority !== "benchmark-manifest"
-      || run.quality.authoritativeVerification.checks !== checks.length
-      || run.quality.authoritativeVerification.passed !== expectedVerification) {
+    if (checks.length === 0) {
+      failures.push(`${label}: authoritative verification was not run${interrupted ? " because the Agent was interrupted" : ""}`);
+    }
+    if (verification.authority !== (checks.length === 0 ? "none" : "benchmark-manifest")
+      || verification.checks !== checks.length
+      || verification.passed !== expectedVerification
+      || (interrupted && checks.length > 0)) {
       failures.push(`${label}: authoritative verification telemetry is inconsistent`);
     }
-    if (run.quality.authoritativeVerification.snapshotStable !== true) {
+    if (verification.snapshotStable === false) {
       failures.push(`${label}: verification changed the worktree`);
+    } else if (checks.length > 0 && verification.snapshotStable === null) {
+      failures.push(`${label}: verification worktree stability is unknown`);
+    } else if (checks.length === 0 && verification.snapshotStable !== null) {
+      failures.push(`${label}: worktree verification telemetry exists without checks`);
     }
     if (run.quality.maintenanceEligible !== (run.quality.status === "success")) {
       failures.push(`${label}: Host quality maintenance eligibility is inconsistent`);
     }
-    const expectedStatus = run.quality.status === "success" ? "committed" : run.quality.status;
+    const expectedStatus = interrupted ? "abandoned" : run.quality.status === "success" ? "committed" : run.quality.status;
     if (run.lifecycle.status !== expectedStatus) {
       failures.push(`${label}: session status does not match Host quality assessment`);
     }
@@ -631,7 +653,10 @@ export function buildCrossSessionReport(input: BuildCrossSessionReportInput): Cr
     rate: round(pairs.length ? eligibleEfficiencyPairs.length / pairs.length : 0),
   };
   const comparison = METRICS.map((definition) => summarizeMetric(
-    EFFICIENCY_METRIC_KEYS.has(definition.key) ? eligibleEfficiencyPairs : pairs,
+    definition.key === "hostLifecycleMs" || definition.key === "agentDurationMs"
+      ? eligibleEfficiencyPairs.filter((pair) =>
+        (pair.isolated.timing?.observationGaps ?? 0) === 0 && (pair.shared.timing?.observationGaps ?? 0) === 0)
+      : EFFICIENCY_METRIC_KEYS.has(definition.key) ? eligibleEfficiencyPairs : pairs,
     definition,
   ));
   const failures = integrityFailures(input);
@@ -647,6 +672,7 @@ export function buildCrossSessionReport(input: BuildCrossSessionReportInput): Cr
   };
   return {
     version: 4,
+    ...(input.environment ? { environment: input.environment } : {}),
     generatedAt: new Date().toISOString(),
     name: input.name,
     runner: runners.size === 1 ? [...runners][0]! : "mixed",
@@ -682,10 +708,13 @@ export function renderCrossSessionMarkdown(report: CrossSessionEvalReport): stri
     `| ${metric.key} | ${metric.pairs} | ${format(metric.isolatedMean)} | ${format(metric.sharedMean)} | ${format(metric.meanDelta)} | ${metric.relativeDeltaPercent === null ? "n/a" : `${format(metric.relativeDeltaPercent)}%`} | ${metric.sharedWins}/${metric.ties}/${metric.sharedLosses} |`,
   ).join("\n")
     + `\n\nReport schema: v${report.version}. Efficiency eligibility also requires non-empty public and hidden checks plus successful authoritative verification. When any efficiency acceptance criterion is configured, minComparablePairCoverageRate defaults to ${DEFAULT_MIN_COMPARABLE_PAIR_COVERAGE_RATE}.`;
+  const environment = report.environment
+    ? `## Measurement environment\n\nIdle-sleep prevention: ${report.environment.sleepPrevention.method} / ${report.environment.sleepPrevention.status}. Scheduling or clock gaps: ${report.environment.observationGaps.length}. See environment.json for intervals and guard diagnostics. A gap is not proof of sleep; it can also indicate a blocked event loop or a clock adjustment. No gap does not prove uninterrupted execution. Duration metrics exclude pairs containing observed stage gaps; raw durations are retained.\n\n`
+    : "";
   const acceptanceRows = report.acceptance.checks.map((check) =>
     `| ${check.id} | ${check.passed ? "yes" : "NO"} | ${format(check.measured)} | ${check.target} | ${check.detail} |`,
   ).join("\n");
-  return `# RepoMind cross-session learning benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n## Transfer summary\n\n| Measure | Isolated | Shared |\n| --- | ---: | ---: |\n| Recall rate | ${format(report.transfer.isolatedRecallRate)} | ${format(report.transfer.sharedRecallRate)} |\n| Hidden pass rate | ${format(report.transfer.isolatedHiddenPassRate)} | ${format(report.transfer.sharedHiddenPassRate)} |\n| Commit rate | ${format(report.transfer.isolatedCommitRate)} | ${format(report.transfer.sharedCommitRate)} |\n\n## Derived-only consumption\n\nThis section includes transfer stages whose effective maxMemories is zero. L1 must remain absent; L2/L3 are independently reported.\n\n| Runs per arm | Shared derived | Isolated derived | Shared L1 | Isolated L1 | Shared L2 | Shared L3 |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n| ${report.derivedConsumption.runsPerArm} | ${format(report.derivedConsumption.sharedDerivedRecallRate)} | ${format(report.derivedConsumption.isolatedDerivedRecallRate)} | ${format(report.derivedConsumption.sharedL1RecallRate)} | ${format(report.derivedConsumption.isolatedL1RecallRate)} | ${format(report.derivedConsumption.sharedL2RecallRate)} | ${format(report.derivedConsumption.sharedL3RecallRate)} |\n\n## Infrastructure attempts\n\n| Stage runs | Process attempts | Retries | Retried stages | Exhausted stages |\n| ---: | ---: | ---: | ---: | ---: |\n| ${report.infrastructure.stageRuns} | ${report.infrastructure.processAttempts} | ${report.infrastructure.retries} | ${report.infrastructure.retriedStageRuns} | ${report.infrastructure.exhaustedStageRuns} |\n\nFresh retries require an explicit transient infrastructure signal, zero input/output tokens, zero Agent activity, and an unchanged Git snapshot. An upstream HTTP/2 stream failure may instead resume the same provider session after only resume-safe local tool activity and no shell, command, or RepoMind activity. Retry delay and every process attempt remain included in Host duration, but retries are not counted as additional experimental stages.\n\n## Paired transfer comparison\n\nEfficiency metrics use only eligible pairs where both arms passed every public and hidden check. Correctness, diagnostic, and context metrics use all complete pairs.\n\n| Total pairs | Eligible efficiency pairs | Excluded pairs | Comparable coverage |\n| ---: | ---: | ---: | ---: |\n| ${report.efficiencyCoverage.totalPairs} | ${report.efficiencyCoverage.eligiblePairs} | ${report.efficiencyCoverage.excludedPairs} | ${format(report.efficiencyCoverage.rate)} |\n\n| Metric | Pairs | Isolated mean | Shared mean | Mean delta | Delta | Shared win/tie/loss |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${metrics}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\nL1/L2/L3 is the number of records actually injected into the Host prompt. Token cells are uncached input/cache-read/cache-write tokens; file-read cells are successful/failed reads.\n\n| Sequence | Repeat | Arm | Stage | Runner | Model | Max L1 | Hidden | Session | Attempts | L1/L2/L3 | Host ms | Input/cache-read/cache-write tokens | Successful/failed file reads |\n| --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | --- | ---: | ---: | ---: |\n${report.runs.map((run) => {
+  return `# RepoMind cross-session learning benchmark\n\nManifest: ${report.name}\n\nRunner: ${report.runner} / ${report.model}\n\nRepeat: ${report.repeat}\n\nIntegrity: **${report.integrity.passed ? "passed" : "FAILED"}**\n\nAcceptance: **${report.acceptance.status}**\n\n${environment}## Transfer summary\n\n| Measure | Isolated | Shared |\n| --- | ---: | ---: |\n| Recall rate | ${format(report.transfer.isolatedRecallRate)} | ${format(report.transfer.sharedRecallRate)} |\n| Hidden pass rate | ${format(report.transfer.isolatedHiddenPassRate)} | ${format(report.transfer.sharedHiddenPassRate)} |\n| Commit rate | ${format(report.transfer.isolatedCommitRate)} | ${format(report.transfer.sharedCommitRate)} |\n\n## Derived-only consumption\n\nThis section includes transfer stages whose effective maxMemories is zero. L1 must remain absent; L2/L3 are independently reported.\n\n| Runs per arm | Shared derived | Isolated derived | Shared L1 | Isolated L1 | Shared L2 | Shared L3 |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n| ${report.derivedConsumption.runsPerArm} | ${format(report.derivedConsumption.sharedDerivedRecallRate)} | ${format(report.derivedConsumption.isolatedDerivedRecallRate)} | ${format(report.derivedConsumption.sharedL1RecallRate)} | ${format(report.derivedConsumption.isolatedL1RecallRate)} | ${format(report.derivedConsumption.sharedL2RecallRate)} | ${format(report.derivedConsumption.sharedL3RecallRate)} |\n\n## Infrastructure attempts\n\n| Stage runs | Process attempts | Retries | Retried stages | Exhausted stages |\n| ---: | ---: | ---: | ---: | ---: |\n| ${report.infrastructure.stageRuns} | ${report.infrastructure.processAttempts} | ${report.infrastructure.retries} | ${report.infrastructure.retriedStageRuns} | ${report.infrastructure.exhaustedStageRuns} |\n\nFresh retries require an explicit transient infrastructure signal, zero input/output tokens, zero Agent activity, and an unchanged Git snapshot. An upstream HTTP/2 stream failure may instead resume the same provider session after only resume-safe local tool activity and no shell, command, or RepoMind activity. Retry delay and every process attempt remain included in Host duration, but retries are not counted as additional experimental stages.\n\n## Paired transfer comparison\n\nEfficiency metrics use only eligible pairs where both arms passed every public and hidden check. Correctness, diagnostic, and context metrics use all complete pairs.\n\n| Total pairs | Eligible efficiency pairs | Excluded pairs | Comparable coverage |\n| ---: | ---: | ---: | ---: |\n| ${report.efficiencyCoverage.totalPairs} | ${report.efficiencyCoverage.eligiblePairs} | ${report.efficiencyCoverage.excludedPairs} | ${format(report.efficiencyCoverage.rate)} |\n\n| Metric | Pairs | Isolated mean | Shared mean | Mean delta | Delta | Shared win/tie/loss |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n${metrics}\n\n## Acceptance checks\n\n${acceptanceRows ? `| Check | Passed | Measured | Target | Detail |\n| --- | --- | ---: | --- | --- |\n${acceptanceRows}` : "No acceptance criteria configured."}\n\n## Runs\n\nL1/L2/L3 is the number of records actually injected into the Host prompt. Token cells are uncached input/cache-read/cache-write tokens; file-read cells are successful/failed reads.\n\n| Sequence | Repeat | Arm | Stage | Runner | Model | Max L1 | Hidden | Session | Attempts | L1/L2/L3 | Host ms | Input/cache-read/cache-write tokens | Successful/failed file reads |\n| --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | --- | ---: | ---: | ---: |\n${report.runs.map((run) => {
     const hidden = `${run.hiddenChecks.filter((check) => check.passed).length}/${run.hiddenChecks.length}`;
     const injected = `${run.context.l1.injected}/${run.context.l2.injected}/${run.context.l3.injected}`;
     const tokens = `${run.events.tokens.input}/${run.events.tokens.cacheRead}/${run.events.tokens.cacheWrite}`;

@@ -15,6 +15,7 @@ import { buildCrossSessionReport } from "../src/eval/agent/cross-session-report.
 import { renderHostContext } from "../src/integrations/opencode/context.js";
 import type { AgentHostAdapter } from "../src/integrations/agent-host/types.js";
 import type { OpenCodeProcessExecutor } from "../src/integrations/opencode/run.js";
+import { validateRunIntegrityClaims } from "../benchmarks/cross-session-agent-suite/audit-results.mjs";
 
 function git(repository: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd: repository, encoding: "utf8", windowsHide: true });
@@ -350,6 +351,8 @@ describe("cross-session learning evaluation", () => {
       ]);
       expect(Math.max(...report.runs.map((run) => run.repository.length))).toBeGreaterThanOrEqual(181);
       expect(report.integrity).toEqual({ passed: true, failures: [] });
+      expect(report.environment?.endedAt).not.toBeNull();
+      expect(JSON.parse(readFileSync(join(output, "environment.json"), "utf8"))).toEqual(report.environment);
       expect(report.acceptance.status).toBe("passed");
       expect(report.transfer).toMatchObject({
         sharedRecallRate: 1,
@@ -623,6 +626,9 @@ describe("cross-session learning evaluation", () => {
       expect(agentRuns).toBe(1);
       expect(checkCalls).toBe(0);
       expect(existsSync(join(output, "summary.json"))).toBe(false);
+      const environment = JSON.parse(readFileSync(join(output, "environment.json"), "utf8"));
+      expect(environment.endedAt).not.toBeNull();
+      expect(environment.sleepPrevention.status).not.toBe("active");
       expect(existsSync(reportPath)).toBe(true);
       expect(git(repository, ["log", "--format=%s"])).not.toContain("RepoMind cross-session checkpoint");
       expect(git(repository, ["status", "--short"])).toBe("");
@@ -841,6 +847,65 @@ describe("cross-session learning evaluation", () => {
         },
       });
       expect(fasterFailure.integrity).toEqual({ passed: true, failures: [] });
+      const rebuild = (runs: typeof report.runs) => buildCrossSessionReport({
+        name: experiment.name, repeat: 1, outputDirectory: output,
+        provenance: report.provenance, runs, expected,
+        acceptanceCriteria: { minAgentDurationPairedWinRate: 0 },
+      });
+      const target = (run: typeof report.runs[number]) =>
+        run.sequenceId === "claude-to-opencode" && run.arm === "shared" && run.stageIndex > 0;
+      for (const interruption of [
+        { timedOut: true, exitCode: null, signal: "SIGTERM" as const },
+        { aborted: true, exitCode: null, signal: "SIGTERM" as const },
+        { exitCode: null, signal: "SIGKILL" as const },
+        { error: "spawn ENOENT", exitCode: null },
+      ]) {
+        const interrupted = rebuild(report.runs.map((run) => target(run) ? {
+          ...run,
+          agent: { ...run.agent, ...interruption },
+          publicChecks: [], hiddenChecks: [], maintenance: null,
+          lifecycle: { ...run.lifecycle, status: "abandoned", commitSucceeded: false, commitMs: null, maintenanceMs: null },
+          quality: {
+            ...run.quality, status: "failed", completion: "failed", maintenanceEligible: false,
+            authoritativeVerification: { authority: "none", checks: 0, passed: null, snapshotStable: null },
+          },
+        } : run));
+        expect(interrupted.integrity.passed).toBe(false);
+        expect(interrupted.acceptance.status).toBe("failed");
+        expect(interrupted.integrity.failures).toContainEqual(expect.stringContaining("verification was not run because the Agent was interrupted"));
+        for (const misleading of ["telemetry is inconsistent", "verification changed the worktree", "status does not match"]) {
+          expect(interrupted.integrity.failures.some((failure) => failure.includes(misleading))).toBe(false);
+        }
+        expect(interrupted.comparison.find((metric) => metric.key === "agentDurationMs")?.pairs).toBe(1);
+        const audit = { failures: [] as Array<{ id: string; message: string }> };
+        validateRunIntegrityClaims(audit, interrupted.runs.find(target));
+        expect(audit.failures.some((failure) => failure.id.endsWith(":verification-not-run"))).toBe(true);
+        for (const falseAlarm of [":authoritative-verification", ":verification-snapshot", ":quality-lifecycle"]) {
+          expect(audit.failures.some((failure) => failure.id.endsWith(falseAlarm))).toBe(false);
+        }
+      }
+      const unknownSnapshot = rebuild(report.runs.map((run) => target(run) ? {
+        ...run, quality: { ...run.quality, authoritativeVerification: { ...run.quality.authoritativeVerification, snapshotStable: null } },
+      } : run));
+      expect(unknownSnapshot.integrity.failures).toContainEqual(expect.stringContaining("worktree stability is unknown"));
+      expect(unknownSnapshot.integrity.failures.some((failure) => failure.includes("verification changed"))).toBe(false);
+      const changedSnapshot = rebuild(report.runs.map((run) => target(run) ? {
+        ...run, quality: { ...run.quality, authoritativeVerification: { ...run.quality.authoritativeVerification, snapshotStable: false } },
+      } : run));
+      expect(changedSnapshot.integrity.failures).toContainEqual(expect.stringContaining("verification changed the worktree"));
+      const unverified = rebuild(report.runs.map((run) => target(run) ? {
+        ...run, publicChecks: [], hiddenChecks: [],
+        quality: { ...run.quality, authoritativeVerification: { authority: "none", checks: 0, passed: null, snapshotStable: null } },
+      } : run));
+      expect(unverified.integrity.passed).toBe(false);
+      expect(unverified.integrity.failures).toContainEqual(expect.stringContaining("authoritative verification was not run"));
+      const gap = rebuild(report.runs.map((run) => target(run) ? { ...run, timing: { observationGaps: 1 } } : run));
+      expect(gap.integrity.failures).toContainEqual(expect.stringContaining("duration comparison excluded"));
+      expect(gap.acceptance.status).toBe("failed");
+      expect(gap.comparison.find((metric) => metric.key === "agentDurationMs")?.pairs).toBe(1);
+      expect(gap.comparison.find((metric) => metric.key === "hostLifecycleMs")?.pairs).toBe(1);
+      expect(gap.comparison.find((metric) => metric.key === "totalPromptTokens")?.pairs).toBe(2);
+      expect(gap.runs.find(target)?.lifecycle.agentMs).toBe(report.runs.find(target)?.lifecycle.agentMs);
       expect(fasterFailure.efficiencyCoverage).toEqual({
         totalPairs: 2,
         eligiblePairs: 1,

@@ -12,7 +12,7 @@ export function unverifiedLegacyCommandIds(context: RepositoryContext, memoryId?
       AND EXISTS (SELECT 1 FROM json_each(m.tags_json) WHERE value='verified-command')
       AND NOT EXISTS (
         SELECT 1 FROM memory_evidence me JOIN evidence e ON e.id=me.evidence_id
-        WHERE me.memory_id=m.id AND e.repository_id=m.repository_id AND e.kind='test_result'
+        WHERE me.memory_id=m.id AND e.repository_id=m.repository_id AND e.kind IN ('test_result','command_result')
           AND json_extract(e.metadata_json, '$.exitCode')=0
           AND json_extract(e.metadata_json, '$.verificationSource') IN ('tool-observed','host-verified')
       )

@@ -39,3 +39,37 @@ Codex 从用户级 `~/.codex/config.toml` 读取持久化 MCP 设置。可信仓
 8. 验证、修正或使该 Memory 失效，并检查其 Evidence 和 Audit 历史。
 
 RepoMind 无法自动观察宿主 Agent 的文件、Shell 或测试工具。Agent 必须显式调用 Session start 和 commit。MCP 进程重启后，请向 commit、inspect、validate、correct 和 invalidate 调用传入 `repo_path`。
+
+## 可选结构化交接
+
+`repo_session_commit` 可在 summary 之外提供 handoff，用完整原文段落标注约束和
+剩余工作。例如在现有 session_id、idempotency_key、status 等字段之外添加：
+
+```json
+{
+  "summary": "Review closed.\n\nOnly on Linux, preserve case-sensitive matching.\n\nImplement the parser later.",
+  "handoff": {
+    "version": 1,
+    "constraints": ["Only on Linux, preserve case-sensitive matching."],
+    "remainingWork": ["Implement the parser later."]
+  }
+}
+```
+
+handoff 子对象固定使用 camelCase 的 `remainingWork`；原有外层字段仍叫
+`remaining_work`。同时填写时两数组必须完全相同。每类最多 16 项，每项最多
+2,000 Unicode code points，总计最多 4,000；各项必须是 summary 中唯一且完整的
+段落，不能删掉警告、只取半句或改写文字。无效输入报 INVALID_INPUT，不写入数据。
+
+第一条约束为完整单行且不超过 160 UTF-16 code units 时可用作新 solution 标题；
+否则保留旧标题提取逻辑。正文保留原文，继续执行既有 Secret 脱敏。重复记忆仍
+复用原记录，不重写旧标题。inspect 返回的 agent_summary Evidence.metadata_json
+包含 handoffAudit，可检查段落来源位置、验证证据和实际标题是否应用。
+
+不要在 handoff 里填写 verification、verified 或 Evidence ID。验证审计由系统根据
+提交的 tests/commands Evidence 生成；MCP 自述结果仍为 caller-reported，不会因此
+升级为已验证命令。缺省 handoff 完全兼容旧调用。OpenCode Host 可通过
+`repomind run --runner opencode --task "..." --structured-handoff` 请求可选输出协议，
+默认关闭；MCP 提交不依赖此开关。Host 无效输出记录诊断并回退，显式 MCP 无效输入
+仍拒绝提交。
+完整边界见 [结构化交接设计与验收](structured-handoff-v1.md)。

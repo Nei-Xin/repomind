@@ -18,7 +18,7 @@ import type {
 } from "../protocol/activity.js";
 import { redactDeep } from "../security/redaction.js";
 import { renderInteractiveRecall, type InteractiveRecallRecord } from "./context.js";
-import { verificationSteps, verifyingTestCommand } from "./test-command.js";
+import { assessCommandVerification, verifyingTestCommand } from "./test-command.js";
 
 type SqlValue = string | number | null;
 
@@ -161,13 +161,7 @@ function commandEvidence(rows: readonly ActivityRow[]): Array<Omit<TestEvidenceI
  * (`ls`, `cat`, `grep`) stay in the Evidence without downgrading the task.
  */
 function hasUnresolvedVerification(commands: ReturnType<typeof commandEvidence>): boolean {
-  const latest = new Map<string, boolean>();
-  for (const command of commands) {
-    for (const step of verificationSteps(command.invokedAs ?? command.command, command.exitCode)) {
-      latest.set(step.key, step.passed);
-    }
-  }
-  return [...latest.values()].some((passed) => !passed);
+  return assessCommandVerification(commands).unresolved > 0;
 }
 
 export class InteractiveActivityStore {

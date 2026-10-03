@@ -533,7 +533,8 @@ export function buildAgentReport(input: BuildAgentReportInput): AgentEvalReport 
         }
         if (run.quality.completion === "recovered"
           && (run.quality.status !== "success" || run.quality.commands.failed < 1
-            || run.quality.commands.recovered !== run.quality.commands.failed
+            || run.quality.commands.recovered < 1
+            || run.quality.commands.recovered + (run.quality.commands.nonVerificationFailures ?? 0) !== run.quality.commands.failed
             || run.quality.commands.unrecovered !== 0)) {
           failures.push(`${label}: recovered Host outcome telemetry is inconsistent`);
         }

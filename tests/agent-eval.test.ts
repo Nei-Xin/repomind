@@ -71,8 +71,8 @@ describe("agent event analysis", () => {
       command: value, exitCode, exitCodeKnown: true, summary: "", isTest: false,
     });
     const observed = [
-      command("node --input-type=module -e \"broken probe\"", 1),
-      command("node --input-type=module -e \"corrected probe\"", 0),
+      command("npm run build", 1),
+      command("git status --short", 0),
     ];
     expect(assessOpenCodeOutcome({
       agentExitCode: 0,
@@ -342,8 +342,9 @@ describe("controlled agent evaluation", () => {
           const events: Array<Record<string, unknown>> = [];
           if (request.cwd.includes("host-repomind-1")) {
             events.push(
-              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "node --input-type=module -e \"broken probe\"" }, output: "failed", metadata: { exit: 1 } } } },
-              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "node --input-type=module -e \"corrected probe\"" }, output: "passed", metadata: { exit: 0 } } } },
+              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "ls missing" }, output: "not found", metadata: { exit: 1 } } } },
+              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "npm run build" }, output: "failed", metadata: { exit: 1 } } } },
+              { type: "tool_use", part: { tool: "shell", state: { status: "completed", input: { command: "git status --short" }, output: "passed", metadata: { exit: 0 } } } },
             );
           }
           events.push({ type: "step_finish", part: { reason: "stop", tokens: { input: 10, output: 2 } } });
@@ -448,7 +449,7 @@ describe("controlled agent evaluation", () => {
       expect(hostRun.quality).toMatchObject({
         completion: "recovered",
         maintenanceEligible: true,
-        commands: { failed: 1, recovered: 1, unrecovered: 0 },
+        commands: { failed: 2, recovered: 1, unrecovered: 0, nonVerificationFailures: 1 },
         authoritativeVerification: { authority: "benchmark-manifest", checks: 2, passed: true, snapshotStable: true },
       });
       expect(hostRun.maintenanceMs).toEqual(expect.any(Number));

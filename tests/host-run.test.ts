@@ -476,7 +476,7 @@ describe("daily OpenCode host runner", () => {
     expect(prompt).toContain("## Repository Profile (L3)");
   });
 
-  it("commits a failed non-test command as partial without derived maintenance", async () => {
+  it("commits an unresolved build failure as partial without derived maintenance", async () => {
     scratch = mkdtempSync(join(tmpdir(), "repomind-host-failed-command-"));
     const repository = createRepository(scratch);
     const maintenance = vi.spyOn(RepositoryMemoryCore.prototype, "maintainDerivedLayers");
@@ -520,18 +520,18 @@ describe("daily OpenCode host runner", () => {
     const repository = createRepository(scratch);
     const events = [
       { type: "tool_use", part: { tool: "bash", state: {
-        status: "completed", input: { command: "node --input-type=module -e \"broken probe\"" },
+        status: "completed", input: { command: "npm run build" },
         output: "probe failed", metadata: { exit: 1 },
       } } },
       { type: "tool_use", part: { tool: "bash", state: {
-        status: "completed", input: { command: "node --input-type=module -e \"corrected probe\"" },
+        status: "completed", input: { command: "git status --short" },
         output: "probe passed", metadata: { exit: 0 },
       } } },
       { type: "text", part: { text: "The corrected implementation is verified." } },
     ];
     const report = await runOpenCodeHost({
       repository,
-      task: "Recover a failed exploratory probe",
+      task: "Recover a failed build with Host verification",
       dataDirectory: join(scratch, "data"),
       outputDirectory: join(scratch, "output"),
       execute: async () => processResult({ stdout: `${events.map(JSON.stringify).join("\n")}\n` }),

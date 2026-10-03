@@ -38,6 +38,7 @@ import {
   type CrossSessionStageRun,
 } from "./cross-session-report.js";
 import type { CheckResult } from "./report.js";
+import { startEvaluationEnvironment, type EvaluationEnvironment } from "./environment.js";
 
 export interface CrossSessionProcessRequest {
   command: string;
@@ -545,6 +546,7 @@ async function executeStage(input: {
       commitMs: host.session.commitMs,
       commitSucceeded: host.commit !== null,
       maintenanceMs: host.session.maintenanceMs,
+      abandonMs: host.session.abandonMs,
       hostLifecycleMs,
       retrievedMemoryIds: host.session.retrievedMemoryIds,
       retrievedModuleNarrativeIds: host.session.retrievedModuleNarrativeIds,
@@ -581,6 +583,23 @@ export async function runCrossSessionEvaluation(
   const stageAgents = resolveStageAgents(options.manifest, defaultRunner, options.model);
   const outputDirectory = resolve(options.outputDirectory);
   prepareOutputDirectory(outputDirectory);
+  const environment = await startEvaluationEnvironment({
+    onUpdate: (report) => writeFileSync(join(outputDirectory, "environment.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8"),
+  });
+  try {
+    return await executeEvaluation(options, stageAgents, outputDirectory, environment);
+  } finally {
+    await environment.stop();
+  }
+}
+
+async function executeEvaluation(
+  options: RunCrossSessionEvaluationOptions,
+  stageAgents: Map<string, ResolvedStageAgent>,
+  outputDirectory: string,
+  environment: EvaluationEnvironment,
+): Promise<CrossSessionEvalReport> {
+  const defaultRunner = options.runner ?? "opencode";
   const execute = options.execute ?? defaultExecutor;
   const adapterFactory: CrossSessionAdapterFactory = options.adapterFactory
     ?? ((runner, factoryOptions) => createAgentHostAdapter(runner, factoryOptions));
@@ -649,6 +668,7 @@ export async function runCrossSessionEvaluation(
         const dataDirectory = arm === "shared"
           ? sharedDataDirectory
           : join(outputDirectory, "data", `${sequence.id}-${iteration}-isolated-s${stageIndex + 1}`);
+        const gapsBefore = environment.sample();
         const run = await executeStage({
           sequence,
           stage,
@@ -667,6 +687,7 @@ export async function runCrossSessionEvaluation(
           adapter: adapterFor(stageAgent.runner),
           execute,
         });
+        run.timing = { observationGaps: environment.sample() - gapsBefore };
         runs.push(run);
         sourceRepository = run.repository;
         sourceCommit = run.checkpointCommit;
@@ -674,7 +695,9 @@ export async function runCrossSessionEvaluation(
       }
     }
   }
+  await environment.stop();
   const report = buildCrossSessionReport({
+    environment: environment.snapshot(),
     name: options.manifest.name,
     repeat: options.repeat,
     outputDirectory,

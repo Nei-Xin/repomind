@@ -14,7 +14,8 @@ import type {
 import type { BeginHostRunInput, FinishHostRunInput, HostRunRecord } from "../../domain/types.js";
 import { RepoMindError } from "../../errors.js";
 import { renderHostContext } from "./context.js";
-import { isVerifyingTestCommand } from "../../activity/test-command.js";
+import { assessCommandVerification, isVerifyingTestCommand } from "../../activity/test-command.js";
+import { captureHostHandoff, type HostHandoffCapture, type HostHandoffReport } from "../../extraction/host-handoff.js";
 
 export interface HostLifecycleStart {
   sessionId: string;
@@ -37,6 +38,7 @@ export interface OpenCodeTraceAssessment {
 
 export interface OpenCodeOutcome {
   summary: string;
+  handoff?: HostHandoffCapture;
   commands: OpenCodeCommandEvidence[];
   trace: OpenCodeTraceAssessment;
 }
@@ -44,6 +46,7 @@ export interface OpenCodeOutcome {
 export type HostOutcomeQualityFlag =
   | "recovered-command-failure"
   | "unrecovered-command-failure"
+  | "unresolved-verification"
   | "authoritative-verification-failed"
   | "authoritative-verification-unavailable"
   | "verification-snapshot-changed"
@@ -64,7 +67,11 @@ export interface HostOutcomeAssessment {
     failed: number;
     recovered: number;
     unrecovered: number;
+    /** Failed/unknown commands without recognized verification steps; retained but not status-blocking. */
+    nonVerificationFailures?: number;
   };
+  /** Absent in older reports. Unique verification keys and those still unresolved after Host checks. */
+  verification?: { steps: number; unresolved: number };
   authoritativeVerification: {
     authority: "none" | "host-config" | "benchmark-manifest";
     checks: number;
@@ -82,6 +89,7 @@ export interface HostLifecycleCommit {
   maintenanceBefore: DerivedLayerSnapshot | null;
   maintenanceAfter: DerivedLayerSnapshot | null;
   maintenanceTelemetryErrors: string[];
+  handoff?: HostHandoffReport;
 }
 
 export interface DerivedLayerSnapshot {
@@ -180,6 +188,7 @@ export function commitHostLifecycle(input: {
   summary: string;
   tests?: TestEvidenceInput[];
   commands?: TestEvidenceInput[];
+  handoff?: HostHandoffCapture;
 }): HostLifecycleCommit {
   const core = new RepositoryMemoryCore(input.repository, coreOptions(input.dataDirectory));
   try {
@@ -191,12 +200,22 @@ export function commitHostLifecycle(input: {
       summary: input.summary,
       ...(input.tests?.length ? { tests: input.tests } : {}),
       ...(input.commands?.length ? { commands: input.commands } : {}),
-    }, { tests: "host-verified", commands: "tool-observed" });
+    }, {
+      tests: "host-verified", commands: "tool-observed", solutionPolicy: "repository-outcome",
+      ...(input.handoff ? { hostHandoff: input.handoff } : {}),
+    });
+    let handoff: HostHandoffReport | undefined;
+    if (input.handoff) {
+      const row = core.context.database.raw.prepare("SELECT id,metadata_json FROM evidence WHERE session_id=? AND kind='agent_summary'")
+        .get(input.sessionId) as { id: string; metadata_json: string };
+      handoff = { requested: true, persisted: true, summaryEvidenceId: row.id, audit: JSON.parse(row.metadata_json).handoffAudit };
+    }
     const commitMs = round(performance.now() - commitStarted);
     if (result.status !== "committed") {
       return {
         commitMs,
         result,
+        ...(handoff ? { handoff } : {}),
         maintenanceMs: null,
         maintenance: null,
         maintenanceBefore: null,
@@ -216,6 +235,7 @@ export function commitHostLifecycle(input: {
     return {
       commitMs,
       result,
+      ...(handoff ? { handoff } : {}),
       maintenanceMs: round(performance.now() - maintenanceStarted),
       maintenance,
       maintenanceBefore: before.snapshot,
@@ -294,7 +314,13 @@ export function assessOpenCodeOutcome(input: {
   stdoutTruncated?: boolean;
   repoMindCalls?: number;
 }): HostOutcomeAssessment {
-  const failed = input.commands.filter((command) => command.exitCode !== 0).length;
+  const failedCommands = input.commands.map((command) => !command.exitCodeKnown || command.exitCode !== 0);
+  const failed = failedCommands.filter(Boolean).length;
+  const verification = assessCommandVerification(input.commands.map((command) => ({
+    ...command, exitCode: command.exitCodeKnown ? command.exitCode : null,
+  })));
+  const nonVerificationFailures = verification.commands.filter((command, index) =>
+    failedCommands[index] && command.steps.length === 0).length;
   const authoritativeChecks = input.authoritativeChecks ?? [];
   const authoritativePassed = !authoritativeChecks.length
     ? null
@@ -312,22 +338,26 @@ export function assessOpenCodeOutcome(input: {
   };
   const traceIncomplete = trace.malformedLines > 0
     || trace.explicitErrors > 0
-    || trace.unknownCommandResults > 0
+    // Attributed unknown exits are handled per verification step. Unattributed
+    // missing command results still indicate an incomplete collector trace.
+    || trace.unknownCommandResults > input.commands.filter((command) => !command.exitCodeKnown).length
     || trace.terminal !== "clean-stop";
   const protocolViolation = (input.repoMindCalls ?? 0) > 0;
   const verificationUnavailable = authoritativeChecks.length > 0 && authoritativePassed === null;
   const verificationSnapshotChanged = authoritativeChecks.length > 0 && input.verificationSnapshotStable !== true;
-  const recoveryAuthorized = failed > 0
-    && authoritativePassed === true
+  const recoveryAuthorized = authoritativePassed === true
     && input.verificationSnapshotStable === true
     && !traceIncomplete
     && !input.stdoutTruncated
     && !protocolViolation;
-  const recovered = recoveryAuthorized ? failed : 0;
-  const unrecovered = failed - recovered;
+  const recovered = verification.commands.filter((command, index) => failedCommands[index]
+    && command.steps.length > 0 && (command.resolved || recoveryAuthorized)).length;
+  const unrecovered = failed - recovered - nonVerificationFailures;
+  const unresolvedVerification = recoveryAuthorized ? 0 : verification.unresolved;
   const qualityFlags: HostOutcomeQualityFlag[] = [];
   if (recovered > 0) qualityFlags.push("recovered-command-failure");
   if (unrecovered > 0) qualityFlags.push("unrecovered-command-failure");
+  if (unresolvedVerification > 0 && unrecovered === 0) qualityFlags.push("unresolved-verification");
   if (authoritativePassed === false) qualityFlags.push("authoritative-verification-failed");
   if (verificationUnavailable) qualityFlags.push("authoritative-verification-unavailable");
   if (verificationSnapshotChanged) qualityFlags.push("verification-snapshot-changed");
@@ -343,7 +373,7 @@ export function assessOpenCodeOutcome(input: {
     completion = "failed";
     status = "failed";
   } else if (
-    unrecovered > 0
+    unresolvedVerification > 0
     || verificationUnavailable
     || verificationSnapshotChanged
     || traceIncomplete
@@ -361,7 +391,8 @@ export function assessOpenCodeOutcome(input: {
     status,
     maintenanceEligible: status === "success",
     qualityFlags,
-    commands: { observed: input.commands.length, failed, recovered, unrecovered },
+    commands: { observed: input.commands.length, failed, recovered, unrecovered, nonVerificationFailures },
+    verification: { steps: verification.steps, unresolved: unresolvedVerification },
     authoritativeVerification: {
       authority: authoritativeChecks.length ? input.authoritativeVerificationAuthority ?? "host-config" : "none",
       checks: authoritativeChecks.length,
@@ -372,8 +403,10 @@ export function assessOpenCodeOutcome(input: {
   };
 }
 
-export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string): OpenCodeOutcome {
+export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string, options: { structuredHandoff?: boolean; stdoutTruncated?: boolean } = {}): OpenCodeOutcome {
   let summary = "";
+  let finalStepTexts = 0;
+  let finalTextImmediatelyBeforeStop = false;
   const commands: OpenCodeCommandEvidence[] = [];
   let parsedEvents = 0;
   let malformedLines = 0;
@@ -391,10 +424,19 @@ export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string): 
       continue;
     }
     parsedEvents += 1;
+    const previousEvent = lastEvent;
     lastEvent = event;
     if (event.type === "error") explicitErrors += 1;
     const part = event.part as Record<string, unknown> | undefined;
-    if (event.type === "text" && typeof part?.text === "string" && part.text.trim()) summary = part.text.trim();
+    if (event.type === "step_start" || event.type === "tool_use") finalStepTexts = 0;
+    if (event.type === "text" && typeof part?.text === "string" && part.text.trim()) {
+      summary = options.structuredHandoff ? part.text : part.text.trim();
+      finalStepTexts++;
+    }
+    if (event.type === "step_finish") {
+      finalTextImmediatelyBeforeStop = part?.reason === "stop" && previousEvent?.type === "text" && finalStepTexts === 1;
+      finalStepTexts = 0;
+    }
     if (event.type !== "tool_use" || (part?.tool !== "bash" && part?.tool !== "shell")) continue;
     const state = (part.state ?? {}) as Record<string, unknown>;
     const input = state.input as Record<string, unknown> | undefined;
@@ -418,6 +460,10 @@ export function analyzeOpenCodeOutcome(jsonl: string, fallbackSummary: string): 
       : "incomplete";
   return {
     summary: boundedHostSummary(summary || fallbackSummary),
+    ...(options.structuredHandoff ? { handoff: captureHostHandoff(summary || fallbackSummary, {
+      finalAnswer: terminal === "clean-stop" && malformedLines === 0 && finalTextImmediatelyBeforeStop,
+      stdoutTruncated: options.stdoutTruncated === true,
+    }) } : {}),
     commands,
     trace: {
       parsedEvents,

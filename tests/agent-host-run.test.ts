@@ -68,7 +68,7 @@ function failedCommandOutcome(): AgentOutcome {
   return {
     summary: "A failed probe was corrected before the final handoff.",
     commands: [{
-      command: "fixture probe",
+      command: "npm run build",
       exitCode: 1,
       exitCodeKnown: true,
       isTest: false,

@@ -37,9 +37,43 @@ repetition, so learning cannot leak between repetitions.
 | RepoMind data directory | New for every stage | Reused by all stages |
 | Expected transfer-stage recall | Zero | Prior L1/L2/L3 may be injected |
 
-The arm order alternates by repetition. Odd repetitions run isolated first;
-even repetitions run shared first. This reduces, but cannot eliminate, bias
+The arm order alternates by sequence index and repetition: the first sequence
+starts isolated first, the second starts shared first, and each sequence reverses
+order on its next repetition. This reduces, but cannot eliminate, bias
 from model-service or machine drift over time.
+
+## Environment and interruption diagnostics
+
+On macOS, cross-session evaluations automatically run
+`/usr/bin/caffeinate -i -w <host PID>` to prevent idle sleep for this evaluation.
+The assertion is released on success, exceptions, or host process exit. This
+does not change system settings or prevent lid closure or manual sleep. Other
+platforms report `unsupported`. Failure to start the guard or premature exit
+is recorded as `unavailable` or `interrupted`; evaluation continues with that
+limitation recorded.
+
+`environment.json` records protection status from startup and sets `endedAt`
+on cleanup, including when evaluation fails before producing a summary. A
+completed summary also includes the same `environment` object. Sampling runs
+every second; an observed interval longer than 16 seconds or a backward wall
+clock change is recorded in `observationGaps`. These are scheduling or clock
+interruptions, potentially caused by sleep, a blocked event loop, or clock
+adjustment. They are not proof of sleep; no detected gap does not prove a stable
+environment either.
+
+Each stage records `timing.observationGaps`. If either arm has a stage gap, its
+pair is excluded from `agentDurationMs` and `hostLifecycleMs` comparisons;
+raw durations remain available. Token and file-read comparisons retain their
+existing successful-pair eligibility. Affected stages fail integrity, so the
+evaluation cannot claim strict success. These v4 fields are optional for older
+reports; rebuilding an old summary does not infer historical sleep events.
+
+When the Agent times out, is aborted, receives a terminating signal, or fails to
+start, the Host skips authoritative verification and closes the session as
+`abandoned`. Diagnostics report verification as not run. `snapshotStable: null`
+means unknown; only `false` means verification changed the worktree. Interrupted
+evaluations still fail strict integrity. Actual failed checks and corrupted
+verification telemetry remain distinct failures.
 
 ## Stage lifecycle
 

@@ -1,10 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { initializeRepository } from "../src/repository.js";
 import { createTestRepository, git } from "./helpers.js";
+
+const solutionFixtures = [
+  ...JSON.parse(readFileSync(new URL("./fixtures/solution-handoffs.json", import.meta.url), "utf8")),
+  ...JSON.parse(readFileSync(new URL("./fixtures/solution-handoffs-heldout.json", import.meta.url), "utf8")),
+] as Array<{ id: string; summary: string; expectedContent: string; expectedTitle: string }>;
 
 describe("repository memory core", () => {
   let repository: string;
@@ -532,6 +537,51 @@ describe("repository memory core", () => {
     expect(JSON.parse(diffEvidence.metadata_json)).toMatchObject({ files: ["ops/completed-review.txt"] });
     expect(core.rebuildModuleNarratives()).toMatchObject({ created: 0, narratives: [] });
     core.close();
+  });
+
+  it("stores a decision-first solution but preserves the original summary Evidence and commit idempotency", () => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const started = core.startSession({ task: "Close the digest review" });
+      writeFileSync(join(repository, "digest.txt"), "Use native crypto.\n");
+      const decision = 'Implement `stableDigest` using the built-in `node:crypto` `createHash` function, without third-party packages.';
+      const summary = [
+        'Completed the coordination-only change.',
+        '- Deleted only `ops/review.txt`.\n- Ran `npm test`: 4 passed.\n- Did not implement the follow-up.',
+        `Preserved decision for the next maintainer: ${decision} Hash UTF-8 input as lowercase SHA-256 hexadecimal.`,
+      ].join('\n\n');
+      const input = { sessionId: started.sessionId, idempotencyKey: "decision-first", status: "success" as const, summary };
+      const result = core.commitSession(input);
+      expect(core.commitSession(input)).toEqual(result);
+      const solution = core.context.database.raw.prepare("SELECT id,title,content FROM memories WHERE type='solution'").get() as { id: string; title: string; content: string };
+      expect(solution.title).toBe(decision);
+      expect(solution.content.startsWith(decision)).toBe(true);
+      expect(solution.content).toContain('- Did not implement the follow-up.');
+      expect(solution.content).toContain('Hash UTF-8 input as lowercase SHA-256 hexadecimal.');
+      const evidence = core.context.database.raw.prepare("SELECT e.content FROM evidence e JOIN memory_evidence me ON me.evidence_id=e.id WHERE me.memory_id=? AND e.kind='agent_summary'").get(solution.id) as { content: string };
+      expect(evidence.content).toBe(summary);
+      expect(core.context.database.raw.prepare("SELECT file_path FROM memory_files WHERE memory_id=?").all(solution.id))
+        .toEqual([expect.objectContaining({ file_path: "digest.txt" })]);
+    } finally { core.close(); }
+  });
+
+  it.each(solutionFixtures)("stores the real handoff $id with raw evidence and stable commit identity", (fixture) => {
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const started = core.startSession({ task: "Preserve the approved follow-up constraints" });
+      writeFileSync(join(repository, "README.txt"), "Closed review.\n");
+      const input = { sessionId: started.sessionId, idempotencyKey: fixture.id, status: "success" as const, summary: fixture.summary };
+      const result = core.commitSession(input);
+      expect(core.commitSession(input)).toEqual(result);
+      const solutions = core.context.database.raw.prepare("SELECT id,title,content FROM memories WHERE type='solution'").all() as Array<{ id: string; title: string; content: string }>;
+      expect(solutions).toHaveLength(1);
+      const solution = solutions[0]!;
+      expect(solution).toMatchObject({ title: fixture.expectedTitle, content: fixture.expectedContent });
+      const evidence = core.context.database.raw.prepare("SELECT e.content FROM evidence e JOIN memory_evidence me ON me.evidence_id=e.id WHERE me.memory_id=? AND e.kind='agent_summary'").all(solution.id);
+      expect(evidence).toEqual([expect.objectContaining({ content: fixture.summary })]);
+      expect(core.context.database.raw.prepare("SELECT file_path FROM memory_files WHERE memory_id=?").all(solution.id))
+        .toEqual([expect.objectContaining({ file_path: "README.txt" })]);
+    } finally { core.close(); }
   });
 
   it("associates extracted memories only with files changed during the session", () => {

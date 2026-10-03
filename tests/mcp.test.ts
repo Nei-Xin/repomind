@@ -26,6 +26,56 @@ describe("MCP server", () => {
     delete process.env.REPOMIND_DATA_DIR;
   });
 
+  it("commits structured handoffs through MCP and rejects forged or mismatched annotations atomically", async () => {
+    const server = createMcpServer();
+    const client = new Client({ name: "repomind-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const core = new RepositoryMemoryCore(repository);
+    try {
+      const tools = await client.listTools();
+      expect(tools.tools.find((tool) => tool.name === "repo_session_commit")!.inputSchema.properties).toHaveProperty("handoff");
+      const session = core.startSession({ task: "Close parser review" });
+      const constraint = "Only on Linux, preserve case-sensitive matching.";
+      const remaining = "Implement the parser later.";
+      const summary = `Review closed.\n\n${constraint}\n\n${remaining}`;
+      const handoff = { version: 1, constraints: [constraint], remainingWork: [remaining] };
+      const args = {
+        repo_path: repository, session_id: session.sessionId, idempotency_key: "structured",
+        status: "success", summary, handoff,
+        remaining_work: [remaining], tests: [{ command: "npm test", exit_code: 0, summary: "reported pass" }],
+      };
+      const before = core.context.database.raw.prepare("SELECT * FROM evidence").all();
+      for (const invalid of [
+        { ...args, handoff: { ...handoff, verification: [{ verified: true }] } },
+        { ...args, handoff: { ...handoff, constraints: ["preserve case-sensitive matching."] } },
+        { ...args, remaining_work: [] },
+      ]) {
+        const response = await client.callTool({ name: "repo_session_commit", arguments: invalid });
+        expect(response.isError).toBe(true);
+        expect(core.context.database.raw.prepare("SELECT * FROM evidence").all()).toEqual(before);
+        expect(core.context.database.raw.prepare("SELECT status FROM sessions WHERE id=?").get(session.sessionId)).toEqual({ status: "open" });
+      }
+      const response = await client.callTool({ name: "repo_session_commit", arguments: args });
+      expect(response.isError).not.toBe(true);
+      expect(await client.callTool({ name: "repo_session_commit", arguments: args })).toEqual(response);
+      const solution = core.search("case-sensitive", { types: ["solution"] })[0]!;
+      expect(solution).toMatchObject({ title: constraint, content: summary });
+      const row = core.context.database.raw.prepare("SELECT metadata_json FROM evidence WHERE session_id=? AND kind='agent_summary'").get(session.sessionId) as { metadata_json: string };
+      expect(JSON.parse(row.metadata_json)).toMatchObject({
+        remainingWork: [remaining], handoffAudit: {
+          rawHandoff: handoff, solution: { memoryId: solution.id, titleApplied: true },
+          verification: [{ command: "npm test", exitCode: 0, source: "caller-reported", evidenceId: expect.stringMatching(/^evd_/) }],
+        },
+      });
+    } finally {
+      core.close();
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("publishes session and memory governance tools and starts a session through the protocol", async () => {
     const server = createMcpServer();
     const client = new Client({ name: "repomind-test", version: "1.0.0" });

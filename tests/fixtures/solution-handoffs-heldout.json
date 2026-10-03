@@ -1,0 +1,50 @@
+[
+  {
+    "id": "heldout-etag-contract-1",
+    "source": {
+      "experiment": "summary-heldout-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "eb47261591bd0c1659cf3018b49a8ecb532f9a9df3052b925dd0e69a1fabe628"
+    },
+    "summary": "Completed the coordination-only ETag migration closeout.\n\n- Deleted only `ops/etag-migration-note.txt`.\n- Preserved the durable contract for the follow-up:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - Hash with SHA-1 over the UTF-8 value.\n  - Return unpadded base64url.\n  - No package dependency.\n  - Empty strings and Unicode values are valid; preserve exact encoding behavior.\n- Application code, package files, and tests were unchanged.\n- Tests: `npm test` — **4 passed, 0 failed**.\n- Remaining work: implement the ETag behavior in the separate follow-up.",
+    "expectedContent": "- Preserved the durable contract for the follow-up:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - Hash with SHA-1 over the UTF-8 value.\n  - Return unpadded base64url.\n  - No package dependency.\n  - Empty strings and Unicode values are valid; preserve exact encoding behavior.\n- Application code, package files, and tests were unchanged.\n- Tests: `npm test` — **4 passed, 0 failed**.\n- Remaining work: implement the ETag behavior in the separate follow-up.\n\n- Deleted only `ops/etag-migration-note.txt`.",
+    "expectedTitle": "Use Node’s built-in `node:crypto` `createHash`."
+  },
+  {
+    "id": "heldout-trace-contract-1",
+    "source": {
+      "experiment": "summary-heldout-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "8ce8165d58a7948b241060211ee74402490da23238fd537baa4b7425bc537d6b"
+    },
+    "summary": "Completed the coordination-only trace migration closeout.\n\n- Deleted only `ops/trace-header-note.txt`.\n- Application code, package files, and tests were unchanged.\n- Durable contract for the follow-up:\n  - Accept W3C `traceparent` version `00` only.\n  - Require exactly 32 lowercase hexadecimal trace-ID characters.\n  - Require exactly 16 lowercase hexadecimal parent-ID characters.\n  - Allow flags `00` or `01`.\n  - Reject all-zero trace and parent IDs.\n  - Preserve optional `tracestate` as an opaque string without trimming or parsing.\n  - Return `{ traceId, parentId, sampled, state }`.\n  - `sampled` is `true` only for flags `01`; `state` is the original tracestate or `undefined`.\n  - Invalid traceparent values throw `TypeError`.\n- Verification: `npm test` passed — 4 tests, 0 failures.\n- Remaining work: implement the trace-header parser in the separate follow-up.",
+    "expectedContent": "- Durable contract for the follow-up:\n  - Accept W3C `traceparent` version `00` only.\n  - Require exactly 32 lowercase hexadecimal trace-ID characters.\n  - Require exactly 16 lowercase hexadecimal parent-ID characters.\n  - Allow flags `00` or `01`.\n  - Reject all-zero trace and parent IDs.\n  - Preserve optional `tracestate` as an opaque string without trimming or parsing.\n  - Return `{ traceId, parentId, sampled, state }`.\n  - `sampled` is `true` only for flags `01`; `state` is the original tracestate or `undefined`.\n  - Invalid traceparent values throw `TypeError`.\n- Verification: `npm test` passed — 4 tests, 0 failures.\n- Remaining work: implement the trace-header parser in the separate follow-up.\n\n- Deleted only `ops/trace-header-note.txt`.\n- Application code, package files, and tests were unchanged.",
+    "expectedTitle": "Accept W3C `traceparent` version `00` only."
+  },
+  {
+    "id": "heldout-etag-contract-2",
+    "source": {
+      "experiment": "summary-heldout-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "b951b97e8a3a588258bed5b5c57a9f3f21b67f3f01ff1088516398c7e7cc90f8"
+    },
+    "summary": "Completed the coordination-only etag migration closeout.\n\n- Deleted only `ops/etag-migration-note.txt`.\n- Application code, package files, and tests remain unchanged.\n- Durable contract for the follow-up implementation:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - Hash with SHA-1.\n  - Hash the exact UTF-8 value.\n  - Return base64url encoding without padding.\n  - Support empty strings and Unicode values exactly.\n  - Add no package dependency.\n- Tests: `npm test` passed — 4 tests passed, 0 failed.\n- Remaining work: implement the ETag contract in the separate follow-up.",
+    "expectedContent": "- Durable contract for the follow-up implementation:\n  - Use Node’s built-in `node:crypto` `createHash`.\n  - Hash with SHA-1.\n  - Hash the exact UTF-8 value.\n  - Return base64url encoding without padding.\n  - Support empty strings and Unicode values exactly.\n  - Add no package dependency.\n- Tests: `npm test` passed — 4 tests passed, 0 failed.\n- Remaining work: implement the ETag contract in the separate follow-up.\n\n- Deleted only `ops/etag-migration-note.txt`.\n- Application code, package files, and tests remain unchanged.",
+    "expectedTitle": "Use Node’s built-in `node:crypto` `createHash`."
+  },
+  {
+    "id": "heldout-trace-contract-2",
+    "source": {
+      "experiment": "summary-heldout-20261002",
+      "model": "sub2api/gpt-6-luna",
+      "opencodeVersion": "1.18.32",
+      "sha256": "a5b427e31019e36947f015ec2de8ad63bb909a5b3a7c05e65b814808b2443241"
+    },
+    "summary": "Deleted only `ops/trace-header-note.txt`. Application code, package files, and tests remain unchanged.\n\n**Durable contract for the follow-up:** Accept W3C `traceparent` version `00` only. Require a 32-character lowercase hexadecimal trace ID, a 16-character lowercase hexadecimal parent ID, and flags of `00` or `01`; reject all-zero trace or parent IDs. Preserve optional `tracestate` as an opaque string—do not trim or parse it. Return a plain object with `traceId`, `parentId`, `sampled` (true only for `01`), and `state` (the tracestate string or `undefined`). Invalid traceparent values throw `TypeError`.\n\n**Tests:** `npm test` passed: 4 passed, 0 failed.\n\n**Remaining work:** Implement the trace parser in the separate follow-up.",
+    "expectedContent": "**Durable contract for the follow-up:** Accept W3C `traceparent` version `00` only. Require a 32-character lowercase hexadecimal trace ID, a 16-character lowercase hexadecimal parent ID, and flags of `00` or `01`; reject all-zero trace or parent IDs. Preserve optional `tracestate` as an opaque string—do not trim or parse it. Return a plain object with `traceId`, `parentId`, `sampled` (true only for `01`), and `state` (the tracestate string or `undefined`). Invalid traceparent values throw `TypeError`.\n\n**Tests:** `npm test` passed: 4 passed, 0 failed.\n\n**Remaining work:** Implement the trace parser in the separate follow-up.\n\nDeleted only `ops/trace-header-note.txt`. Application code, package files, and tests remain unchanged.",
+    "expectedTitle": "Accept W3C `traceparent` version `00` only."
+  }
+]

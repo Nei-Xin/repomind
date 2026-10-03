@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import type { CommitSessionInput } from "../domain/types.js";
 import { RepoMindError } from "../errors.js";
+import { prepareExplicitHandoff, structuredHandoffSchema } from "../extraction/structured-handoff.js";
 
 const resultItemSchema = z.object({
   command: z.string().min(1),
@@ -19,6 +20,7 @@ const commitInputSchema = z.object({
   tests: z.array(resultItemSchema).optional(),
   commands: z.array(resultItemSchema).optional(),
   remainingWork: z.array(z.string().min(1)).optional(),
+  handoff: structuredHandoffSchema.optional(),
 }).strict();
 
 export function parseCommitInput(value: unknown): CommitSessionInput {
@@ -29,6 +31,7 @@ export function parseCommitInput(value: unknown): CommitSessionInput {
     });
   }
   const data = parsed.data;
+  if (data.handoff !== undefined) prepareExplicitHandoff(data.summary, data.handoff, data.remainingWork);
   return {
     sessionId: data.sessionId,
     idempotencyKey: data.idempotencyKey,
@@ -38,6 +41,7 @@ export function parseCommitInput(value: unknown): CommitSessionInput {
     ...(data.tests ? { tests: data.tests } : {}),
     ...(data.commands ? { commands: data.commands } : {}),
     ...(data.remainingWork ? { remainingWork: data.remainingWork } : {}),
+    ...(data.handoff !== undefined ? { handoff: data.handoff } : {}),
   };
 }
 

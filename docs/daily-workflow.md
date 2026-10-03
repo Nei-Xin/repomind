@@ -1,5 +1,69 @@
 # Daily repository workflow
 
+Host and interactive automatic tasks share ordered test/build outcome tracking.
+Failed exploration (`ls`, `cat`, `rg`, `git status`) remains evidence without
+independently making a task partial. The latest result for each recognized
+verification step decides: a matching passing rerun resolves a failure, while
+a later failure reopens it. Directory, environment, and argument differences
+remain distinct; both steps of `build && test` must resolve. Masked exits from
+pipes or `|| true`, and unknown test exits, cannot establish a pass. Recognition
+uses the built-in command parser, not arbitrary custom-script or shell analysis.
+
+Host integrity gates remain separate: malformed/incomplete events, truncated
+output, and protocol violations still produce partial outcomes. Provider nonzero
+exits or failed authoritative checks remain failed; timeouts/interruption retain
+the abandoned lifecycle. Passing authoritative verification on a stable snapshot
+can still resolve verification failures. Unknown exits attributed to exploratory
+commands are diagnostic only; unattributed missing results remain inconclusive.
+`quality.commands.failed` retains nonzero/unknown command counts;
+`nonVerificationFailures` counts those that do not block status, while
+`recovered/unrecovered` count verification command failures.
+`quality.verification` reports distinct verification keys and unresolved keys.
+An `unknown-command-result` flag alone no longer implies a partial task.
+
+Automatic Host runs (OpenCode and Claude) and interactive task completion share
+the same solution gate: a successful task must change repository files relative
+to its starting snapshot, or persist trusted passing test/Host verification
+evidence. Read-only answers remain session, summary Evidence, and run/activity
+records. Existing dirty files alone do not qualify; additions, deletions, and
+changes committed during the task do. File associations only reference surviving
+files. Prose claims, exploratory commands, and a build alone do not count as a
+passed test. Hidden checks without persisted public evidence do not qualify on
+their own. Unknown exits remain in traces/activity instead of command Evidence.
+Explicit CLI/MCP commits retain their existing submission semantics; historical
+memories and sessions are not migrated.
+
+Passing tool-collected tests use their canonical test command as the command-memory
+identity. A later passing run in another session updates that same memory, links new
+`test_result`/`command_result` Evidence, and refreshes its validation time. Command
+memories marked `invalid` or `superseded` keep their historical identity and are not
+reactivated or copied when new output appears.
+
+Explicit JSON commits can optionally annotate complete source paragraphs using
+`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` alongside
+`sessionId`, `idempotencyKey`, `status`, and `summary`. Submit with
+`repomind commit --input result.json --repo /path/to/repository --json`.
+The same validation rules as the [MCP handoff](mcp-integration.md#optional-structured-handoff)
+apply; CLI keys, including the optional outer `remainingWork`, use camelCase.
+Invalid annotations leave the session open for a corrected submission. A prose
+claim that tests passed does not become independently verified command evidence.
+
+OpenCode Host can request the optional protocol with:
+
+```sh
+repomind run --runner opencode --task "Complete the task and hand off constraints" --structured-handoff
+```
+
+The flag is off by default, applies only to `run`, and rejects unsupported adapters
+before starting them. Missing or invalid output falls back to free-text handling
+without causing a protocol-only retry or status change. The optional report field
+`handoff` records persistence, the summary Evidence ID, acceptance/rejection reasons,
+and whether the constraint title was actually stored. Full final output remains
+Evidence; accepted solution content uses the prose before the terminal JSON block.
+`attempts[].prompt` audits each fresh/resume prompt. Protocol instructions count
+toward `promptChars`, outside the recalled-memory character budget. Real-provider
+reliability and token benefits have not yet been established for this protocol.
+
 RepoMind v0.10 adds two pieces beyond the daily `repomind run` command:
 reviewable cold-start candidates and persistent run history.
 

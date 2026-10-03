@@ -133,6 +133,66 @@ describe("cross-process CLI end-to-end", () => {
     expect(inspected.audit.length).toBeGreaterThan(0);
   });
 
+  it("commits a structured handoff from JSON and exposes its source audit across processes", () => {
+    cli(repository, data, "init");
+    const { sessionId } = JSON.parse(cli(repository, data, "start", "--task", "Close parser review")) as { sessionId: string };
+    const constraint = "Only on Linux, preserve case-sensitive matching.";
+    const remaining = "Implement the parser later.";
+    const summary = `Review closed.\n\n${constraint}\n\nTests passed.\n\n${remaining}`;
+    const request = {
+      sessionId, idempotencyKey: "structured", status: "success", summary,
+      handoff: { version: 1, constraints: [constraint], remainingWork: [remaining] },
+    };
+    const path = join(data, "handoff.json");
+    writeFileSync(path, JSON.stringify({ ...request, handoff: { ...request.handoff, verification: [{ verified: true }] } }));
+    const invalid = spawnSync(process.execPath, [CLI, "commit", "--input", path, "--repo", repository, "--json"], {
+      encoding: "utf8", windowsHide: true, env: { ...process.env, REPOMIND_DATA_DIR: data },
+    });
+    expect(invalid.status).toBe(1);
+    expect(invalid.stderr).toContain("INVALID_INPUT");
+    expect(JSON.parse(cli(repository, data, "status"))).toMatchObject({ openSessions: 1 });
+    writeFileSync(path, JSON.stringify(request));
+    const receipt = JSON.parse(cli(repository, data, "commit", "--input", path));
+    expect(receipt.status).toBe("committed");
+    expect(JSON.parse(cli(repository, data, "commit", "--input", path))).toEqual(receipt);
+    const memories = JSON.parse(cli(repository, data, "search", "case-sensitive matching")) as Array<{ id: string; type: string }>;
+    const solution = memories.find((memory) => memory.type === "solution")!;
+    const inspected = JSON.parse(cli(repository, data, "inspect", solution.id));
+    expect(inspected).toMatchObject({ title: constraint, content: summary });
+    const evidence = inspected.evidence.find((item: { kind: string }) => item.kind === "agent_summary");
+    expect(evidence.content_preview).toBe(summary);
+    expect(JSON.parse(evidence.metadata_json)).toMatchObject({ handoffAudit: {
+        disposition: "accepted", verification: [], titleSource: "structured-constraint",
+    } });
+    expect(memories.some((memory) => memory.type === "command")).toBe(false);
+  });
+
+  it("routes the optional Host flag through the CLI and rejects unsupported commands/adapters", () => {
+    cli(repository, data, "init");
+    const prose = "Review closed.\n\nPreserve exact bytes.\n\nImplement later.";
+    const answer = prose + '\n\n```repomind-handoff\n' + JSON.stringify({ version: 1, constraints: ["Preserve exact bytes."], remainingWork: ["Implement later."] }) + '\n```';
+    // Node substitutes for the provider process; its preload exits before attempting
+    // to load the OpenCode `run` command. No installed provider or network is used.
+    const fixture = join(data, "provider.cjs");
+    writeFileSync(fixture, `if (require('node:path').basename(process.argv[1] || '') === 'run') {
+      if (!process.argv.at(-1).includes('Final handoff output protocol')) process.exit(9);
+      console.log(JSON.stringify({type:'text', part:{text:${JSON.stringify(answer)}}}));
+      console.log(JSON.stringify({type:'step_finish', part:{reason:'stop'}}));
+      process.exit(0);
+    }`);
+    const env = { ...process.env, REPOMIND_DATA_DIR: data, NODE_OPTIONS: `--require ${JSON.stringify(fixture)}` };
+    const execute = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args, "--repo", repository, "--json"], {
+      encoding: "utf8", windowsHide: true, env,
+    });
+    const completed = execute("run", "--task", "Review", "--structured-handoff", "--runner-executable", process.execPath, "--output", join(data, "host"));
+    expect(completed.status, completed.stderr || completed.stdout).toBe(0);
+    expect(JSON.parse(completed.stdout)).toMatchObject({ succeeded: true, handoff: { persisted: true, audit: { disposition: "accepted" } } });
+    const unsupported = execute("run", "--task", "Review", "--structured-handoff", "--runner", "claude", "--runner-executable", join(data, "missing"));
+    expect(unsupported.status).toBe(1);
+    expect(JSON.parse(unsupported.stderr)).toMatchObject({ code: "CAPABILITY_UNAVAILABLE", message: "--structured-handoff requires --runner opencode" });
+    expect(execute("status", "--structured-handoff").stderr).toContain("only supported with run");
+  });
+
   it("reviews and applies bootstrap candidates across CLI processes", () => {
     writeFileSync(join(repository, "README.md"), "# Payment router\n\nRoutes use idempotency keys before dispatching payment requests.\n", "utf8");
     git(repository, "add", "README.md");

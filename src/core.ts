@@ -59,6 +59,9 @@ import { embeddingProviderFromEnvironment } from "./embedding/config.js";
 import type { EmbeddingProvider } from "./embedding/provider.js";
 import { extractionRunnerFromEnvironment } from "./extraction/config.js";
 import { extractDeterministicMemories } from "./extraction/deterministic.js";
+import { compactSolutionSummary, solutionSummaryTitle } from "./extraction/solution-summary.js";
+import { prepareExplicitHandoff } from "./extraction/structured-handoff.js";
+import { prepareHostHandoff, type HostHandoffCapture } from "./extraction/host-handoff.js";
 import { equivalentExtractionContent } from "./extraction/dedup.js";
 import { buildExtractionMessages, type ExtractionEvidenceInput } from "./extraction/prompt.js";
 import type { LlmRunner } from "./extraction/runner.js";
@@ -79,6 +82,7 @@ import { buildMatchExpression, searchTokens, shouldUseSubstringFallback } from "
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
 import { UNKNOWN_COMMAND_VERIFICATION, unverifiedLegacyCommandIds } from "./evidence/command-provenance.js";
+import { isVerifyingTestCommand, verifyingTestCommand } from "./activity/test-command.js";
 
 type SqlValue = string | number | null;
 
@@ -200,7 +204,7 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function titleFrom(text: string, fallback: string): string {
+function titleFrom(text: string, fallback: string, maxChars = 96): string {
   let fenced = false;
   const lines = text.split(/\r?\n/u).flatMap((value) => {
     const line = value.trim();
@@ -214,7 +218,7 @@ function titleFrom(text: string, fallback: string): string {
   if (!line) return fallback;
   const sentence = line.match(/^.*?[。！？!?](?:\s|$)|^.*?\.(?:\s|$)/u)?.[0]?.trim() ?? line;
   // Do not turn an overlong sentence into an incomplete statement.
-  return sentence.length <= 96 ? sentence : fallback;
+  return sentence.length <= maxChars ? sentence : fallback;
 }
 
 function decisionSubject(title: string, content: string): string | null {
@@ -387,6 +391,8 @@ export class RepositoryMemoryCore {
   commitSession(input: CommitSessionInput, sources: {
     tests?: CommandEvidenceSource;
     commands?: CommandEvidenceSource;
+    /** Collector-owned final-answer/loss checks; never read from CLI/MCP input. */
+    hostHandoff?: HostHandoffCapture;
     /**
      * "always" (default): an explicit commit's summary is a solution memory.
      * "repository-outcome": automatic lifecycles store it only when the task
@@ -395,6 +401,9 @@ export class RepositoryMemoryCore {
     solutionPolicy?: "always" | "repository-outcome";
   } = {}): CommitSessionResult {
     if (!input.idempotencyKey.trim()) throw new RepoMindError("INVALID_INPUT", "idempotencyKey must not be empty");
+    if (sources.hostHandoff && input.handoff !== undefined) throw new RepoMindError("INVALID_INPUT", "Cannot combine explicit and Host handoffs");
+    const handoff = sources.hostHandoff ? prepareHostHandoff(input.summary, sources.hostHandoff)
+      : input.handoff === undefined ? undefined : { ...prepareExplicitHandoff(input.summary, input.handoff, input.remainingWork), content: input.summary };
     const db = this.context.database;
     // Provenance is supplied by in-process collectors, not the result payload.
     const testSource = sources.tests ?? "caller-reported";
@@ -403,6 +412,7 @@ export class RepositoryMemoryCore {
       ...(testSource === "caller-reported" ? {} : { tests: testSource }),
       ...(commandSource === "caller-reported" ? {} : { commands: commandSource }),
       ...(sources.solutionPolicy === "repository-outcome" ? { solutionPolicy: sources.solutionPolicy } : {}),
+      ...(sources.hostHandoff ? { hostHandoff: sources.hostHandoff } : {}),
     };
     const legacyRequestHash = hash(stableJson(input));
     const requestHash = Object.keys(sourceOverrides).length
@@ -416,7 +426,7 @@ export class RepositoryMemoryCore {
       if (receipt.request_hash !== requestHash) {
         // A pre-provenance collector retry returns its old receipt unchanged;
         // it must neither duplicate writes nor retroactively upgrade evidence.
-        const legacyRetry = sources.solutionPolicy !== "repository-outcome" && receipt.request_hash === legacyRequestHash && !db.raw.prepare(`
+        const legacyRetry = !sources.hostHandoff && sources.solutionPolicy !== "repository-outcome" && receipt.request_hash === legacyRequestHash && !db.raw.prepare(`
           SELECT 1 FROM evidence WHERE session_id=? AND kind IN ('test_result','command_result')
             AND json_extract(metadata_json, '$.verificationSource') IS NOT NULL LIMIT 1
         `).get(input.sessionId);
@@ -474,7 +484,9 @@ export class RepositoryMemoryCore {
       if (current.status !== "open") throw new RepoMindError("SESSION_NOT_OPEN", `Session ${input.sessionId} is ${current.status}`);
 
       const evidenceIds: string[] = [];
-      evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, { remainingWork: input.remainingWork ?? [] }, null));
+      evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, {
+        remainingWork: input.remainingWork ?? handoff?.audit.rawHandoff?.remainingWork ?? [],
+      }, null));
       evidenceIds.push(this.insertEvidence(input.sessionId, "git_snapshot", JSON.stringify(finalSnapshot), { phase: "final" }, finalSnapshot.head));
       if (diff.content || diff.excludedFiles.length) {
         evidenceIds.push(this.insertEvidence(input.sessionId, "git_diff", diff.content, {
@@ -486,13 +498,18 @@ export class RepositoryMemoryCore {
       }
 
       const testEvidence: string[] = [];
+      const commandEvidence: string[] = [];
       for (const test of input.tests ?? []) {
         const id = this.insertEvidence(input.sessionId, "test_result", JSON.stringify(test), { exitCode: test.exitCode, command: test.command, verificationSource: testSource }, finalSnapshot.head);
         evidenceIds.push(id);
         testEvidence.push(id);
+        handoff?.audit.verification.push({ evidenceId: id, command: test.command, exitCode: test.exitCode, source: testSource });
       }
       for (const command of input.commands ?? []) {
-        evidenceIds.push(this.insertEvidence(input.sessionId, "command_result", JSON.stringify(command), { exitCode: command.exitCode, command: command.command, verificationSource: commandSource }, finalSnapshot.head));
+        const id = this.insertEvidence(input.sessionId, "command_result", JSON.stringify(command), { exitCode: command.exitCode, command: command.command, verificationSource: commandSource }, finalSnapshot.head);
+        evidenceIds.push(id);
+        commandEvidence.push(id);
+        handoff?.audit.verification.push({ evidenceId: id, command: command.command, exitCode: command.exitCode, source: commandSource });
       }
 
       let stored = 0;
@@ -505,7 +522,11 @@ export class RepositoryMemoryCore {
       };
       const summaryEvidence = evidenceIds[0];
       if (input.status === "success") {
-        const passedTest = testSource !== "caller-reported" && (input.tests ?? []).some((test) => test.exitCode === 0);
+        // Interactive collectors provide tests separately; Host adapters retain
+        // observed tests in commands. Both require trusted, successful evidence.
+        const passedTest = (testSource !== "caller-reported" && (input.tests ?? []).some((test) => test.exitCode === 0))
+          || (commandSource !== "caller-reported" && (input.commands ?? []).some((command) =>
+            command.exitCode === 0 && isVerifyingTestCommand(command.command)));
         // Interactive read-only answers remain Evidence/L0. Requirements are
         // still retained from the task itself, but decisions and architecture
         // claims in a recap only become memories when this task has a fresh
@@ -519,7 +540,7 @@ export class RepositoryMemoryCore {
         `).get(input.sessionId) as { id: string } | undefined;
         const candidates = extractDeterministicMemories({
           task: session.task,
-          summary: input.summary,
+          summary: handoff?.audit.disposition === "accepted" ? handoff.content : input.summary,
           changedFiles: memoryFiles,
         }).filter((candidate) => candidate.type === "requirement" || canExtractSummary);
         for (const candidate of candidates) {
@@ -534,13 +555,39 @@ export class RepositoryMemoryCore {
         for (const decision of input.decisions ?? []) {
           track(this.storeMemory({ type: "decision", title: titleFrom(decision, "Technical decision"), content: decision, confidence: 0.85, tags: ["decision"], relatedFiles: memoryFiles }, "extracted", [summaryEvidence!]));
         }
-        for (const [index, test] of (input.tests ?? []).entries()) {
+        const commandMemories = [
+          ...(input.tests ?? []).map((test, index) => ({
+            test,
+            evidenceId: testEvidence[index]!,
+            source: testSource,
+          })),
+          ...(input.commands ?? []).flatMap((command, index) => {
+            if (commandSource === "caller-reported") return [];
+            const canonical = verifyingTestCommand(command.command);
+            if (canonical === null) return [];
+            return [{
+              test: { ...command, command: canonical, ...(canonical !== command.command ? { invokedAs: command.command } : {}) },
+              evidenceId: commandEvidence[index]!,
+              source: commandSource,
+            }];
+          }),
+        ];
+        for (const entry of commandMemories) {
+          const test = entry.test;
           if (test.exitCode !== 0) continue;
-          const title = `${testSource === "caller-reported" ? "Reported successful command" : "Verified command"}: ${test.command}`;
+          const evidenceId = entry.evidenceId;
+          if (!evidenceId) continue;
+          const canonicalCommand = verifyingTestCommand(test.command) ?? test.command;
+          const title = `${entry.source === "caller-reported" ? "Reported successful command" : "Verified command"}: ${canonicalCommand}`;
+          const retired = db.raw.prepare(`
+            SELECT 1 FROM memories WHERE repository_id=? AND type='command'
+              AND status IN ('superseded','invalid') AND title=? LIMIT 1
+          `).get(this.context.marker.projectId, redactSecrets(title).content.trim());
+          if (retired) continue;
           // A later passing run of the same command confirms the existing
           // memory instead of adding a near-duplicate whose only difference is
           // the run's output.
-          if (testSource !== "caller-reported" && this.revalidateCommandMemory(title, testEvidence[index]!, memoryFiles, input.sessionId)) {
+          if (entry.source !== "caller-reported" && this.revalidateCommandMemory(title, evidenceId, memoryFiles, input.sessionId)) {
             revalidated++;
             skipped++;
             continue;
@@ -548,16 +595,40 @@ export class RepositoryMemoryCore {
           track(this.storeMemory({
             type: "command",
             title,
-            content: verifiedCommandMemoryContent(test, testSource),
-            confidence: testSource === "caller-reported" ? 0.5 : testSource === "tool-observed" ? 0.9 : 0.95,
-            tags: ["test", testSource === "caller-reported" ? "reported-command" : "verified-command", testSource],
+            content: verifiedCommandMemoryContent(test, entry.source),
+            confidence: entry.source === "caller-reported" ? 0.5 : entry.source === "tool-observed" ? 0.9 : 0.95,
+            tags: ["test", entry.source === "caller-reported" ? "reported-command" : "verified-command", entry.source],
             relatedFiles: memoryFiles,
-          }, "extracted", [testEvidence[index]!]));
+          }, "extracted", [evidenceId]));
         }
         const solutionEarned = sources.solutionPolicy !== "repository-outcome" || files.length > 0 || passedTest;
         if (input.summary.trim() && solutionEarned) {
-          track(this.storeMemory({ type: "solution", title: titleFrom(input.summary, "Completed solution"), content: input.summary, confidence: 0.8, tags: ["solution"], relatedFiles: memoryFiles }, "extracted", evidenceIds));
+          const summary = handoff?.content ?? compactSolutionSummary(input.summary);
+          const outcome = this.storeMemory({ type: "solution", title: handoff?.title ?? solutionSummaryTitle(summary), content: summary, confidence: 0.8, tags: ["solution"], relatedFiles: memoryFiles }, "extracted", evidenceIds,
+            handoff?.audit.disposition === "accepted" ? { preserveContentWhitespace: true } : {});
+          track(outcome);
+          if (handoff) {
+            const linked = db.raw.prepare("SELECT 1 FROM memory_evidence WHERE memory_id=? AND evidence_id=?")
+              .get(outcome.id, summaryEvidence!);
+            handoff.audit.solution = {
+              memoryId: outcome.id,
+              disposition: outcome.stored ? "stored" : linked ? "deduplicated" : "skipped-retired",
+              titleApplied: outcome.stored && handoff.audit.titleSource === "structured-constraint",
+            };
+          }
         }
+      }
+
+      if (handoff) {
+        // Update in the same transaction after all command IDs and the actual
+        // storage outcome are known. Retain the summary's redaction metadata.
+        const row = db.raw.prepare("SELECT metadata_json FROM evidence WHERE id=?").get(summaryEvidence!) as { metadata_json: string };
+        const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+        const audit = redactDeep(handoff.audit);
+        db.raw.prepare("UPDATE evidence SET metadata_json=? WHERE id=?").run(JSON.stringify({
+          ...metadata, handoffAudit: audit.value,
+          ...(audit.redactions ? { redactions: Number(metadata.redactions ?? 0) + audit.redactions } : {}),
+        }), summaryEvidence!);
       }
 
       const updated = db.raw.prepare(`
@@ -1727,6 +1798,7 @@ export class RepositoryMemoryCore {
       reactivateRetired?: boolean;
       audit?: Record<string, unknown>;
       auditReason?: string;
+      preserveContentWhitespace?: boolean;
     } = {},
   ): StoreMemoryResult {
     const db = this.context.database.raw;
@@ -1734,7 +1806,8 @@ export class RepositoryMemoryCore {
     const tags = [...new Set((input.tags ?? []).map((tag) => redactSecrets(tag).content.trim()).filter(Boolean))];
     const files = [...new Set((input.relatedFiles ?? []).map((file) => redactSecrets(file).content.trim()).filter(Boolean))];
     const title = redactSecrets(input.title).content.trim();
-    const content = redactSecrets(input.content).content.trim();
+    const redactedContent = redactSecrets(input.content).content;
+    const content = options.preserveContentWhitespace ? redactedContent : redactedContent.trim();
     const scopeType = input.scopeType ?? "repository";
     const scopeValue = input.scopeValue ?? null;
     const extractedDecisionSubject = source === "extracted" && input.type === "decision"

@@ -1,0 +1,125 @@
+{
+  "status": "explicit-input-runtime-regression-fixtures",
+  "cases": [
+    {
+      "id": "complete-constraint",
+      "summary": "Completed the review closeout.\n\nRequire count to be an integer from 1 through 128 inclusive.\n\nImplementation remains a separate follow-up.",
+      "handoff": {
+        "version": 1,
+        "constraints": ["Require count to be an integer from 1 through 128 inclusive."],
+        "remainingWork": ["Implementation remains a separate follow-up."]
+      },
+      "expected": {
+        "schemaValid": true,
+        "accepted": true,
+        "titleSource": "structured-constraint",
+        "title": "Require count to be an integer from 1 through 128 inclusive.",
+        "body": "exact-summary",
+        "verificationItemsFromSummary": 0
+      }
+    },
+    {
+      "id": "chinese-crlf-emoji",
+      "summary": "已关闭评审。\r\n\r\n输入必须原样保留，包括组合字符 é 和 emoji 🧪。\r\n\r\n解析器尚未实现。",
+      "handoff": {
+        "version": 1,
+        "constraints": ["输入必须原样保留，包括组合字符 é 和 emoji 🧪。"],
+        "remainingWork": ["解析器尚未实现。"]
+      },
+      "expected": {
+        "schemaValid": true,
+        "accepted": true,
+        "titleSource": "structured-constraint",
+        "title": "输入必须原样保留，包括组合字符 é 和 emoji 🧪。",
+        "body": "exact-summary"
+      }
+    },
+    {
+      "id": "warning-whole-paragraph",
+      "summary": "Review closed.\n\nWarning: only on Linux, preserve case-sensitive path matching.\n\nImplementation remains outstanding.",
+      "handoff": {
+        "version": 1,
+        "constraints": ["Warning: only on Linux, preserve case-sensitive path matching."],
+        "remainingWork": ["Implementation remains outstanding."]
+      },
+      "expected": {
+        "schemaValid": true,
+        "accepted": true,
+        "titleSource": "structured-constraint",
+        "title": "Warning: only on Linux, preserve case-sensitive path matching.",
+        "body": "exact-summary"
+      }
+    },
+    {
+      "id": "warning-stripped-substring",
+      "summary": "Warning: only on Linux, preserve case-sensitive path matching.",
+      "handoff": {
+        "version": 1,
+        "constraints": ["preserve case-sensitive path matching."],
+        "remainingWork": []
+      },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "not-whole-source-paragraph" }
+    },
+    {
+      "id": "duplicate-source-paragraph",
+      "summary": "Preserve exact bytes.\n\nReview note copied below.\n\nPreserve exact bytes.",
+      "handoff": { "version": 1, "constraints": ["Preserve exact bytes."], "remainingWork": [] },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "ambiguous-source-paragraph" }
+    },
+    {
+      "id": "cross-category-duplicate",
+      "summary": "Implement the parser later.",
+      "handoff": { "version": 1, "constraints": ["Implement the parser later."], "remainingWork": ["Implement the parser later."] },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "paragraph-reused" }
+    },
+    {
+      "id": "source-order-reversed",
+      "summary": "Preserve case.\n\nPreserve whitespace.",
+      "handoff": { "version": 1, "constraints": ["Preserve whitespace.", "Preserve case."], "remainingWork": [] },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "source-order-mismatch" }
+    },
+    {
+      "id": "rephrased-not-source",
+      "summary": "Accept strings only.",
+      "handoff": { "version": 1, "constraints": ["Accept strings and numbers."], "remainingWork": [] },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "not-whole-source-paragraph" }
+    },
+    {
+      "id": "multiline-fallback-title",
+      "summary": "Review closed.\n\n- Accept strings only.\n- Do not trim whitespace.\n\nAdd no dependencies.",
+      "handoff": { "version": 1, "constraints": ["- Accept strings only.\n- Do not trim whitespace.", "Add no dependencies."], "remainingWork": [] },
+      "expected": { "schemaValid": true, "accepted": true, "titleSource": "legacy-summary", "title": "Review closed.", "body": "exact-summary" }
+    },
+    {
+      "id": "empty-annotations-self-reported-test",
+      "summary": "Tests passed. Implementation remains outstanding.",
+      "handoff": { "version": 1, "constraints": [], "remainingWork": [] },
+      "expected": { "schemaValid": true, "accepted": true, "titleSource": "legacy-summary", "body": "exact-summary", "verificationItemsFromSummary": 0, "doesNotAssertNoRemainingWork": true }
+    },
+    {
+      "id": "forged-verification",
+      "summary": "Tests passed.",
+      "handoff": { "version": 1, "constraints": [], "remainingWork": [], "verification": [{ "command": "npm test", "verified": true }] },
+      "expected": { "schemaValid": false, "accepted": false, "reason": "schema-invalid" }
+    },
+    {
+      "id": "unknown-version",
+      "summary": "Preserve case.",
+      "handoff": { "version": 2, "constraints": ["Preserve case."], "remainingWork": [] },
+      "expected": { "schemaValid": false, "accepted": false, "reason": "schema-invalid" }
+    },
+    {
+      "id": "whitespace-item",
+      "summary": "Review closed.",
+      "handoff": { "version": 1, "constraints": ["  "], "remainingWork": [] },
+      "expected": { "schemaValid": false, "accepted": false, "reason": "schema-invalid" }
+    },
+    {
+      "id": "legacy-remaining-work-conflict",
+      "summary": "Preserve case.\n\nParser implementation remains outstanding.",
+      "remainingWork": ["Nothing remains."],
+      "handoff": { "version": 1, "constraints": ["Preserve case."], "remainingWork": ["Parser implementation remains outstanding."] },
+      "expected": { "schemaValid": true, "accepted": false, "reason": "remaining-work-conflict" }
+    }
+  ]
+}

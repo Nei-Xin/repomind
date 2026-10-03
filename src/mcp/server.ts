@@ -4,6 +4,7 @@ import { z } from "zod";
 import { RepositoryMemoryCore } from "../core.js";
 import { RepoMindError } from "../errors.js";
 import { VERSION } from "../version.js";
+import { structuredHandoffSchema } from "../extraction/structured-handoff.js";
 
 function result(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
@@ -349,6 +350,7 @@ export function createMcpServer(): McpServer {
       tests: z.array(z.object({ command: z.string(), exit_code: z.number().int(), summary: z.string() })).optional(),
       commands: z.array(z.object({ command: z.string(), exit_code: z.number().int(), summary: z.string() })).optional(),
       remaining_work: z.array(z.string()).optional(),
+      handoff: structuredHandoffSchema.optional(),
     },
     async (input) => {
       try {
@@ -363,6 +365,7 @@ export function createMcpServer(): McpServer {
           ...(input.tests ? { tests: input.tests.map((item) => ({ command: item.command, exitCode: item.exit_code, summary: item.summary })) } : {}),
           ...(input.commands ? { commands: input.commands.map((item) => ({ command: item.command, exitCode: item.exit_code, summary: item.summary })) } : {}),
           ...(input.remaining_work ? { remainingWork: input.remaining_work } : {}),
+          ...(input.handoff !== undefined ? { handoff: input.handoff } : {}),
         });
         return result(value);
       } catch (error) {

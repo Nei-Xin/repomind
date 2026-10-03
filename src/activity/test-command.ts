@@ -232,3 +232,21 @@ export function verificationSteps(command: string, exitCode: number | null): Arr
     return [{ key: stepKey(segments, index), passed: exitCode === 0 && canVerify(segments, index) }];
   });
 }
+
+/** Shared ordered verification state for interactive and Host collectors. */
+export function assessCommandVerification(commands: readonly {
+  command: string; invokedAs?: string; exitCode: number | null;
+}[]): {
+  commands: Array<{ steps: Array<{ key: string; passed: boolean }>; resolved: boolean }>;
+  steps: number;
+  unresolved: number;
+} {
+  const stepsByCommand = commands.map((command) => verificationSteps(command.invokedAs ?? command.command, command.exitCode));
+  const latest = new Map<string, boolean>();
+  for (const steps of stepsByCommand) for (const step of steps) latest.set(step.key, step.passed);
+  return {
+    commands: stepsByCommand.map((steps) => ({ steps, resolved: steps.every((step) => latest.get(step.key) === true) })),
+    steps: latest.size,
+    unresolved: [...latest.values()].filter((passed) => !passed).length,
+  };
+}

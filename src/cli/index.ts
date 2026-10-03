@@ -100,7 +100,7 @@ Usage:
   repomind run-inspect <run-id> [--repo <path>] [--json]
   repomind bootstrap [--repo <path>] [--output <new-candidates.json>] [--json]
   repomind bootstrap-apply --input <candidates.json> [--candidate <id[,id...]>] --yes [--repo <path>] [--json]
-  repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
+  repomind run --task <text> [--repo <path>] [--runner opencode|claude] [--runner-executable <path>] [--model <id>] [--structured-handoff] [--max-memories <0-20>] [--context-budget <1000-24000>] [--timeout <ms>] [--output <dir>] [--json]
   repomind bridge [--host <address>] [--port <number>]
   repomind services start|status|stop [--json]
   repomind claude setup|status [--repo <path>] [--proxy-url <url>] [--json]
@@ -170,6 +170,7 @@ function parseCliArgs() {
     model: { type: "string" },
     "max-memories": { type: "string" },
     "context-budget": { type: "string" },
+    "structured-handoff": { type: "boolean" },
     lifecycle: { type: "string" },
     output: { type: "string" },
     timeout: { type: "string" },
@@ -295,6 +296,9 @@ function renderReviewQueue(queue: MemoryReviewQueue): string {
 
 async function main(): Promise<void> {
   const command = positionals[0];
+  if (values["structured-handoff"] && command !== "run") {
+    throw new RepoMindError("INVALID_INPUT", "--structured-handoff is only supported with run");
+  }
   if (values.version) {
     console.log(VERSION);
     return;
@@ -396,6 +400,9 @@ async function main(): Promise<void> {
   if (command === "run") {
     const task = required(values.task, "--task");
     const runner = agentHostRunner(values.runner);
+    if (values["structured-handoff"] && runner !== "opencode") {
+      throw new RepoMindError("CAPABILITY_UNAVAILABLE", "--structured-handoff requires --runner opencode");
+    }
     const timeoutMs = values.timeout ? Number(values.timeout) : 600_000;
     const maxMemories = values["max-memories"] ? Number(values["max-memories"]) : 5;
     const contextBudgetChars = values["context-budget"] === undefined
@@ -437,6 +444,7 @@ async function main(): Promise<void> {
         task,
         ...(values.model ? { model: values.model } : {}),
         maxMemories,
+        ...(values["structured-handoff"] ? { structuredHandoff: true } : {}),
         ...(contextBudgetChars === undefined ? {} : { contextBudgetChars }),
         timeoutMs,
         ...(values.output ? { outputDirectory: values.output } : {}),

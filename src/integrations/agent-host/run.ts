@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { dataRoot } from "../../config/paths.js";
 import type {
@@ -37,6 +38,8 @@ import type {
 } from "./types.js";
 import { assessAgentOutcome, type AgentOutcomeAssessment } from "./outcome.js";
 import { assessAgentInfrastructureRetry } from "./retry.js";
+import { OPENCODE_RESUME_PROMPT } from "../opencode/adapter.js";
+import { prepareHostHandoff, STRUCTURED_HANDOFF_INSTRUCTION, type HostHandoffReport } from "../../extraction/host-handoff.js";
 
 const DEFAULT_MAX_AGENT_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 250;
@@ -57,6 +60,7 @@ export interface RunAgentHostOptions<TId extends string = string> {
   model?: string;
   maxMemories?: number;
   contextBudgetChars?: number;
+  structuredHandoff?: boolean;
   timeoutMs?: number;
   outputDirectory?: string;
   dataDirectory?: string;
@@ -117,6 +121,8 @@ export interface HostRunMaintenanceReport {
 }
 
 export interface AgentHostAttemptReport {
+  /** Present for the optional protocol; hashes describe the exact per-attempt user prompt. */
+  prompt?: { sha256: string; chars: number };
   attempt: number;
   executionMode: AgentHostAttemptMode;
   startedAt: string;
@@ -194,6 +200,7 @@ export interface AgentHostRunReport<TId extends string = string> {
   commit: CommitSessionResult | null;
   maintenance: HostRunMaintenanceReport | null;
   summary: string;
+  handoff?: HostHandoffReport;
   succeeded: boolean;
   redactions: { events: number; stderr: number; report: number };
 }
@@ -317,6 +324,9 @@ function aggregateAgentEventMetrics(values: readonly AgentEventMetrics[]): Agent
 export async function runAgentHost<TId extends string>(
   options: RunAgentHostOptions<TId>,
 ): Promise<AgentHostRunReport<TId>> {
+  if (options.structuredHandoff && (options.adapter.id !== "opencode" || !options.adapter.supportsStructuredHandoff)) {
+    throw new RepoMindError("CAPABILITY_UNAVAILABLE", "Structured handoff is supported only by the OpenCode Host adapter");
+  }
   const repository = resolve(locateGitRoot(options.repository));
   const timeoutMs = options.timeoutMs ?? 600_000;
   const maxMemories = options.maxMemories ?? 5;
@@ -359,12 +369,17 @@ export async function runAgentHost<TId extends string>(
       moduleNarratives: started.result.moduleNarratives ?? [],
       repositoryProfile: started.result.repositoryProfile,
       budgetChars: contextBudgetChars,
+      ...(options.structuredHandoff ? { structuredHandoff: true } : {}),
     });
     const agentRequest = {
       repository,
       prompt: renderedContext.prompt,
       model: options.model ?? null,
       timeoutMs,
+      ...(options.structuredHandoff ? {
+        structuredHandoff: true,
+        resumePrompt: `${OPENCODE_RESUME_PROMPT}\n\n${STRUCTURED_HANDOFF_INSTRUCTION}`,
+      } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.onStdout ? { onStdout: options.onStdout } : {}),
       ...(options.onStderr ? { onStderr: options.onStderr } : {}),
@@ -418,6 +433,10 @@ export async function runAgentHost<TId extends string>(
       writeFileSync(attemptStderrPath, redactedAttemptStderr.content, "utf8");
       attempts.push({
         attempt,
+        ...(options.structuredHandoff ? { prompt: {
+          sha256: createHash("sha256").update(executionMode === "resume" ? agentRequest.resumePrompt! : agentRequest.prompt, "utf8").digest("hex"),
+          chars: (executionMode === "resume" ? agentRequest.resumePrompt! : agentRequest.prompt).length,
+        } } : {}),
         executionMode,
         startedAt: attemptStartedAt,
         endedAt: attemptEndedAt,
@@ -475,6 +494,13 @@ export async function runAgentHost<TId extends string>(
     );
     const interrupted = agent.timedOut || agent.aborted || agent.signal !== null || agent.error !== undefined || agent.exitCode === null;
     const outcome = execution.outcome;
+    const capture = options.structuredHandoff ? outcome.handoff ?? {
+      requested: true as const, rejectionReasons: ["missing-collector-capture"],
+    } : undefined;
+    let handoffReport: HostHandoffReport | undefined = capture ? {
+      requested: true, persisted: false, summaryEvidenceId: null,
+      audit: prepareHostHandoff(outcome.summary, capture).audit,
+    } : undefined;
     const eventMetrics = aggregateAgentEventMetrics(attempts.map((attempt) => attempt.events));
     const verificationSnapshotBefore = interrupted || !options.verify ? null : inspectGit(repository);
     const verified = interrupted || !options.verify
@@ -513,7 +539,10 @@ export async function runAgentHost<TId extends string>(
       sessionStatus = "abandoned";
     } else {
       options.onStatus?.("Committing Agent evidence to RepoMind...");
-      const commands = outcome.commands.map(({ isTest: _isTest, exitCodeKnown: _exitCodeKnown, ...command }) => command);
+      // Unknown exits stay in the trace; never let a placeholder exit code
+      // qualify a read-only task for solution memory.
+      const commands = outcome.commands.filter((command) => command.exitCodeKnown)
+        .map(({ isTest: _isTest, exitCodeKnown: _exitCodeKnown, ...command }) => command);
       const commit = commitHostLifecycle({
         repository,
         ...(options.dataDirectory ? { dataDirectory: options.dataDirectory } : {}),
@@ -523,8 +552,10 @@ export async function runAgentHost<TId extends string>(
         summary: outcome.summary,
         tests: persistedCheckEvidence,
         commands,
+        ...(capture ? { handoff: capture } : {}),
       });
       committed = commit.result;
+      handoffReport = commit.handoff;
       commitMs = commit.commitMs;
       maintenanceMs = commit.maintenanceMs;
       maintenance = commit.maintenance;
@@ -599,6 +630,7 @@ export async function runAgentHost<TId extends string>(
         maintenanceTelemetryErrors,
       ),
       summary: outcome.summary,
+      ...(handoffReport ? { handoff: handoffReport } : {}),
       succeeded: agent.exitCode === 0 && committed?.status === "committed",
     };
     const redactedReport = redactDeep(rawReport);
@@ -630,6 +662,7 @@ export async function runAgentHost<TId extends string>(
         maintenanceMs: report.session.maintenanceMs,
         abandonMs: report.session.abandonMs,
         context: report.context,
+        ...(report.handoff ? { handoff: report.handoff } : {}),
         maintenance: report.maintenance,
         quality: report.quality,
         retry: report.retry,

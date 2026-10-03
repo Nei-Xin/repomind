@@ -6,6 +6,20 @@ import { parseCommitInput, readCommitInput } from "../src/cli/commit-input.js";
 import { RepoMindError } from "../src/errors.js";
 
 describe("CLI commit input", () => {
+  it("retains structured paragraphs without normalizing input and validates their source", () => {
+    const summary = "Review closed.\r\n\r\nPreserve e\u0301 and 🧪.\r\n\r\nImplementation remains outstanding.";
+    const handoff = { version: 1, constraints: ["Preserve e\u0301 and 🧪."], remainingWork: ["Implementation remains outstanding."] };
+    const input = { sessionId: "ses_1", idempotencyKey: "turn-1", status: "success", summary, handoff };
+    expect(parseCommitInput(input)).toEqual(input);
+    expect(() => parseCommitInput({ ...input, handoff: { ...handoff, constraints: ["Preserve é and 🧪."] } }))
+      .toThrow(expect.objectContaining({ code: "INVALID_INPUT" }));
+    expect(() => parseCommitInput({ ...input, handoff: { ...handoff, verification: [] } })).toThrow();
+    expect(() => parseCommitInput({ ...input, remainingWork: [] })).toThrow();
+    const { handoff: _handoff, ...legacy } = input;
+    expect(parseCommitInput(legacy)).toEqual(legacy);
+    expect(parseCommitInput(legacy)).not.toHaveProperty("handoff");
+  });
+
   it("accepts the complete session result model", () => {
     expect(parseCommitInput({
       sessionId: "ses_1",

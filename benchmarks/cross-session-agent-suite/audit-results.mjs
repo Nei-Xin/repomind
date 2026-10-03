@@ -1104,6 +1104,9 @@ function validateCheckResults(state, run, expected) {
   const label = runKey(run);
   const publicChecks = Array.isArray(run.publicChecks) ? run.publicChecks : [];
   const hiddenChecks = Array.isArray(run.hiddenChecks) ? run.hiddenChecks : [];
+  if (publicChecks.length === 0 && hiddenChecks.length === 0 && agentInterrupted(run)) {
+    return;
+  }
   const hasAllowlist = Array.isArray(expected.stage.allowedChanges);
   const persistedPublic = hasAllowlist ? publicChecks.slice(1) : publicChecks;
   if (hasAllowlist) {
@@ -1189,7 +1192,12 @@ function checksPassed(checks) {
   return Array.isArray(checks) && checks.length > 0 && checks.every((entry) => entry?.passed === true);
 }
 
-function validateRunIntegrityClaims(state, run) {
+function agentInterrupted(run) {
+  return run.agent?.timedOut === true || run.agent?.aborted === true || run.agent?.signal != null
+    || run.agent?.error != null || run.agent?.exitCode === null;
+}
+
+export function validateRunIntegrityClaims(state, run) {
   const label = runKey(run);
   check(state, run.agent?.exitCode === 0
     && run.agent?.signal === null
@@ -1208,21 +1216,33 @@ function validateRunIntegrityClaims(state, run) {
       "events", `${label}:failed-file-reads`, "failedFileReads must be a non-negative integer");
   }
   const checks = [...(Array.isArray(run.publicChecks) ? run.publicChecks : []), ...(Array.isArray(run.hiddenChecks) ? run.hiddenChecks : [])];
-  const expectedVerification = checks.some((entry) => entry?.exitCode !== null && entry?.exitCode !== 0)
+  const interrupted = agentInterrupted(run);
+  const expectedVerification = checks.length === 0 ? null : checks.some((entry) => entry?.exitCode !== null && entry?.exitCode !== 0)
     ? false
     : checks.some((entry) => entry?.exitCode === null) ? null : true;
   const verification = run.quality?.authoritativeVerification;
-  check(state, verification?.authority === "benchmark-manifest"
+  const expectedAuthority = checks.length === 0 ? "none" : "benchmark-manifest";
+  check(state, checks.length > 0, "runtime", `${label}:verification-not-run`,
+    `authoritative verification was not run${interrupted ? " because the Agent was interrupted" : ""}`);
+  check(state, verification?.authority === expectedAuthority
     && verification?.checks === checks.length
     && verification?.passed === expectedVerification
-    && verification?.snapshotStable === true,
+    && !(interrupted && checks.length > 0),
   "runtime", `${label}:authoritative-verification`, "authoritative verification telemetry is inconsistent", {
-    expected: { authority: "benchmark-manifest", checks: checks.length, passed: expectedVerification, snapshotStable: true },
+    expected: { authority: expectedAuthority, checks: checks.length, passed: expectedVerification },
     actual: verification,
   });
+  check(state, verification?.snapshotStable === (checks.length === 0 ? null : true),
+    "runtime", `${label}:verification-snapshot`, verification?.snapshotStable === false
+      ? "verification changed the worktree"
+      : checks.length === 0 ? "worktree verification telemetry exists without checks" : "verification worktree stability is unknown");
+  if (run.timing !== undefined) {
+    check(state, Number.isInteger(run.timing?.observationGaps) && run.timing.observationGaps === 0,
+      "runtime", `${label}:timing`, "timing must have zero scheduling or clock gaps for a clean experiment", run.timing);
+  }
   check(state, run.quality?.maintenanceEligible === (run.quality?.status === "success"),
     "runtime", `${label}:maintenance-eligibility`, "maintenanceEligible must exactly follow successful quality status");
-  const expectedLifecycleStatus = run.quality?.status === "success" ? "committed" : run.quality?.status;
+  const expectedLifecycleStatus = interrupted ? "abandoned" : run.quality?.status === "success" ? "committed" : run.quality?.status;
   check(state, run.lifecycle?.status === expectedLifecycleStatus,
     "runtime", `${label}:quality-lifecycle`, "lifecycle status must match Host quality assessment", {
       quality: run.quality?.status,
@@ -1242,9 +1262,15 @@ function validateRunIntegrityClaims(state, run) {
   const expectedHostMs = numberValue(run.lifecycle?.startMs)
     + numberValue(run.lifecycle?.agentMs)
     + numberValue(run.lifecycle?.commitMs)
-    + numberValue(run.lifecycle?.maintenanceMs);
-  check(state, closeNumber(run.lifecycle?.hostLifecycleMs, expectedHostMs, 0.02),
-    "runtime", `${label}:host-duration`, "Host lifecycle duration must equal its component durations", {
+    + numberValue(run.lifecycle?.maintenanceMs)
+    + numberValue(run.lifecycle?.abandonMs);
+  const legacyAbandonDuration = run.lifecycle?.status === "abandoned" && !Object.hasOwn(run.lifecycle, "abandonMs");
+  check(state, legacyAbandonDuration
+    ? numberValue(run.lifecycle?.hostLifecycleMs) + 0.02 >= expectedHostMs
+    : closeNumber(run.lifecycle?.hostLifecycleMs, expectedHostMs, 0.02),
+    "runtime", `${label}:host-duration`, legacyAbandonDuration
+      ? "Legacy Host duration must cover known components; abandon duration was not recorded"
+      : "Host lifecycle duration must equal its component durations", {
       expected: expectedHostMs,
       actual: run.lifecycle?.hostLifecycleMs,
     });

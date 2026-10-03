@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { renderInteractiveRecall } from "../src/activity/context.js";
 import type { MemoryResult, ModuleNarrativeSummary, RepositoryProfileSummary } from "../src/domain/types.js";
 import {
   HOST_CONTEXT_DEFAULT_BUDGET_CHARS,
@@ -58,6 +60,21 @@ function repositoryProfile(current = true, content = "Current repository profile
 }
 
 describe("OpenCode host context rendering", () => {
+  it("deduplicates the leading title while retaining warnings, quotation and exact injection audit", () => {
+    const fact = 'Use the current route.';
+    const recalled = { ...memory("mem_handoff", `${fact}\nOnly for API v2.`), title: fact, warning: "Uncertain deployment." };
+    const result = renderHostContext({ task: "Update client", memories: [recalled], moduleNarratives: [], repositoryProfile: undefined });
+    expect(result.prompt.split(fact)).toHaveLength(2);
+    expect(result.prompt).toContain('> Only for API v2.\n> Warning: Uncertain deployment.');
+    expect(result.stats.l1.injectedIds).toEqual([recalled.id]);
+    expect(result.stats.promptSha256).toBe(createHash("sha256").update(result.prompt).digest("hex"));
+    const interactive = renderInteractiveRecall([recalled]);
+    expect(interactive.context.split(fact)).toHaveLength(2);
+    expect(interactive.context).toContain('> Warning: Uncertain deployment.');
+    expect(interactive.recall.memoryIds).toEqual([recalled.id]);
+    expect(interactive.recall.contextChars).toBe(interactive.context.length);
+    expect(interactive.recall.contextSha256).toBe(createHash("sha256").update(interactive.context).digest("hex"));
+  });
   it("renders current L3, L2, and ordered L1 with lifecycle and trust framing", () => {
     const result = renderHostContext({
       task: "Implement the requested endpoint",

@@ -1,5 +1,6 @@
 import type { GitSnapshot, TestEvidenceInput } from "../../domain/types.js";
 import type { AgentEventMetrics } from "../../eval/agent/events.js";
+import type { HostHandoffCapture } from "../../extraction/host-handoff.js";
 
 export interface AgentProcessRequest {
   command: string;
@@ -42,6 +43,7 @@ export interface AgentTraceAssessment {
 
 export interface AgentOutcome {
   summary: string;
+  handoff?: HostHandoffCapture;
   commands: AgentCommandEvidence[];
   trace: AgentTraceAssessment;
 }
@@ -51,6 +53,9 @@ export interface AgentHostRunRequest {
   prompt: string;
   model: string | null;
   timeoutMs: number;
+  structuredHandoff?: boolean;
+  /** Exact Host-audited continuation prompt; adapters must not append protocol instructions. */
+  resumePrompt?: string;
   signal?: AbortSignal;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
@@ -111,6 +116,7 @@ export interface AgentHostAdapter<TId extends string = string> {
   readonly id: TId;
   readonly displayName: string;
   readonly executable: string;
+  readonly supportsStructuredHandoff?: boolean;
   validate(request: AgentHostRunRequest): void;
   run(request: AgentHostRunRequest): Promise<AgentHostRunResult>;
   /** Continue a provider session. Adapters without durable sessions must omit this capability. */

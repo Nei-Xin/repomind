@@ -404,6 +404,13 @@ export interface TestEvidenceInput {
 /** Set by the collecting integration, never accepted from CLI/MCP result payloads. */
 export type CommandEvidenceSource = "caller-reported" | "tool-observed" | "host-verified";
 
+/** Exact, complete paragraphs from summary. These are claims, not verification. */
+export interface StructuredHandoffV1 {
+  version: 1;
+  constraints: string[];
+  remainingWork: string[];
+}
+
 export interface CommitSessionInput {
   sessionId: string;
   idempotencyKey: string;
@@ -413,6 +420,7 @@ export interface CommitSessionInput {
   tests?: TestEvidenceInput[];
   commands?: Array<{ command: string; exitCode: number; summary: string }>;
   remainingWork?: string[];
+  handoff?: StructuredHandoffV1;
 }
 
 export interface CommitSessionResult {

@@ -1,5 +1,56 @@
 # 日常仓库工作流
 
+Host 与交互式自动任务共用测试/构建步骤的状态判定：`ls`、`cat`、`rg`、
+`git status` 等探索失败保留证据，不单独导致 partial。每个已识别验证步骤以最后
+结果为准；同一测试或构建后来明确通过可解除先前失败，后来再次失败则仍为 partial。
+目录、环境和参数不同的步骤分别跟踪；`build && test` 两步都需要解决。管道、
+`|| true` 等掩盖退出状态的命令不算通过，未知测试退出码也必须有后续有效验证。
+分类复用内置命令识别器，不声称支持所有自定义脚本或 Shell 语法。
+
+Host 额外保留运行完整性检查：事件畸形/不完整、输出截断、协议违规仍导致 partial；
+进程非零退出或权威验证失败仍为 failed。权威验证全部通过且仓库快照稳定时，
+仍可按原规则解除验证失败。可归属到已知探索命令的未知退出结果仅作诊断；无法
+归属的缺失命令结果仍视为采集不完整。超时/中断沿用 abandoned 生命周期。
+Host 报告的 `quality.commands.failed` 保留原始非零/未知命令次数，
+`nonVerificationFailures` 单列不阻断状态的次数，`recovered/unrecovered` 统计
+验证命令失败的恢复情况；`quality.verification` 记录验证键数量和最终未解决数量。
+`unknown-command-result` 可以是成功任务中的诊断标记，不应单凭该标记推断 partial。
+
+Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution 入库门槛：只有
+成功任务产生了相对任务开始时的文件变更，或持久化了可信的通过测试/Host 验证
+证据，才生成 solution。只读问答仍保留会话、摘要 Evidence 和运行/活动记录。
+原有脏文件不算本次变更，新增、删除和任务中自行提交的变更均计入；关联文件仅
+使用仍存在的文件。摘要自述“测试通过”、普通探索命令或单独构建通过不能替代
+测试证据。隐藏检查若未作为公开 Evidence 保存，也不会单独触发 solution。
+未知退出码只保留在 trace/活动记录，不伪造命令 Evidence。显式 CLI/MCP 提交仍
+保留原有主动提交语义；不迁移旧记忆或重算历史会话。
+
+工具采集的通过测试会使用规范化测试命令进入命令记忆；后续跨会话通过会更新同一
+条记忆、追加新的 `test_result`/`command_result` Evidence 并刷新校验时间。已标记
+为 `invalid` 或 `superseded` 的命令拥有不可复活的历史身份，新的输出不会重新激活
+或复制它。
+
+显式 JSON 提交可使用可选 `handoff` 标注 summary 中的完整约束与剩余工作段落：
+`repomind commit --input result.json --repo /path/to/repository --json`。
+输入沿用 `sessionId`、`idempotencyKey`、`status`、`summary`，增加
+`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` 即可。
+旧 `remainingWork` 同时存在时必须与新数组相同。完整规则和示例见
+[结构化交接](structured-handoff-v1.md)。无效结构会拒绝提交，已有会话保持 open；
+修正输入后可重试。摘要文字中的“测试通过”仍不能替代命令 Evidence。
+
+OpenCode Host 可请求可选输出协议：
+
+```sh
+repomind run --runner opencode --task "完成当前任务并交接约束与剩余工作" --structured-handoff
+```
+
+开关默认关闭，仅用于 `run`；不支持的 adapter 在启动前拒绝。协议缺失或无效时
+记录诊断并沿用自由文本处理，不会仅因此重试或改变任务状态。报告中的 `handoff`
+记录是否持久化、summary Evidence ID、接受/拒绝原因和标题实际采用情况。Evidence
+保留含 JSON 块的完整最终回答，接受后的 solution 正文只使用块前原文。
+`attempts[].prompt` 审计每次 fresh/resume 提示词；协议指令计入 promptChars，
+不占召回记忆字符预算。真实模型输出可靠性及 token 收益仍待独立验收。
+
 除日常使用的 `repomind run` 命令外，RepoMind v0.10 又增加了两项能力：可审查的冷启动候选项和持久化运行历史。
 
 ## 冷启动仓库的 Bootstrap

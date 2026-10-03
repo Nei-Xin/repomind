@@ -12,7 +12,7 @@ import type {
 import { analyzeOpenCodeOutcome } from "./lifecycle.js";
 
 const HOST_AGENT = "repomind-host";
-const RESUME_PROMPT = "Continue the interrupted task from the current repository state. Verify the existing changes and finish with a concise final summary.";
+export const OPENCODE_RESUME_PROMPT = "Continue the interrupted task from the current repository state. Verify the existing changes and finish with a concise final summary.";
 const WINDOWS_MAX_HOST_PROMPT_CHARS = 28_000;
 const WINDOWS_MAX_COMMAND_LINE_CHARS = 32_767;
 
@@ -102,10 +102,13 @@ function invocation(
   request: AgentHostRunRequest,
   continuationToken?: string,
 ): AgentProcessRequest {
+  if (request.structuredHandoff && continuationToken && !request.resumePrompt) {
+    throw new RepoMindError("INVALID_INPUT", "Structured handoff continuation requires a Host-audited resume prompt");
+  }
   const args = ["run", "--pure", "--format", "json", "--auto", "--agent", HOST_AGENT, "--dir", request.repository];
   if (request.model) args.push("--model", request.model);
   if (continuationToken) args.push("--session", continuationToken);
-  const prompt = continuationToken ? RESUME_PROMPT : request.prompt;
+  const prompt = continuationToken ? request.resumePrompt ?? OPENCODE_RESUME_PROMPT : request.prompt;
   args.push(prompt);
   if (process.platform === "win32" && prompt.length > WINDOWS_MAX_HOST_PROMPT_CHARS) {
     throw new RepoMindError(
@@ -150,7 +153,10 @@ export function createOpenCodeHostAdapter(
 ): AgentHostAdapter<"opencode"> {
   const executable = resolveOpenCodeExecutable(options.executable);
   const execute = options.execute ?? executeAgentProcess;
-  const validate = (request: AgentHostRunRequest): void => { invocation(executable, request); };
+  const validate = (request: AgentHostRunRequest): void => {
+    invocation(executable, request);
+    if (request.structuredHandoff) invocation(executable, request, "host-preflight-session");
+  };
   const executeRequest = async (
     request: AgentHostRunRequest,
     continuationToken?: string,
@@ -165,6 +171,7 @@ export function createOpenCodeHostAdapter(
       outcome: analyzeOpenCodeOutcome(
         result.stdout,
         `OpenCode ended with exit code ${result.exitCode ?? "unknown"}${result.signal ? ` and signal ${result.signal}` : ""}.`,
+        { structuredHandoff: request.structuredHandoff === true, stdoutTruncated: result.stdoutTruncated },
       ),
       events: analyzeAgentEvents(result.stdout),
       ...(resumableSessionId ? { continuationToken: resumableSessionId } : {}),
@@ -174,6 +181,7 @@ export function createOpenCodeHostAdapter(
     id: "opencode",
     displayName: "OpenCode",
     executable,
+    supportsStructuredHandoff: true,
     validate,
     run: (request) => executeRequest(request),
     resume: (request, continuationToken) => executeRequest(request, continuationToken),

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { MemoryResult, ModuleNarrativeSummary, RepositoryProfileSummary } from "../domain/types.js";
 import { redactSecrets } from "../security/redaction.js";
+import { memoryTextWithoutDuplicateTitle } from "../extraction/solution-summary.js";
 
 const MAX_CONTEXT_CHARS = 12_000;
 const TRUNCATION_MARKER = "\n[truncated by RepoMind interactive context]";
@@ -56,7 +57,8 @@ export function renderInteractiveRecall(
     if (memories.length) append("## Task Memories");
     memories.forEach((memory, index) => entry(memory.id, "L1", null, quote([
       `[${index + 1}] ${memory.type} / ${memory.status} / ${memory.id}`,
-      memory.title, memory.content, ...(memory.warning ? [`Warning: ${memory.warning}`] : []),
+      memoryTextWithoutDuplicateTitle(normalize(memory.title), normalize(memory.content)),
+      ...(memory.warning ? [`Warning: ${memory.warning}`] : []),
     ].join("\n"))));
   }
   const truncated = full.length > MAX_CONTEXT_CHARS;
