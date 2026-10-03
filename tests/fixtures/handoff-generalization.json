@@ -1,0 +1,42 @@
+[
+  {
+    "id": "empty-arguments",
+    "constraint": "Reject empty arguments with TypeError.",
+    "remaining": "The parser change has not been implemented."
+  },
+  {
+    "id": "empty-route",
+    "constraint": "An empty route selects the default endpoint only when fallback is enabled. Otherwise return 404.",
+    "remaining": "Fallback-disabled coverage remains outstanding."
+  },
+  {
+    "id": "en-condition-negation",
+    "constraint": "Retry a timed-out upload once only if the server has not acknowledged it. Never retry an acknowledged upload.",
+    "remaining": "The upload retry implementation is still pending."
+  },
+  {
+    "id": "zh-condition-negation",
+    "constraint": "仅在租约尚未到期且持有者匹配时续租；已经到期的租约不得续租。",
+    "remaining": "跨时区到期测试尚未完成。"
+  },
+  {
+    "id": "zh-warning",
+    "constraint": "警告：此规则仅适用于离线导入，在线写入仍必须校验签名。",
+    "remaining": "离线导入尚未接入。"
+  },
+  {
+    "id": "opposite-outcomes",
+    "constraint": "A missing locale inherits the account locale. An explicitly blank locale disables localization.",
+    "remaining": "The account migration remains unverified."
+  },
+  {
+    "id": "ambiguous-semantics",
+    "constraint": "The function supports empty, negative, and zero endpoints.",
+    "remaining": "The result for an empty collection is unspecified."
+  },
+  {
+    "id": "multiline-scope",
+    "constraint": "For archived records only:\n- Preserve the original owner.\n- Do not send notifications.",
+    "remaining": "Active-record behavior has not been reviewed."
+  }
+]

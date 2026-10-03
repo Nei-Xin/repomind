@@ -61,11 +61,12 @@ describe("structured handoff validation", () => {
       .toMatchObject({ title: "Review closed.", titleSource: "legacy-summary" });
   });
 
-  it("rejects an ambiguous empty qualifier that loses an input-to-result relationship", () => {
-    const summary = "Review closed.\n\nThe function supports empty, negative, and zero endpoints.";
-    expect(() => validateStructuredHandoff(summary, handoff(["The function supports empty, negative, and zero endpoints."])))
-      .toThrow(expect.objectContaining({ details: { reason: "ambiguous-empty-qualifier" } }));
-  });
+  it.each(["Reject empty arguments with TypeError.", "The function supports empty, negative, and zero endpoints."])(
+    "validates source structure without claiming semantic completeness: %s", (constraint) => {
+      const result = prepareExplicitHandoff(constraint, handoff([constraint]));
+      expect(result.audit).toMatchObject({ disposition: "accepted", semanticValidation: "not-performed" });
+    },
+  );
 
   it("uses a whole multi-sentence paragraph at the exact title limit", () => {
     const constraint = "Only on Linux. " + "x".repeat(144) + ".";

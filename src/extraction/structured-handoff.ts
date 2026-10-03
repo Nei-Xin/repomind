@@ -17,13 +17,6 @@ const paragraphSchema = z.string().min(1).regex(/\S/u)
 const paragraphsSchema = z.array(paragraphSchema).max(16)
   .refine((items) => new Set(items).size === items.length, "Paragraphs must be unique");
 
-// A model sometimes compresses a result-bearing empty-input rule into a list
-// of endpoint/value categories (for example, "empty, negative, and zero
-// endpoints"). That wording does not preserve the input-to-result relationship
-// and must not be accepted as a durable handoff claim.
-const AMBIGUOUS_EMPTY_QUALIFIER = /\bempty\b[^.!?\n]*(?:endpoint|argument|value)s?\b/iu;
-const EXPLICIT_EMPTY_CASE = /\bempty\s+(?:input|array|string|value)\b|空(?:输入|数组|字符串|值)/iu;
-
 /** Shared by explicit CLI/MCP inputs and the Core boundary; no transforms. */
 export const structuredHandoffSchema = z.object({
   version: z.literal(1),
@@ -59,12 +52,14 @@ export interface HandoffAudit extends Omit<ValidatedHandoff, "title" | "rawHando
   disposition: "accepted" | "absent" | "rejected";
   producer: "explicit-input" | "opencode-host";
   reasonCodes: string[];
+  /** Structural/source validation only; natural-language semantic completeness is not inferred. */
+  semanticValidation: "not-performed";
   /** Hash and offsets refer to persisted, redacted Evidence, not secret input. */
   summarySha256: string;
   verification: HandoffVerificationItem[];
   solution: {
     memoryId: string | null;
-    disposition: "stored" | "deduplicated" | "skipped-retired" | "not-eligible";
+    disposition: "stored" | "deduplicated" | "skipped-retired" | "not-eligible" | "blocked-handoff";
     titleApplied: boolean;
   };
 }
@@ -129,9 +124,6 @@ export function validateStructuredHandoff(
     });
   };
   const constraints = resolve(handoff.constraints);
-  if (constraints.some(({ text }) => AMBIGUOUS_EMPTY_QUALIFIER.test(text) && !EXPLICIT_EMPTY_CASE.test(text))) {
-    invalid("ambiguous-empty-qualifier");
-  }
   const remainingWork = resolve(handoff.remainingWork);
   const first = constraints[0]?.text;
   const useConstraint = first !== undefined && !/[\r\n\u2028\u2029]/u.test(first)
@@ -160,7 +152,7 @@ export function prepareExplicitHandoff(
   const { title, ...annotations } = persisted;
   return { title, audit: {
     ...annotations, protocolVersion: 1, disposition: "accepted", producer: "explicit-input", reasonCodes: [],
-    summarySha256: createHash("sha256").update(persistedSummary, "utf8").digest("hex"),
+    summarySha256: createHash("sha256").update(persistedSummary, "utf8").digest("hex"), semanticValidation: "not-performed",
     verification: [], solution: { memoryId: null, disposition: "not-eligible", titleApplied: false },
   } };
 }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -40,6 +40,24 @@ describe("structured handoff persistence", () => {
   const snapshot = () => Object.fromEntries(["evidence", "memories", "memory_evidence", "memory_fts", "commit_receipts", "sessions"].map((table) => [
     table, core.context.database.raw.prepare(`SELECT * FROM ${table}`).all(),
   ]));
+
+  const generalizationCases = JSON.parse(readFileSync(new URL("./fixtures/handoff-generalization.json", import.meta.url), "utf8")) as Array<{
+    id: string; constraint: string; remaining: string;
+  }>;
+  it.each(generalizationCases)("preserves the complete bilingual case $id without claiming semantic validation", (fixture) => {
+    const session = core.startSession({ task: "Archive review notes" });
+    writeFileSync(join(repository, "README.txt"), "review archived");
+    const prose = `Review archived.\n\n${fixture.constraint}\n\n${fixture.remaining}`;
+    core.commitSession({ sessionId: session.sessionId, idempotencyKey: fixture.id, status: "success", summary: prose,
+      handoff: { version: 1, constraints: [fixture.constraint], remainingWork: [fixture.remaining] } });
+    const row = audit(session.sessionId);
+    expect(row.metadata.handoffAudit).toMatchObject({ disposition: "accepted", semanticValidation: "not-performed",
+      constraints: [{ text: fixture.constraint }], remainingWork: [{ text: fixture.remaining }] });
+    expect(core.inspect(row.metadata.handoffAudit.solution.memoryId!).content).toBe(prose);
+    for (const p of [...row.metadata.handoffAudit.constraints, ...row.metadata.handoffAudit.remainingWork]) {
+      expect(row.content.slice(p.start, p.end)).toBe(p.text);
+    }
+  });
 
   it("persists exact prose and source spans, recalls a scoped title, and retries idempotently", () => {
     writeFileSync(join(repository, "dirty.txt"), "pre-existing edit");

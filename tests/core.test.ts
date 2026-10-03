@@ -572,7 +572,7 @@ describe("repository memory core", () => {
     core.close();
   });
 
-  it("stores a decision-first solution but preserves the original summary Evidence and commit idempotency", () => {
+  it("preserves summary order, original Evidence and commit idempotency", () => {
     const core = new RepositoryMemoryCore(repository);
     try {
       const started = core.startSession({ task: "Close the digest review" });
@@ -587,8 +587,8 @@ describe("repository memory core", () => {
       const result = core.commitSession(input);
       expect(core.commitSession(input)).toEqual(result);
       const solution = core.context.database.raw.prepare("SELECT id,title,content FROM memories WHERE type='solution'").get() as { id: string; title: string; content: string };
-      expect(solution.title).toBe(decision);
-      expect(solution.content.startsWith(decision)).toBe(true);
+      expect(solution.title).toBe("Completed the coordination-only change.");
+      expect(solution.content).toBe(summary);
       expect(solution.content).toContain('- Did not implement the follow-up.');
       expect(solution.content).toContain('Hash UTF-8 input as lowercase SHA-256 hexadecimal.');
       const evidence = core.context.database.raw.prepare("SELECT e.content FROM evidence e JOIN memory_evidence me ON me.evidence_id=e.id WHERE me.memory_id=? AND e.kind='agent_summary'").get(solution.id) as { content: string };
@@ -609,7 +609,7 @@ describe("repository memory core", () => {
       const solutions = core.context.database.raw.prepare("SELECT id,title,content FROM memories WHERE type='solution'").all() as Array<{ id: string; title: string; content: string }>;
       expect(solutions).toHaveLength(1);
       const solution = solutions[0]!;
-      expect(solution).toMatchObject({ title: fixture.expectedTitle, content: fixture.expectedContent });
+      expect(solution.content).toBe(fixture.summary);
       const evidence = core.context.database.raw.prepare("SELECT e.content FROM evidence e JOIN memory_evidence me ON me.evidence_id=e.id WHERE me.memory_id=? AND e.kind='agent_summary'").all(solution.id);
       expect(evidence).toEqual([expect.objectContaining({ content: fixture.summary })]);
       expect(core.context.database.raw.prepare("SELECT file_path FROM memory_files WHERE memory_id=?").all(solution.id))

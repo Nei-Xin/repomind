@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { RepoMindError } from "../errors.js";
 import { redactSecrets } from "../security/redaction.js";
-import { compactSolutionSummary, solutionSummaryTitle } from "./solution-summary.js";
+import { solutionSummaryTitle } from "./solution-summary.js";
 import { prepareExplicitHandoff, type HandoffAudit } from "./structured-handoff.js";
 
 export const STRUCTURED_HANDOFF_INSTRUCTION = [
   "## Final handoff output protocol (RepoMind v1)",
   "Finish with a natural-language summary preserving constraints, verification outcomes, warnings and remaining work.",
   "Use complete, independently understandable paragraphs; keep conditions with the claims they qualify. Do not claim pending work is implemented.",
-  "Preserve every independently testable input-to-result relationship explicitly. Keep empty-input results separate from negative/zero/value-validity rules; never compress an empty-input result into a list such as empty, negative, and zero endpoints. Write durable behavior constraints in separate paragraphs from completed operations, test results and remaining work.",
+  "Preserve every independently testable input-to-result relationship explicitly, including conditions, exceptions, negative cases and remaining work. Write durable behavior constraints in separate paragraphs from completed operations and test results.",
   "After the prose, append exactly one top-level terminal ```repomind-handoff fenced block containing a JSON object with only version: 1, constraints: string[], remainingWork: string[].",
   "Each array entry must copy one unique complete paragraph from the prose exactly, in source order. Do not copy only part of a paragraph. Never repeat a paragraph across the arrays.",
   "Use at most 16 entries per array, 2000 Unicode code points per entry and 4000 total. Use empty arrays when there is nothing to annotate. No verification, evidence IDs or status fields are allowed.",
@@ -115,15 +115,15 @@ function reasonOf(error: unknown): string {
   throw error;
 }
 
-/** Core repeats all structural/source checks; invalid optional output falls back without changing task status. */
+/** Core repeats structural/source checks. Rejection keeps Evidence but blocks summary promotion. */
 export function prepareHostHandoff(summary: string, capture: HostHandoffCapture): { title: string; content: string; audit: HandoffAudit } {
   const fallback = (disposition: "absent" | "rejected", reasonCodes: string[]) => {
-    const content = compactSolutionSummary(summary);
+    const content = summary;
     return { content, title: solutionSummaryTitle(content), audit: {
       protocolVersion: 1 as const, producer: "opencode-host" as const, disposition, reasonCodes,
       rawHandoff: null, constraints: [], remainingWork: [], verification: [], titleSource: "legacy-summary" as const,
-      summarySha256: createHash("sha256").update(redactSecrets(summary).content, "utf8").digest("hex"),
-      solution: { memoryId: null, disposition: "not-eligible" as const, titleApplied: false },
+      summarySha256: createHash("sha256").update(redactSecrets(summary).content, "utf8").digest("hex"), semanticValidation: "not-performed" as const,
+      solution: { memoryId: null, disposition: disposition === "rejected" ? "blocked-handoff" as const : "not-eligible" as const, titleApplied: false },
     } };
   };
   if (capture.rejectionReasons.length) return fallback("rejected", [...capture.rejectionReasons]);

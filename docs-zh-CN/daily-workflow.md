@@ -46,10 +46,10 @@ Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution �
 掩盖的测试结果不能重新学习已验证命令。新建计入 `stored`；更新验证和被拒绝的退役
 候选计入 `skipped`，更新验证同时计入 `revalidated`。
 
-结构化交接必须逐项保留可测试的输入—结果关系。空输入的结果要单独写明，不能与
-负数/零/取值有效性压成“空、负数和零端点”之类的歧义短语；校验器会拒绝该类标注并
-回退到普通 prose。生产者应把持久行为约束与已完成操作、测试结果、剩余工作分成
-独立段落。
+结构化交接应逐项保留输入—结果关系、条件、例外与否定约束。校验器检查 schema
+和完整源段落，不判断自然语言语义是否完整；即使 `disposition=accepted`，审计中的
+`semanticValidation` 仍为 `not-performed`。不再按特定措辞拒绝交接，也不按英文句式
+重排普通摘要；普通标题取开头完整句子，不跳过标题或完成声明寻找后文。
 
 显式 JSON 提交可使用可选 `handoff` 标注 summary 中的完整约束与剩余工作段落：
 `repomind commit --input result.json --repo /path/to/repository --json`。
@@ -65,8 +65,11 @@ OpenCode Host 可请求可选输出协议：
 repomind run --runner opencode --task "完成当前任务并交接约束与剩余工作" --structured-handoff
 ```
 
-开关默认关闭，仅用于 `run`；不支持的 adapter 在启动前拒绝。协议缺失或无效时
-记录诊断并沿用自由文本处理，不会仅因此重试或改变任务状态。报告中的 `handoff`
+开关默认关闭，仅用于 `run`；不支持的 adapter 在启动前拒绝。协议缺失（absent）时
+沿用普通摘要处理。协议被拒绝（rejected）时保留 Evidence 与审计，但摘要不生成
+solution/decision/architecture 记忆，也不进入远程提取输入或可引用证据集合；
+`solution.disposition=blocked-handoff`，原本满足存储条件的 solution 计入 `skipped`。
+可信命令证据和任务需求仍可独立入库。两者均不会仅因此重试或改变任务状态。报告中的 `handoff`
 记录是否持久化、summary Evidence ID、接受/拒绝原因和标题实际采用情况。Evidence
 保留含 JSON 块的完整最终回答，接受后的 solution 正文只使用块前原文。
 `attempts[].prompt` 审计每次 fresh/resume 提示词；协议指令计入 promptChars，

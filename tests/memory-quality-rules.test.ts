@@ -139,11 +139,11 @@ describe("rule 1: solutions need a repository outcome", () => {
   });
 
   it.each([
-    ["要验证 storage 模块，就在项目根目录运行：\n\nnode --test storage.test.mjs", "node --test storage.test.mjs"],
-    ["## Fixed rounding\nUsed integer cents.", "Used integer cents."],
-    ["```js\nconst x = 1;\n```\nSet x to one.", "Set x to one."],
-    ["- Replaced the float math", "Replaced the float math"],
-  ])("titles a solution with its substance (%j)", async (summary, title) => {
+    ["要验证 storage 模块，就在项目根目录运行：\n\nnode --test storage.test.mjs", "Completed solution"],
+    ["## Fixed rounding\nUsed integer cents.", "Completed solution"],
+    ["```js\nconst x = 1;\n```\nSet x to one.", "Completed solution"],
+    ["- Replaced the float math", "Completed solution"],
+  ])("does not promote an incomplete opening or skip context for a title (%j)", async (summary, title) => {
     const f = await fixture();
     await task(f, "title", "Change something", [], summary, () => writeFileSync(join(f.root, "changed.txt"), "x\n"));
     expect(memories(f)).toEqual([expect.objectContaining({ type: "solution", title })]);

@@ -554,11 +554,12 @@ export class RepositoryMemoryCore {
           SELECT id FROM evidence WHERE session_id=? AND kind='user_requirement'
           ORDER BY created_at, id LIMIT 1
         `).get(input.sessionId) as { id: string } | undefined;
+        const handoffRejected = handoff?.audit.disposition === "rejected";
         const candidates = extractDeterministicMemories({
           task: session.task,
           summary: handoff?.audit.disposition === "accepted" ? handoff.content : input.summary,
           changedFiles: memoryFiles,
-        }).filter((candidate) => candidate.type === "requirement" || canExtractSummary);
+        }).filter((candidate) => candidate.type === "requirement" || (canExtractSummary && !handoffRejected));
         for (const candidate of candidates) {
           const evidenceId = candidate.type === "requirement"
             ? userRequirementEvidence?.id ?? summaryEvidence!
@@ -638,7 +639,7 @@ export class RepositoryMemoryCore {
           }
         }
         const solutionEarned = sources.solutionPolicy !== "repository-outcome" || files.length > 0 || passedTest;
-        if (input.summary.trim() && solutionEarned) {
+        if (input.summary.trim() && solutionEarned && !handoffRejected) {
           const summary = handoff?.content ?? compactSolutionSummary(input.summary);
           const outcome = this.storeMemory({ type: "solution", title: handoff?.title ?? solutionSummaryTitle(summary), content: summary, confidence: 0.8, tags: ["solution"], relatedFiles: memoryFiles }, "extracted", evidenceIds,
             handoff?.audit.disposition === "accepted" ? { preserveContentWhitespace: true } : {});
@@ -652,6 +653,9 @@ export class RepositoryMemoryCore {
               titleApplied: outcome.stored && handoff.audit.titleSource === "structured-constraint",
             };
           }
+        } else if (handoffRejected && handoff && input.summary.trim() && solutionEarned) {
+          skipped++;
+          handoff.audit.solution = { memoryId: null, disposition: "blocked-handoff", titleApplied: false };
         }
       }
 
@@ -710,7 +714,11 @@ export class RepositoryMemoryCore {
       content: row.content,
       commitHash: row.commit_hash,
       metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
-    }));
+    })).filter((item) => {
+      // Exclude rejected prose both from model input and the allowed citation set.
+      const audit = item.metadata.handoffAudit as { disposition?: string } | undefined;
+      return item.kind !== "agent_summary" || audit?.disposition !== "rejected";
+    });
     if (!evidence.length) throw new RepoMindError("INVALID_INPUT", `Session ${input.sessionId} has no Evidence to extract`);
 
     const startedAt = Date.now();

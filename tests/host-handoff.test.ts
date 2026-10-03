@@ -59,7 +59,7 @@ describe("Host structured handoff protocol", () => {
     expect(prepare(block()).audit.reasonCodes).toEqual(["missing-prose"]);
   });
 
-  it("falls back when a protocol paragraph compresses an empty result into endpoint categories", () => {
+  it("reports structural acceptance separately from unverified semantics", () => {
     const ambiguous = "Review closed.\n\nThe function supports empty, negative, and zero endpoints.";
     const raw = `${ambiguous}\n\n${block(JSON.stringify({
       version: 1,
@@ -67,9 +67,9 @@ describe("Host structured handoff protocol", () => {
       remainingWork: [],
     }))}`;
     expect(prepare(raw).audit).toMatchObject({
-      disposition: "rejected", reasonCodes: ["ambiguous-empty-qualifier"], rawHandoff: null,
+      disposition: "accepted", semanticValidation: "not-performed", reasonCodes: [],
     });
-    expect(prepare(raw).content).toBe(raw);
+    expect(prepare(raw).content).toBe(ambiguous);
   });
 
   it("requires collector offsets to match the actual answer", () => {

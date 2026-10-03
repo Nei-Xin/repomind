@@ -59,12 +59,12 @@ interface StructuredHandoffV1 {
 ```
 
 JSON 形状见 [schema](structured-handoff-v1/schema.json)，可检查样例见
-[examples](structured-handoff-v1/examples.json)。运行时使用共享 Zod schema 和语义校验器；
-JSON Schema 表达形状，完整段落来源和总长度等限制仍由语义校验器检查。
+[examples](structured-handoff-v1/examples.json)。运行时使用共享 Zod schema 和来源校验器；
+JSON Schema 表达形状，完整段落来源和总长度等限制仍由来源校验器检查。
 
 - 两个数组必须提供；空数组表示没有标注该类内容，不证明没有约束或没有剩余工作。
 - 每类最多 16 项；每项为非空白字符串，最多 2,000 Unicode code points；两类合计
-  最多 4,000 code points。JSON schema 管单项形状，合计限制由语义校验器负责。
+  最多 4,000 code points。JSON schema 管单项形状，合计限制由来源校验器负责。
 - 各项必须逐字等于原始自然语言摘要中的一个**完整、唯一的非空段落**。段落由
   一个或多个仅含空格/Tab 的空行分隔；保留段内所有字符、标点、换行、Markdown、
   警告和条件，不做 trim、大小写折叠或 Unicode normalization 后的模糊匹配。
@@ -145,11 +145,12 @@ agent_summary，rawHandoff 也受脱敏保护。先校验原文，再在脱敏�
 脱敏导致原本不同的段落合并或段落边界改变，报 `redacted-source-mismatch`，
 不保存错误位置。没有 Secret 时 Evidence 逐字保留原文。
 
-accepted 分支：solution 正文使用完整自然语言原文，**不再调用布局重排**。
-生产提示要求逐项保留可测试的“输入—结果”关系：空输入的结果必须单独写明，不能
-压缩成“空、负数和零端点”之类的类别列表；持久行为约束、已完成操作、测试结果和
-剩余工作应分成独立段落。校验器还会拒绝这种可疑的空值限定（`ambiguous-empty-qualifier`），
-转入既有自由文本回退，避免把语义不完整的交接写入 solution。
+accepted 分支：solution 正文使用完整自然语言原文，不做布局重排。
+提示词要求保留输入—结果关系、条件、例外、否定约束与剩余工作，避免把独立规则
+压成类别列表。校验器仅检查结构、完整源段落、顺序和来源，不检查语义完整性。
+审计明确记录 `semanticValidation: "not-performed"`；accepted 不等于语义验收通过。
+此前针对特定空值措辞的规则已移除，因为它会误拒合法陈述且无法保证语义完整。
+普通摘要也保留原文顺序；标题使用开头完整句子，不按特定措辞跳过完成声明或标题。
 标题优先使用第一条约束全文，仅当它为单行、以句末标点 `.?!。！？` 结束且长度
 不超过现有标题上限 160 UTF-16 code units。不得删掉前缀、截成首句或跳到后面
 更短的约束；不符合则沿用当前自由文本标题函数。无约束时也走该标题回退。
@@ -158,15 +159,18 @@ accepted 分支：solution 正文使用完整自然语言原文，**不再调用
 清理；新存 solution 正文保留首尾空白。第一条约束的校验和选择不会跳过条件前缀。
 
 titleSource 描述候选标题的来源，不能单独证明标题被写入。solution.disposition
-区分 `stored`、`deduplicated`、`skipped-retired`、`not-eligible`；只有本次新存记忆
+区分 `stored`、`deduplicated`、`skipped-retired`、`not-eligible`、`blocked-handoff`；只有本次新存记忆
 且使用结构约束时 titleApplied 为 true。既有内容指纹去重可能复用旧标题及旧正文
 格式，不重写旧记录；已失效/被替代的记录不恢复，也不关联这次新 Evidence。
 
-absent/rejected 自动分支继续使用现有正文整理和标题逻辑。partial/failed 会话、
+absent 自动分支使用普通摘要路径。rejected 分支保留原始 Evidence 和审计，
+但摘要不生成 solution/decision/architecture 记忆，也不进入远程提取输入或允许引用
+的证据集合；可信命令和任务需求仍独立处理。原本满足存储门槛的 solution 被拦截时
+计入 skipped，审计记录 blocked-handoff。partial/failed 会话、
 solutionPolicy、实际文件变更和通过测试的判定全部沿用调用路径的既有行为。
 标注一个不存在的源文件不会建立文件关联。
 
-请求哈希必须包含**原始提交字段** handoff，先进行语义校验，不把规范化后内容
+请求哈希必须包含**原始提交字段** handoff，先进行结构及来源校验，不把规范化后内容
 冒充原请求。相同 key/请求返回原 receipt；相同 key 但结构标注改变应冲突。旧输入
 不得补写 `handoff: undefined`、空对象或新默认字段来改变旧哈希。读取旧 receipt
 不得借机重算标题、增加 Evidence 或升级验证来源。
@@ -216,11 +220,12 @@ summary 就是 prose，不解析其中的围栏。匹配绝不能在 JSON 自身
 现有 12,000 code-unit 摘要上限及 NUL 清理不能被新协议绕过。在有损处理前检测
 长度/NUL/输出截断；若发生任何这些情况，拒绝结构化使用并记录原因，summary
 仍按既有有界规则保存。不能声称保存了无限长原始 stdout，原始事件工件沿用原策略。
-协议块自身上限 8,000 code units，超限回退。未知版本、缺失/多个块、JSON 错误、
-段落不匹配也回退；不会单凭可选协议失败将成功任务改为 partial 或额外重试模型。
+协议块自身上限 8,000 code units，超限拒绝。未知版本、多个块、JSON 错误或
+段落不匹配同样拒绝，并阻止摘要入库。缺失协议记 absent，沿用普通摘要处理。
+不会单凭可选协议失败将成功任务改为 partial 或额外重试模型。
 
 Host 报告的可选 `handoff` 记录 requested、persisted、summaryEvidenceId 及 audit。
-`audit.disposition` 区分 accepted/absent/rejected，`reasonCodes` 记录回退原因，
+`audit.disposition` 区分 accepted/absent/rejected，`reasonCodes` 记录未接受原因，
 `titleSource` 表示候选标题来源，`solution.titleApplied` 表示本次是否实际新存该标题。
 协议接受与任务成功分别判定：partial/failed 也能有 accepted 审计，但不会因此生成
 solution。abandoned 报告为 persisted=false、summaryEvidenceId=null；提交失败则
@@ -270,7 +275,7 @@ receipt 均继续可用。回滚关闭 Host 开关即可停止请求新协议，
 详见 [验收清单](structured-handoff-v1/acceptance.md)。实现阶段必须先完成无模型
 回归，再冻结任务与规则进行真实 OpenCode 验证，不从小样本 token 波动推断收益。
 
-1. **Core 与显式入口**：共享 schema/语义校验、可选字段、Evidence 投影、标题、
+1. **Core 与显式入口**：共享 schema/来源校验、可选字段、Evidence 投影、标题、
    幂等性；CLI/MCP 和 core 直接调用全部覆盖，先不改变 Host 默认行为。
 2. **OpenCode Host**：实现可选输出协议、报告原因、重试/截断行为与 prompt 审计；
    扩展 AgentOutcome、commitHostLifecycle 的内部传递，旧 adapter 返回值仍有效。

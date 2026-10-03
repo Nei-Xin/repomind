@@ -61,12 +61,13 @@ Caller-reported output and masked test exits cannot relearn a verified command.
 New records count as `stored`; revalidations and rejected retired candidates count
 as `skipped` (revalidations also increment `revalidated`).
 
-Structured handoff output must preserve each independently testable input/result
-relationship. Empty-input results stay explicit and separate from negative/zero/value
-validity rules; ambiguous phrases such as “empty, negative, and zero endpoints” are
-rejected and fall back to the ordinary prose path. Producers should keep durable
-behavior constraints in separate paragraphs from completed operations, test results,
-and remaining work.
+Structured handoff producers should preserve each input/result relationship,
+including conditions, exceptions and negative cases, in complete paragraphs.
+Validation checks schema and exact source paragraphs, not semantic completeness:
+`handoff.audit.semanticValidation` is `not-performed`, even when `disposition` is
+`accepted`. There are no phrase-specific semantic rejection rules. All solution
+summaries preserve prose order; ordinary titles use the first complete opening
+sentence without skipping headings or generic completion phrases.
 
 Explicit JSON commits can optionally annotate complete source paragraphs using
 `handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` alongside
@@ -84,8 +85,13 @@ repomind run --runner opencode --task "Complete the task and hand off constraint
 ```
 
 The flag is off by default, applies only to `run`, and rejects unsupported adapters
-before starting them. Missing or invalid output falls back to free-text handling
-without causing a protocol-only retry or status change. The optional report field
+before starting them. Missing output (`absent`) uses ordinary prose handling.
+Rejected output remains summary Evidence with `solution.disposition: blocked-handoff`;
+its summary cannot generate automatic solution/decision/architecture memories and
+is excluded from remote extraction input and allowed citations. Trusted command
+Evidence and task requirements still qualify independently. An otherwise eligible
+blocked solution counts as `skipped`. Neither case causes a protocol-only retry or
+status change. The optional report field
 `handoff` records persistence, the summary Evidence ID, acceptance/rejection reasons,
 and whether the constraint title was actually stored. Full final output remains
 Evidence; accepted solution content uses the prose before the terminal JSON block.

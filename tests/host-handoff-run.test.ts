@@ -82,7 +82,7 @@ describe("optional structured handoff Host lifecycle", () => {
     ["No structure this time.", "absent", "missing-protocol"],
     [answer.replace('"version":1', '"version":2'), "rejected", "schema-invalid"],
     [answer.replace('"version":1', '"version":2,"version":1'), "rejected", "duplicate-json-key"],
-  ])("falls back without failing or retrying a completed task: %s", async (raw, disposition, reason) => {
+  ])("audits missing/rejected output without failing or retrying a completed task: %s", async (raw, disposition, reason) => {
     const execute = vi.fn(async () => {
       writeFileSync(join(repository, "README.txt"), "review closed");
       return result([text(raw), stop]);
@@ -91,7 +91,30 @@ describe("optional structured handoff Host lifecycle", () => {
     expect(report.succeeded).toBe(true);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(report.handoff!.audit).toMatchObject({ disposition, reasonCodes: [reason], titleSource: "legacy-summary" });
-    expect(core.inspect(report.handoff!.audit.solution.memoryId!).content).toBe(raw);
+    if (disposition === "absent") expect(core.inspect(report.handoff!.audit.solution.memoryId!).content).toBe(raw);
+    else {
+      expect(report.handoff!.audit.solution).toMatchObject({ memoryId: null, disposition: "blocked-handoff" });
+      expect(core.context.database.raw.prepare("SELECT id FROM memories WHERE type='solution'").all()).toEqual([]);
+    }
+  });
+
+  it("blocks rejected summaries without losing trusted commands or task requirements", async () => {
+    const rejected = 'We decided to use queues instead of polling.\n\nThe storage module owns all writes.\n\n```repomind-handoff\n{"version":2}\n```';
+    const report = await runOpenCodeHost({ ...options, task: "The parser must preserve exact bytes.", execute: async () => {
+      writeFileSync(join(repository, "README.txt"), "review closed");
+      return result([text(rejected), stop]);
+    }, verify: () => ({ checks: [], evidence: [{ command: "node --test", exitCode: 0, summary: "public pass" }] }) });
+    expect(report.succeeded).toBe(true);
+    expect(report.session.status).toBe("committed");
+    expect(report.handoff!.audit).toMatchObject({ disposition: "rejected", solution: { memoryId: null, disposition: "blocked-handoff" },
+      verification: [{ command: "node --test", source: "host-verified" }] });
+    const types = core.context.database.raw.prepare("SELECT type FROM memories ORDER BY type").all();
+    expect(types).toEqual([{ type: "command" }, { type: "requirement" }]);
+    expect(core.context.database.raw.prepare("SELECT content FROM evidence WHERE id=?").get(report.handoff!.summaryEvidenceId!))
+      .toEqual({ content: rejected });
+    const receipt = core.context.database.raw.prepare("SELECT result_json FROM commit_receipts WHERE session_id=?")
+      .get(report.session.id) as { result_json: string };
+    expect(JSON.parse(receipt.result_json).memories.skipped).toBeGreaterThanOrEqual(1);
   });
 
   it("is opt-in and adds no metadata or protocol instructions to old runs", async () => {
@@ -187,7 +210,7 @@ describe("optional structured handoff Host lifecycle", () => {
   it("retains protocol loss diagnostics for truncated output without promoting memories", async () => {
     const report = await runOpenCodeHost({ ...options, execute: async () => result([text(answer), stop], { stdoutTruncated: true }) });
     expect(report.session.status).toBe("partial");
-    expect(report.handoff!.audit).toMatchObject({ disposition: "rejected", reasonCodes: ["output-truncated"], solution: { disposition: "not-eligible" } });
+    expect(report.handoff!.audit).toMatchObject({ disposition: "rejected", reasonCodes: ["output-truncated"], solution: { disposition: "blocked-handoff" } });
   });
 
   it("never promotes an accepted handoff when authoritative verification fails", async () => {
