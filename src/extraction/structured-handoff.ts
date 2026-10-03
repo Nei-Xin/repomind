@@ -17,6 +17,17 @@ const paragraphSchema = z.string().min(1).regex(/\S/u)
 const paragraphsSchema = z.array(paragraphSchema).max(16)
   .refine((items) => new Set(items).size === items.length, "Paragraphs must be unique");
 
+const paragraphNumbersSchema = z.array(z.number().int().positive().safe()).max(16)
+  .refine((items) => new Set(items).size === items.length, "Paragraph references must be unique");
+
+/** Host-only v2 selects whole prose paragraphs instead of copying their text. */
+export const hostParagraphHandoffSchema = z.object({
+  version: z.literal(2),
+  constraints: paragraphNumbersSchema,
+  remainingWork: paragraphNumbersSchema,
+}).strict();
+export type HostParagraphHandoffV2 = z.infer<typeof hostParagraphHandoffSchema>;
+
 /** Shared by explicit CLI/MCP inputs and the Core boundary; no transforms. */
 export const structuredHandoffSchema = z.object({
   version: z.literal(1),
@@ -47,8 +58,8 @@ export interface HandoffVerificationItem {
 }
 
 export interface HandoffAudit extends Omit<ValidatedHandoff, "title" | "rawHandoff"> {
-  rawHandoff: StructuredHandoffV1 | null;
-  protocolVersion: 1;
+  rawHandoff: StructuredHandoffV1 | HostParagraphHandoffV2 | null;
+  protocolVersion: 1 | 2;
   disposition: "accepted" | "absent" | "rejected";
   producer: "explicit-input" | "opencode-host";
   reasonCodes: string[];
@@ -65,6 +76,7 @@ export interface HandoffAudit extends Omit<ValidatedHandoff, "title" | "rawHando
 }
 
 export interface ExplicitHandoffAudit extends HandoffAudit {
+  protocolVersion: 1;
   rawHandoff: StructuredHandoffV1;
   disposition: "accepted";
   producer: "explicit-input";
@@ -94,9 +106,26 @@ function sourceParagraphs(summary: string): HandoffSourceParagraph[] {
   return paragraphs;
 }
 
+/** Expand references only to complete paragraphs; never match or repair substrings. */
+export function resolveHostParagraphHandoff(summary: string, value: unknown): {
+  rawHandoff: HostParagraphHandoffV2; expanded: StructuredHandoffV1;
+} {
+  const parsed = hostParagraphHandoffSchema.safeParse(value);
+  if (!parsed.success) invalid("schema-invalid");
+  const paragraphs = sourceParagraphs(summary);
+  const resolve = (numbers: number[]): string[] => numbers.map((number) => {
+    const paragraph = paragraphs[number - 1];
+    if (!paragraph) invalid("paragraph-reference-out-of-range");
+    return paragraph.text;
+  });
+  return { rawHandoff: parsed.data, expanded: {
+    version: 1, constraints: resolve(parsed.data.constraints), remainingWork: resolve(parsed.data.remainingWork),
+  } };
+}
+
 /** Validate against the submitted prose before Git collection or any writes. */
 export function validateStructuredHandoff(
-  summary: string, value: unknown, legacyRemainingWork?: readonly string[],
+  summary: string, value: unknown, legacyRemainingWork?: readonly string[], allowCrossCategoryReuse = false,
 ): ValidatedHandoff {
   const parsed = structuredHandoffSchema.safeParse(value);
   if (!parsed.success) invalid("schema-invalid");
@@ -109,22 +138,22 @@ export function validateStructuredHandoff(
     || legacyRemainingWork.some((text, index) => text !== handoff.remainingWork[index]))) invalid("remaining-work-conflict");
   const paragraphs = sourceParagraphs(summary);
   const used = new Set<number>();
-  const resolve = (items: string[]): HandoffSourceParagraph[] => {
+  const resolve = (items: string[], category: "constraints" | "remainingWork"): HandoffSourceParagraph[] => {
     let previous = -1;
     return items.map((text) => {
       const matches = paragraphs.filter((paragraph) => paragraph.text === text);
       if (!matches.length) invalid("not-whole-source-paragraph");
       if (matches.length > 1) invalid("ambiguous-source-paragraph");
       const paragraph = matches[0]!;
-      if (used.has(paragraph.start)) invalid("paragraph-reused");
+      if (used.has(paragraph.start) && !allowCrossCategoryReuse) invalid("paragraph-reused");
       if (paragraph.start <= previous) invalid("source-order-mismatch");
       previous = paragraph.start;
-      used.add(paragraph.start);
+      if (!allowCrossCategoryReuse || category === "constraints") used.add(paragraph.start);
       return paragraph;
     });
   };
-  const constraints = resolve(handoff.constraints);
-  const remainingWork = resolve(handoff.remainingWork);
+  const constraints = resolve(handoff.constraints, "constraints");
+  const remainingWork = resolve(handoff.remainingWork, "remainingWork");
   const first = constraints[0]?.text;
   const useConstraint = first !== undefined && !/[\r\n\u2028\u2029]/u.test(first)
     && /[.?!。！？]$/u.test(first) && first.length <= 160;
@@ -137,13 +166,13 @@ export function validateStructuredHandoff(
 
 /** Re-resolve after redaction so persisted spans never point into pre-redaction text. */
 export function prepareExplicitHandoff(
-  summary: string, value: unknown, legacyRemainingWork?: readonly string[],
+  summary: string, value: unknown, legacyRemainingWork?: readonly string[], allowCrossCategoryReuse = false,
 ): { title: string; audit: ExplicitHandoffAudit } {
-  const validated = validateStructuredHandoff(summary, value, legacyRemainingWork);
+  const validated = validateStructuredHandoff(summary, value, legacyRemainingWork, allowCrossCategoryReuse);
   const persistedSummary = redactSecrets(summary).content;
   let persisted: ValidatedHandoff;
   try {
-    persisted = validateStructuredHandoff(persistedSummary, redactDeep(validated.rawHandoff).value);
+    persisted = validateStructuredHandoff(persistedSummary, redactDeep(validated.rawHandoff).value, undefined, allowCrossCategoryReuse);
   } catch {
     // Redaction can collapse distinct paragraphs or remove paragraph boundaries.
     // Never persist misleading offsets or fall back to storing the secret text.

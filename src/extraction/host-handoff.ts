@@ -2,16 +2,16 @@ import { createHash } from "node:crypto";
 import { RepoMindError } from "../errors.js";
 import { redactSecrets } from "../security/redaction.js";
 import { solutionSummaryTitle } from "./solution-summary.js";
-import { prepareExplicitHandoff, type HandoffAudit } from "./structured-handoff.js";
+import { prepareExplicitHandoff, resolveHostParagraphHandoff, type HandoffAudit } from "./structured-handoff.js";
 
 export const STRUCTURED_HANDOFF_INSTRUCTION = [
-  "## Final handoff output protocol (RepoMind v1)",
+  "## Final handoff output protocol (RepoMind Host v2)",
   "Finish with a natural-language summary preserving constraints, verification outcomes, warnings and remaining work.",
   "Use complete, independently understandable paragraphs; keep conditions with the claims they qualify. Do not claim pending work is implemented.",
   "Preserve every independently testable input-to-result relationship explicitly, including conditions, exceptions, negative cases and remaining work. Write durable behavior constraints in separate paragraphs from completed operations and test results.",
-  "After the prose, append exactly one top-level terminal ```repomind-handoff fenced block containing a JSON object with only version: 1, constraints: string[], remainingWork: string[].",
-  "Each array entry must copy one unique complete paragraph from the prose exactly, in source order. Do not copy only part of a paragraph. Never repeat a paragraph across the arrays.",
-  "Use at most 16 entries per array, 2000 Unicode code points per entry and 4000 total. Use empty arrays when there is nothing to annotate. No verification, evidence IDs or status fields are allowed.",
+  "After the prose, append exactly one top-level terminal ```repomind-handoff fenced block containing a JSON object with only version: 2, constraints: number[], remainingWork: number[]. Do not repeat prose text in JSON.",
+  "Number all prose paragraphs from 1 in source order, including the opening summary, headings, verification and remaining work. A paragraph is a block of nonblank lines separated by a blank line. The JSON block is not a prose paragraph. Put paragraph numbers in the arrays, in ascending order; each number selects the entire paragraph, including all its conditions and caveats. A paragraph may appear in both arrays when it contains both a durable rule and its remaining-work statement; never repeat a number within one array.",
+  "Use at most 16 references per array. Each selected paragraph must be at most 2000 Unicode code points, and all selected paragraphs at most 4000 total. Use empty arrays when there is nothing to annotate. No verification, evidence IDs or status fields are allowed.",
   "Keep the JSON block under 8000 UTF-16 code units and the entire final answer under 12000. Put no text after the closing fence. Do not write a protocol file or call RepoMind tools.",
 ].join("\n");
 
@@ -117,10 +117,11 @@ function reasonOf(error: unknown): string {
 
 /** Core repeats structural/source checks. Rejection keeps Evidence but blocks summary promotion. */
 export function prepareHostHandoff(summary: string, capture: HostHandoffCapture): { title: string; content: string; audit: HandoffAudit } {
+  let protocolVersion: 1 | 2 = 1;
   const fallback = (disposition: "absent" | "rejected", reasonCodes: string[]) => {
     const content = summary;
     return { content, title: solutionSummaryTitle(content), audit: {
-      protocolVersion: 1 as const, producer: "opencode-host" as const, disposition, reasonCodes,
+      protocolVersion, producer: "opencode-host" as const, disposition, reasonCodes,
       rawHandoff: null, constraints: [], remainingWork: [], verification: [], titleSource: "legacy-summary" as const,
       summarySha256: createHash("sha256").update(redactSecrets(summary).content, "utf8").digest("hex"), semanticValidation: "not-performed" as const,
       solution: { memoryId: null, disposition: disposition === "rejected" ? "blocked-handoff" as const : "not-eligible" as const, titleApplied: false },
@@ -134,12 +135,15 @@ export function prepareHostHandoff(summary: string, capture: HostHandoffCapture)
     if (!block) return fallback(capture.block ? "rejected" : "absent", [capture.block ? "protocol-range-mismatch" : "missing-protocol"]);
     if (block.start !== capture.block?.start || block.end !== capture.block?.end) reject("protocol-range-mismatch");
     const value = parseUniqueJson(block.json);
-    const prepared = prepareExplicitHandoff(block.prose, value);
+    if (value && typeof value === "object" && "version" in value && value.version === 2) protocolVersion = 2;
+    const selected = protocolVersion === 2 ? resolveHostParagraphHandoff(block.prose, value) : undefined;
+    const prepared = prepareExplicitHandoff(block.prose, selected?.expanded ?? value, undefined, protocolVersion === 2);
     const persistedSummary = redactSecrets(summary).content;
     // Whole-answer redaction may span the protocol boundary. Require a faithful prose prefix.
     if (!persistedSummary.startsWith(redactSecrets(block.prose).content)) reject("redacted-source-mismatch");
     return { title: prepared.title, content: block.prose, audit: {
-      ...prepared.audit, producer: "opencode-host",
+      ...prepared.audit, producer: "opencode-host", protocolVersion,
+      rawHandoff: selected?.rawHandoff ?? prepared.audit.rawHandoff,
       summarySha256: createHash("sha256").update(persistedSummary, "utf8").digest("hex"),
     } };
   } catch (error) { return fallback("rejected", [reasonOf(error)]); }

@@ -501,7 +501,7 @@ export class RepositoryMemoryCore {
 
       const evidenceIds: string[] = [];
       evidenceIds.push(this.insertEvidence(input.sessionId, "agent_summary", input.summary, {
-        remainingWork: input.remainingWork ?? handoff?.audit.rawHandoff?.remainingWork ?? [],
+        remainingWork: input.remainingWork ?? handoff?.audit.remainingWork.map((paragraph) => paragraph.text) ?? [],
       }, null));
       evidenceIds.push(this.insertEvidence(input.sessionId, "git_snapshot", JSON.stringify(finalSnapshot), { phase: "final" }, finalSnapshot.head));
       if (diff.content || diff.excludedFiles.length) {

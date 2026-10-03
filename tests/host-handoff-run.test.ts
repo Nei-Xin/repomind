@@ -78,6 +78,24 @@ describe("optional structured handoff Host lifecycle", () => {
     expect(JSON.parse(host.metadata_json).handoff).toEqual(report.handoff);
   });
 
+  it("persists v2 selection provenance and resolved remaining-work text through Host and Core", async () => {
+    const selection = { version: 2, constraints: [2], remainingWork: [3] };
+    const raw = prose + '\n\n```repomind-handoff\n' + JSON.stringify(selection) + '\n```';
+    const report = await runOpenCodeHost({ ...options, execute: async () => {
+      writeFileSync(join(repository, "README.txt"), "closed");
+      return result([text(raw), stop]);
+    } });
+    expect(report.succeeded).toBe(true);
+    expect(report.handoff!.audit).toMatchObject({ protocolVersion: 2, rawHandoff: selection, disposition: "accepted",
+      constraints: [{ text: constraint }], remainingWork: [{ text: remaining }], solution: { disposition: "stored" } });
+    const row = core.context.database.raw.prepare("SELECT content,metadata_json FROM evidence WHERE id=?")
+      .get(report.handoff!.summaryEvidenceId!) as { content: string; metadata_json: string };
+    expect(row.content).toBe(raw);
+    expect(JSON.parse(row.metadata_json)).toMatchObject({ remainingWork: [remaining], handoffAudit: report.handoff!.audit });
+    expect(core.inspect(report.handoff!.audit.solution.memoryId!).content).toBe(prose);
+    expect(JSON.parse(readFileSync(report.artifacts.report, "utf8")).handoff).toEqual(report.handoff);
+  });
+
   it.each([
     ["No structure this time.", "absent", "missing-protocol"],
     [answer.replace('"version":1', '"version":2'), "rejected", "schema-invalid"],

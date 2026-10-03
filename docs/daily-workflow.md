@@ -70,13 +70,15 @@ summaries preserve prose order; ordinary titles use the first complete opening
 sentence without skipping headings or generic completion phrases.
 
 Explicit JSON commits can optionally annotate complete source paragraphs using
-`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` alongside
+`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` (explicit inputs retain the original paragraph form) alongside
 `sessionId`, `idempotencyKey`, `status`, and `summary`. Submit with
 `repomind commit --input result.json --repo /path/to/repository --json`.
 The same validation rules as the [MCP handoff](mcp-integration.md#optional-structured-handoff)
 apply; CLI keys, including the optional outer `remainingWork`, use camelCase.
 Invalid annotations leave the session open for a corrected submission. A prose
 claim that tests passed does not become independently verified command evidence.
+
+The Host v2 format uses paragraph numbers in the terminal JSON (`version: 2`, `constraints: number[]`, `remainingWork: number[]`). Numbers start at 1 in the prose, so long paragraphs are not copied a second time; the server expands them to complete source paragraphs and still verifies order, uniqueness, limits and redacted offsets. Version 1 remains accepted for explicit inputs and existing Host outputs.
 
 OpenCode Host can request the optional protocol with:
 

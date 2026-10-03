@@ -54,10 +54,12 @@ Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution �
 显式 JSON 提交可使用可选 `handoff` 标注 summary 中的完整约束与剩余工作段落：
 `repomind commit --input result.json --repo /path/to/repository --json`。
 输入沿用 `sessionId`、`idempotencyKey`、`status`、`summary`，增加
-`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` 即可。
+`handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` (显式输入仍支持原文段落) 即可。
 旧 `remainingWork` 同时存在时必须与新数组相同。完整规则和示例见
 [结构化交接](structured-handoff-v1.md)。无效结构会拒绝提交，已有会话保持 open；
 修正输入后可重试。摘要文字中的“测试通过”仍不能替代命令 Evidence。
+
+Host v2 使用正文段落编号 终端 JSON 中 (`version: 2`, `constraints: number[]`, `remainingWork: number[]`). Numbering starts at 1 in the prose and avoids copying long paragraphs a second time; the server expands numbers to complete source paragraphs and still verifies order, uniqueness, limits, and redacted offsets. v1 remains accepted for explicit inputs and existing Host outputs.
 
 OpenCode Host 可请求可选输出协议：
 
