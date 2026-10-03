@@ -10,6 +10,7 @@ import { runAgentHost } from "../src/integrations/agent-host/run.js";
 import type { AgentProcessExecutor } from "../src/integrations/agent-host/types.js";
 import { createClaudeHostAdapter } from "../src/integrations/claude/adapter.js";
 import { createOpenCodeHostAdapter } from "../src/integrations/opencode/adapter.js";
+import { exportRepository, importRepository } from "../src/portability/repository-data.js";
 import { initializeRepository } from "../src/repository.js";
 import { createTestRepository } from "./helpers.js";
 
@@ -146,21 +147,131 @@ describe("command memory lifecycle across sessions and collectors", () => {
   });
 
   describe.each(["tests", "commands"] as const)("%s", (kind) => {
-    it.each(["invalid", "superseded"] as const)("does not recreate a %s command when output changes", (status) => {
-      commit(kind, "3 tests passed");
-      expect(commands()).toHaveLength(1);
-      const original = commands()[0]!;
-      if (status === "invalid") core.invalidateMemory({ memoryId: original.id, reason: "Obsolete test entrypoint" });
-      else core.correctMemory({ memoryId: original.id, title: "Use the new storage test entrypoint", content: "Run node --test new-storage.test.mjs instead.", reason: "Old entrypoint was replaced" });
-      const before = evidence(original.id);
-      reopen();
-      const result = commit(kind, "4 tests passed with new timing information");
-      expect(result.memories.revalidated).toBe(0);
-      expect(commands().filter((entry) => entry.title === original.title)).toEqual([expect.objectContaining({ id: original.id, status })]);
-      expect(evidence(original.id)).toEqual(before);
-      expect(core.context.database.raw.prepare("SELECT id FROM evidence WHERE session_id=? AND kind=?").all(result.sessionId, kind === "tests" ? "test_result" : "command_result")).toHaveLength(1);
-      expect(core.search(command, { types: ["command"] }).map((memory) => memory.id)).not.toContain(original.id);
+    describe.each(["invalid", "superseded"] as const)("%s history", (status) => {
+      it.each(["3 tests passed", "4 tests passed with new timing information"])("relearns with fresh evidence (%s) without rewriting history", (output) => {
+        commit(kind, "3 tests passed");
+        const original = commands()[0]!;
+        if (status === "invalid") core.invalidateMemory({ memoryId: original.id, reason: "Obsolete test entrypoint" });
+        else core.correctMemory({ memoryId: original.id, title: "Use the new storage test entrypoint", content: "Run node --test new-storage.test.mjs instead.", reason: "Old entrypoint was replaced" });
+        const before = core.inspect(original.id);
+        reopen();
+        const result = commit(kind, output);
+        expect(result.memories).toMatchObject({ stored: 1, skipped: 1, revalidated: 0 });
+        const versions = commands().filter((entry) => entry.title === original.title);
+        expect(versions).toHaveLength(2);
+        const current = versions.find(entry => entry.status === "active")!;
+        expect(current.id).not.toBe(original.id);
+        const old = core.inspect(original.id);
+        expect(old).toMatchObject({ status, content: original.content, evidence: before.evidence, audit: before.audit, statusReason: before.statusReason });
+        expect(evidence(current.id)).toEqual([expect.objectContaining({ session_id: result.sessionId })]);
+        expect(core.context.database.raw.prepare("SELECT next_json FROM memory_audit_log WHERE memory_id=? AND action='created'").get(current.id))
+          .toMatchObject({ next_json: expect.stringContaining(original.id) });
+        expect(core.context.database.raw.prepare("SELECT target_memory_id FROM memory_relations WHERE source_memory_id=? AND relation_type='supersedes'").all(current.id))
+          .toEqual([{ target_memory_id: original.id }]);
+        const recalled = core.search(command, { types: ["command"] }).map(memory => memory.id);
+        expect(recalled).toContain(current.id);
+        expect(recalled).not.toContain(original.id);
+        reopen();
+        const again = commit(kind, "another passing run");
+        expect(again.memories).toMatchObject({ stored: 0, skipped: 2, revalidated: 1 });
+        expect(commands().filter(entry => entry.title === original.title)).toHaveLength(2);
+        expect(evidence(current.id)).toHaveLength(2);
+        expect(core.inspect(original.id).evidence).toEqual(before.evidence);
+      });
     });
+  });
+
+  it("supports repeated retirement, export/import and subsequent deduplication", () => {
+    commit("tests", "3 tests passed");
+    const first = commands()[0]!;
+    core.invalidateMemory({ memoryId: first.id, reason: "First regression" });
+    commit("tests", "3 tests passed");
+    const second = commands().find(row => row.status === "active")!;
+    core.invalidateMemory({ memoryId: second.id, reason: "Second regression" });
+    commit("tests", "3 tests passed");
+    const third = commands().find(row => row.status === "active")!;
+    expect(new Set([first.id, second.id, third.id]).size).toBe(3);
+    const bundle = join(dataDirectory, "relearned.json");
+    exportRepository(core.context, bundle);
+    importRepository(core.context, bundle);
+    reopen();
+    expect(commit("tests", "still passing").memories.revalidated).toBe(1);
+    expect(commands().filter(row => row.status === "active").map(row => row.id)).toEqual([third.id]);
+    expect(commands()).toHaveLength(3);
+    expect(core.context.database.raw.prepare("SELECT target_memory_id FROM memory_relations WHERE source_memory_id=? ORDER BY target_memory_id").all(third.id))
+      .toEqual([first.id, second.id].sort().map(target_memory_id => ({ target_memory_id })));
+  });
+
+  it("counts retired caller-reported candidates as skipped", () => {
+    commit("tests", "3 tests passed", "caller-reported");
+    const original = commands()[0]!;
+    core.invalidateMemory({ memoryId: original.id, reason: "Untrusted report" });
+    const result = commit("tests", "different claimed output", "caller-reported");
+    expect(result.memories).toMatchObject({ stored: 0, skipped: 1, revalidated: 0 });
+    expect(commands()).toEqual([expect.objectContaining({ id: original.id, status: "invalid" })]);
+  });
+
+  it.each([
+    { source: "tool-observed" as const, command: `${command} | tail -20` },
+    { source: "host-verified" as const, command: `${command} || true` },
+    { source: "tool-observed" as const, command, invokedAs: `${command} | tail` },
+  ])("does not relearn from masked tests[] evidence: $source / $command", (sample) => {
+    commit("tests", "passed");
+    const original = commands()[0]!;
+    core.invalidateMemory({ memoryId: original.id, reason: "Regression" });
+    const started = core.startSession({ task: "Verify" });
+    const result = core.commitSession({ sessionId: started.sessionId, idempotencyKey: "masked", status: "success", summary: "",
+      tests: [{ command: sample.command, ...(sample.invokedAs ? { invokedAs: sample.invokedAs } : {}), exitCode: 0, summary: "passing shell" }] }, { tests: sample.source });
+    expect(result.memories).toMatchObject({ stored: 0, skipped: 1, revalidated: 0 });
+    expect(commands()).toEqual([expect.objectContaining({ id: original.id, status: "invalid" })]);
+  });
+
+  it.each(["opencode", "claude"] as const)("%s Host relearns only after an unmasked pass", async (runner) => {
+    await host(runner, command);
+    const original = commands()[0]!;
+    core.invalidateMemory({ memoryId: original.id, reason: "Broken command" });
+    await host(runner, `${command} | tail -20`);
+    expect(commands()).toHaveLength(1);
+    const relearned = await host(runner, command);
+    expect(relearned.report.commit?.memories).toMatchObject({ stored: 1, revalidated: 0 });
+    const current = commands().find(row => row.status === "active")!;
+    const again = await host(runner, command);
+    expect(again.report.commit?.memories.revalidated).toBe(1);
+    expect(again.prompt).toContain(current.id);
+    expect(again.report.context.l1.injectedIds).not.toContain(original.id);
+    expect(commands()).toHaveLength(2);
+  });
+
+  it.each([
+    { source: "tool-observed" as const, cmd: command },
+    { source: "host-verified" as const, cmd: "custom storage verification" },
+    { source: "host-verified" as const, cmd: "npm run build" },
+  ])("accepts fresh $source evidence for $cmd without changing retired history", ({ source, cmd }) => {
+    commit("tests", "passed", source, cmd);
+    const original = commands()[0]!;
+    core.invalidateMemory({ memoryId: original.id, reason: "Regression" });
+    const old = evidence(original.id);
+    expect(commit("tests", "passed", source, cmd).memories.stored).toBe(1);
+    expect(commands().map(row => row.status).sort()).toEqual(["active", "invalid"]);
+    expect(evidence(original.id)).toEqual(old);
+  });
+
+  it.each([null, 1, 0])("interactive re-learning requires an observed zero exit (%s)", exitCode => {
+    commit("tests", "passed");
+    const original = commands()[0]!;
+    core.invalidateMemory({ memoryId: original.id, reason: "Regression" });
+    const store = new InteractiveActivityStore(repository, dataDirectory);
+    try {
+      const common = { schemaVersion: 1, agent: "opencode", agentSessionId: "relearn", repositoryPath: repository } as const;
+      store.startTask({ ...common, eventId: "start", task: "Verify repaired tests" });
+      store.record({ ...common, eventId: "result", source: "opencode-plugin", type: "tool_result", payload: {
+        toolName: "bash", toolInput: { command }, toolResponse: { exitCode, output: "collected result" },
+      } });
+      const result = store.finish({ ...common, eventId: "finish", summary: "Storage verification completed." });
+      expect(result.status).toBe(exitCode === 0 ? "committed" : "partial");
+      expect(commands().filter(row => row.status === "active")).toHaveLength(exitCode === 0 ? 1 : 0);
+      expect(core.inspect(original.id).status).toBe("invalid");
+    } finally { store.close(); }
   });
 
   it("links public Host and tool evidence to one command without rewriting either source", async () => {

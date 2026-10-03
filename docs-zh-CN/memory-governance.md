@@ -27,6 +27,11 @@ Memory 内容会永久拥有其 fingerprint，因此重新记录一条与 `super
 
 自动提取和 `correct` 永远不会重新激活。它们都没有表达复活已被人为退役 Memory 的意图，因此提取会跳过候选项，`correct` 会返回明确错误。
 
+可信命令验证有独立的重新学习路径：新的工具观测或 Host 验证通过结果可创建新命令
+记录，并通过 `supersedes` 关联旧记录。创建审计记录旧 ID、会话、证据和验证来源。
+旧状态、内容、指纹、证据和审计保持不变，后续通过证据只关联到新记录。普通提取、
+调用方自报通过和被管道掩盖的测试结果不走此路径。
+
 ## Validate（验证）
 
 Validation 接受仓库中当前相关文件哈希作为新基线。它会清除过期原因、更新 `last_validated_at`、添加 `validation` Evidence，并写入 `memory_validated` Audit。

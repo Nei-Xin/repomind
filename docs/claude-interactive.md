@@ -122,7 +122,9 @@ own behavior.
   lead-ins are skipped, with a complete fallback instead of mid-sentence clipping.
 - **A passing command is remembered once.** Repeated observed passes link new
   Evidence, refresh file fingerprints and FTS, and update the validation time
-  (`memory_revalidated`). Retired memories are not automatically revived.
+  (`memory_revalidated`). Retired memories are not automatically revived; a fresh
+  trusted pass creates a separate record linked to the retired history, and
+  subsequent passes revalidate that record.
   Working-directory/environment steps and quoted arguments remain part of
   command identity; output redirections outside quotes may be removed.
 - **Recovery needs a trustworthy pass of the same check.** Every test, build,

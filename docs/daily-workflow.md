@@ -46,7 +46,12 @@ Passing tool-collected tests use their canonical test command as the command-mem
 identity. A later passing run in another session updates that same memory, links new
 `test_result`/`command_result` Evidence, and refreshes its validation time. Command
 memories marked `invalid` or `superseded` keep their historical identity and are not
-reactivated or copied when new output appears.
+reactivated. A fresh trusted passing run can create a new command memory with its
+own evidence, a `supersedes` link and creation audit referencing the retired IDs.
+This works even with identical output; later passes revalidate the new record.
+Caller-reported output and masked test exits cannot relearn a verified command.
+New records count as `stored`; revalidations and rejected retired candidates count
+as `skipped` (revalidations also increment `revalidated`).
 
 Structured handoff output must preserve each independently testable input/result
 relationship. Empty-input results stay explicit and separate from negative/zero/value

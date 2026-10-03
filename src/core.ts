@@ -82,7 +82,7 @@ import { buildMatchExpression, searchTokens, shouldUseSubstringFallback } from "
 import { VectorIndex, type VectorSyncResult } from "./search/vector-index.js";
 import { redactDeep, redactSecrets } from "./security/redaction.js";
 import { UNKNOWN_COMMAND_VERIFICATION, unverifiedLegacyCommandIds } from "./evidence/command-provenance.js";
-import { isVerifyingTestCommand, verifyingTestCommand } from "./activity/test-command.js";
+import { isVerifyingTestCommand, verificationSteps, verifyingTestCommand } from "./activity/test-command.js";
 
 type SqlValue = string | number | null;
 
@@ -581,11 +581,18 @@ export class RepositoryMemoryCore {
           if (!evidenceId) continue;
           const canonicalCommand = verifyingTestCommand(test.command) ?? test.command;
           const title = `${entry.source === "caller-reported" ? "Reported successful command" : "Verified command"}: ${canonicalCommand}`;
+          const invocation = test.invokedAs ?? test.command;
+          const trustedPass = entry.source !== "caller-reported"
+            && (isVerifyingTestCommand(invocation)
+              || (entry.source === "host-verified" && verificationSteps(invocation, 0).every(step => step.passed)));
+          // A tests[] label alone does not make a masked shell exit trustworthy.
+          if (entry.source !== "caller-reported" && !trustedPass) { skipped++; continue; }
           const retired = db.raw.prepare(`
-            SELECT 1 FROM memories WHERE repository_id=? AND type='command'
-              AND status IN ('superseded','invalid') AND title=? LIMIT 1
-          `).get(this.context.marker.projectId, redactSecrets(title).content.trim());
-          if (retired) continue;
+            SELECT id FROM memories WHERE repository_id=? AND type='command'
+              AND scope_type='repository' AND scope_value IS NULL
+              AND status IN ('superseded','invalid') AND title=? ORDER BY id
+          `).all(this.context.marker.projectId, redactSecrets(title).content.trim()) as Array<{ id: string }>;
+          if (retired.length && !trustedPass) { skipped++; continue; }
           // A later passing run of the same command confirms the existing
           // memory instead of adding a near-duplicate whose only difference is
           // the run's output.
@@ -594,14 +601,27 @@ export class RepositoryMemoryCore {
             skipped++;
             continue;
           }
-          track(this.storeMemory({
+          const retiredIds = retired.map((memory) => memory.id);
+          const outcome = this.storeMemory({
             type: "command",
             title,
-            content: verifiedCommandMemoryContent(test, entry.source),
+            // An explicit lineage makes the new assertion distinct even when
+            // the output is identical. Retired rows keep their fingerprints.
+            content: [verifiedCommandMemoryContent(test, entry.source),
+              ...(retiredIds.length ? [`Reverified after retired memories: ${retiredIds.join(", ")}`] : []),
+            ].join("\n"),
             confidence: entry.source === "caller-reported" ? 0.5 : entry.source === "tool-observed" ? 0.9 : 0.95,
             tags: ["test", entry.source === "caller-reported" ? "reported-command" : "verified-command", entry.source],
             relatedFiles: memoryFiles,
-          }, "extracted", [evidenceId]));
+          }, "extracted", [evidenceId], retiredIds.length ? {
+            audit: { relearnedFrom: retiredIds, sessionId: input.sessionId, evidenceId, verificationSource: entry.source },
+            auditReason: "A new trusted passing run relearned a retired command; historical records remain retired",
+          } : {});
+          track(outcome);
+          if (outcome.stored) for (const retiredId of retiredIds) {
+            db.raw.prepare(`INSERT OR IGNORE INTO memory_relations(source_memory_id, target_memory_id, relation_type, created_at)
+              VALUES (?, ?, 'supersedes', ?)`).run(outcome.id, retiredId, Date.now());
+          }
         }
         const solutionEarned = sources.solutionPolicy !== "repository-outcome" || files.length > 0 || passedTest;
         if (input.summary.trim() && solutionEarned) {

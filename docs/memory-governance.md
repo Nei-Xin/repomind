@@ -28,6 +28,13 @@ A memory's content owns its fingerprint permanently, so recording a fact identic
 
 Automatic extraction and `correct` never reactivate. Neither expresses intent to resurrect a memory somebody deliberately retired, so extraction skips the candidate and `correct` returns an explicit error.
 
+Trusted command verification has a separate re-learning path: a new observed or
+Host-verified pass can create a new command record linked to retired records by
+`supersedes`. The creation audit records the prior IDs, session, evidence and
+verification source. The old status, content, fingerprint, evidence and audit are
+preserved; only the new record receives subsequent passing evidence. Ordinary
+extraction, caller-reported claims and masked test exits do not take this path.
+
 ## Validate
 
 Validation accepts the repository's current related-file hashes as the new baseline. It clears the stale reason, updates `last_validated_at`, adds `validation` Evidence, and writes a `memory_validated` Audit entry.
