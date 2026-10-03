@@ -59,7 +59,10 @@ Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution �
 [结构化交接](structured-handoff-v1.md)。无效结构会拒绝提交，已有会话保持 open；
 修正输入后可重试。摘要文字中的“测试通过”仍不能替代命令 Evidence。
 
-Host v2 使用正文段落编号 终端 JSON 中 (`version: 2`, `constraints: number[]`, `remainingWork: number[]`). Numbering starts at 1 in the prose and avoids copying long paragraphs a second time; the server expands numbers to complete source paragraphs and still verifies order, uniqueness, limits, and redacted offsets. v1 remains accepted for explicit inputs and existing Host outputs.
+Host v2 在末尾 JSON 中使用正文段落编号（`version: 2`、`constraints: number[]`、
+`remainingWork: number[]`）。编号从 1 开始，无需再次复制长段落；服务端将编号展开为
+完整原文段落，并继续校验顺序、唯一性、长度限制和脱敏后的文本位置。
+显式输入和已有的 Host 输出仍支持 v1。
 
 OpenCode Host 可请求可选输出协议：
 
