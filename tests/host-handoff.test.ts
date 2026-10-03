@@ -59,6 +59,19 @@ describe("Host structured handoff protocol", () => {
     expect(prepare(block()).audit.reasonCodes).toEqual(["missing-prose"]);
   });
 
+  it("falls back when a protocol paragraph compresses an empty result into endpoint categories", () => {
+    const ambiguous = "Review closed.\n\nThe function supports empty, negative, and zero endpoints.";
+    const raw = `${ambiguous}\n\n${block(JSON.stringify({
+      version: 1,
+      constraints: ["The function supports empty, negative, and zero endpoints."],
+      remainingWork: [],
+    }))}`;
+    expect(prepare(raw).audit).toMatchObject({
+      disposition: "rejected", reasonCodes: ["ambiguous-empty-qualifier"], rawHandoff: null,
+    });
+    expect(prepare(raw).content).toBe(raw);
+  });
+
   it("requires collector offsets to match the actual answer", () => {
     const collected = capture(answer);
     expect(prepareHostHandoff(answer, { ...collected, block: { start: 0, end: 5 } }).audit.reasonCodes).toEqual(["protocol-range-mismatch"]);

@@ -30,6 +30,11 @@ Host（OpenCode、Claude）与交互式自动结束任务统一使用 solution �
 为 `invalid` 或 `superseded` 的命令拥有不可复活的历史身份，新的输出不会重新激活
 或复制它。
 
+结构化交接必须逐项保留可测试的输入—结果关系。空输入的结果要单独写明，不能与
+负数/零/取值有效性压成“空、负数和零端点”之类的歧义短语；校验器会拒绝该类标注并
+回退到普通 prose。生产者应把持久行为约束与已完成操作、测试结果、剩余工作分成
+独立段落。
+
 显式 JSON 提交可使用可选 `handoff` 标注 summary 中的完整约束与剩余工作段落：
 `repomind commit --input result.json --repo /path/to/repository --json`。
 输入沿用 `sessionId`、`idempotencyKey`、`status`、`summary`，增加

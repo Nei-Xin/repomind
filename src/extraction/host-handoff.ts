@@ -8,6 +8,7 @@ export const STRUCTURED_HANDOFF_INSTRUCTION = [
   "## Final handoff output protocol (RepoMind v1)",
   "Finish with a natural-language summary preserving constraints, verification outcomes, warnings and remaining work.",
   "Use complete, independently understandable paragraphs; keep conditions with the claims they qualify. Do not claim pending work is implemented.",
+  "Preserve every independently testable input-to-result relationship explicitly. Keep empty-input results separate from negative/zero/value-validity rules; never compress an empty-input result into a list such as empty, negative, and zero endpoints. Write durable behavior constraints in separate paragraphs from completed operations, test results and remaining work.",
   "After the prose, append exactly one top-level terminal ```repomind-handoff fenced block containing a JSON object with only version: 1, constraints: string[], remainingWork: string[].",
   "Each array entry must copy one unique complete paragraph from the prose exactly, in source order. Do not copy only part of a paragraph. Never repeat a paragraph across the arrays.",
   "Use at most 16 entries per array, 2000 Unicode code points per entry and 4000 total. Use empty arrays when there is nothing to annotate. No verification, evidence IDs or status fields are allowed.",

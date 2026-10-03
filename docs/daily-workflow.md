@@ -39,6 +39,13 @@ identity. A later passing run in another session updates that same memory, links
 memories marked `invalid` or `superseded` keep their historical identity and are not
 reactivated or copied when new output appears.
 
+Structured handoff output must preserve each independently testable input/result
+relationship. Empty-input results stay explicit and separate from negative/zero/value
+validity rules; ambiguous phrases such as “empty, negative, and zero endpoints” are
+rejected and fall back to the ordinary prose path. Producers should keep durable
+behavior constraints in separate paragraphs from completed operations, test results,
+and remaining work.
+
 Explicit JSON commits can optionally annotate complete source paragraphs using
 `handoff: { "version": 1, "constraints": [...], "remainingWork": [...] }` alongside
 `sessionId`, `idempotencyKey`, `status`, and `summary`. Submit with
