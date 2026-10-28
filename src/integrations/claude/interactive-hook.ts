@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { readBridgeToken } from "../../bridge/token.js";
+import { postBridgeJson, bridgeUnavailableMessage } from "../../bridge/client.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -56,34 +56,12 @@ function eventId(payload: JsonObject, eventName: string): string {
   return `claude-hook:${eventName}:${identity}`;
 }
 
-function bridgeBase(value: string | undefined): string {
-  return (value ?? process.env.REPOMIND_BRIDGE_URL ?? "http://127.0.0.1:7345").replace(/\/$/u, "");
-}
-
 async function postBridge<T>(
   path: string,
   body: Record<string, unknown>,
   options: ClaudeInteractiveHookOptions,
 ): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 3_000);
-  const token = options.bridgeToken ?? readBridgeToken();
-  try {
-    const response = await fetch(`${bridgeBase(options.bridgeUrl)}${path}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const result = await response.json() as T & { error?: { message?: string } };
-    if (!response.ok) throw new Error(result.error?.message ?? `Bridge returned HTTP ${response.status}`);
-    return result;
-  } finally {
-    clearTimeout(timer);
-  }
+  return postBridgeJson<T>(path, body, options);
 }
 
 function hookInput(options: ClaudeInteractiveHookOptions): JsonObject {
@@ -256,7 +234,8 @@ export async function handleClaudeInteractiveHook(
     }
     return null;
   } catch (error) {
-    warn(`interactive hook skipped: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    const message = bridgeUnavailableMessage(error);
+    warn(message);
+    return { systemMessage: message };
   }
 }

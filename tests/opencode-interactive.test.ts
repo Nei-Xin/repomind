@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startBridgeServer, type RunningBridgeServer } from "../src/bridge/server.js";
 import { RepositoryMemoryCore } from "../src/core.js";
 import { createOpenCodeInteractivePlugin } from "../src/integrations/opencode/interactive-plugin.js";
@@ -43,6 +43,28 @@ function userMessage(sessionID: string, messageID: string, text: string) {
 }
 
 describe("OpenCode transparent interactive integration", () => {
+  it("notifies the user once during a Bridge failure without blocking prompts", async () => {
+    const fixture = initializedFixture();
+    const bridge = await startBridgeServer({ port: 0, token: "actual-token", dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const showToast = vi.fn(async () => { throw new Error("headless client"); });
+    const log = vi.fn(async () => undefined);
+    const plugin = await createOpenCodeInteractivePlugin({ bridgeUrl: bridge.url, bridgeToken: "incorrect-token" })({
+      directory: fixture.repository, worktree: fixture.repository,
+      client: { session: { get: async () => ({ data: {} }), messages: async () => ({ data: [] }) }, app: { log }, tui: { showToast } },
+    });
+    for (const id of ["one", "two"]) {
+      const message = userMessage("session", id, "Check remembered commands");
+      await expect(plugin["chat.message"]({ sessionID: "session", messageID: id }, message)).resolves.toBeUndefined();
+      expect(message.parts).toHaveLength(1);
+    }
+    expect(showToast).toHaveBeenCalledOnce();
+    expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
+      variant: "warning", message: expect.stringContaining("RepoMind memory is unavailable"),
+    }) }));
+    expect(log).toHaveBeenCalledTimes(2);
+    await plugin.dispose();
+  });
   it("injects prior memory and commits root-session activity without MCP calls", async () => {
     const fixture = initializedFixture();
     const bridge = await startBridgeServer({ port: 0, dataDirectory: fixture.dataDirectory });

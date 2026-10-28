@@ -44,6 +44,15 @@ responses are partial. These outcomes do not trigger successful-task memory
 maintenance. Cancelling a turn still permits another prompt in the same OpenCode
 session. Bridge failures are logged and do not prevent OpenCode from continuing.
 
+If the default local Bridge is stopped, the next plugin request starts it
+automatically and retries the refused connection. Concurrent clients share a
+startup lock. Keep Node.js 22.5 or newer on `PATH`: OpenCode's embedded Bun uses
+Node to launch the Bridge. Authentication failures, request timeouts, custom
+endpoints, and requests that may already have reached the Bridge are not
+automatically retried. Failed recovery is logged and shown as a warning toast
+when a TUI is available (at most once every 30 seconds). Work can continue, but
+that operation's memory recall or recording is skipped; there is no offline queue.
+
 During normal OpenCode shutdown, the plugin's `dispose` hook waits for in-flight
 hooks and queued Bridge writes, including the task finish request. This also
 applies to standalone `opencode run`: completion is persisted before the process

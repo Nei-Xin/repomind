@@ -72,6 +72,15 @@ Backup 使用 SQLite `VACUUM INTO` 生成一致的独立数据库，同时写入
 
 ## 物理恢复
 
+执行恢复前，请关闭 RepoMind MCP 客户端、结束活动任务，并运行
+`repomind services stop` 停止 Bridge。即使 MCP 当前空闲，只要仍持有数据库连接，
+当前版本的 RepoMind 就会拒绝替换数据库；替换期间也会拒绝新连接。关闭客户端后
+重试即可，`--allow-unreadable` 不会绕过此保护。Dry-run 仍可只验证归档，不申请独占访问。
+
+升级后需要重启已有 RepoMind 进程，使其参与连接协调。恢复前也应关闭外部 SQLite
+工具。客户端运行期间不要删除数据库旁的 `repomind.db.access.sqlite` 协调文件；
+它不保存仓库记忆，也不属于备份归档。
+
 ```powershell
 repomind restore --input D:\backups\repomind.db --dry-run --json
 repomind restore --input D:\backups\repomind.db --yes --json

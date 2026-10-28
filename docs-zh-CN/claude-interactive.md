@@ -91,6 +91,17 @@ token，保存到 `REPOMIND_DATA_DIR/bridge.token`（默认 `~/.repomind/bridge.
 每个 `UserPromptSubmit -> Stop` 是一个 RepoMind 任务。每个活动都有幂等事件 ID，
 写入 SQLite 前经过 RepoMind 脱敏。
 
+默认本机 Bridge 停止后（例如机器重启），下一个 Hook 会自动启动它并重试被拒绝的
+连接。并发 Hook 共用启动锁。升级后请重新执行
+`repomind claude setup --repo <仓库路径>`，将已有托管 Hook 的恢复时间预算更新为 60 秒。
+认证失败、请求超时、自定义端点以及可能已送达 Bridge 的请求不会自动重试。
+恢复失败时，Claude 会显示不阻断工作的提示和修复建议；本次操作的记忆召回或记录
+会被跳过，目前没有离线补写队列。
+
+按 Esc 中断时，Claude 可能不发送 `Stop` Hook。此时任务暂时保持 open，直到下一次
+提示将上一轮标记为 `partial`，或者由 `SessionEnd` 将它标记为 abandoned；不会把
+被中断的轮次当作成功完成。
+
 Claude Code 不为 Shell 命令报告退出码：非零退出会触发 `PostToolUseFailure` 而不是
 `PostToolUse`。因此 RepoMind 把已完成、前台、未中断的 `Bash`/`PowerShell`
 `PostToolUse` 记为观察到的退出码 0，通过的测试才能成为已验证的 `command` 记忆。

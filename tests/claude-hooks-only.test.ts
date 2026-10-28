@@ -45,6 +45,33 @@ const cliEntry = join(process.cwd(), "dist", "cli", "entry.js");
 const LEGACY_ROUTE = "http://127.0.0.1:8096/claude-code/default";
 
 describe("hooks-only Claude integration", () => {
+  it("upgrades the managed hook timeout without duplicating hooks or changing unrelated hooks", () => {
+    const fixture = repository();
+    installClaudeInteractiveHooks({ repository: fixture.root, cliEntry });
+    const settings = JSON.parse(readFileSync(fixture.settingsPath, "utf8"));
+    settings.hooks.SessionStart[0].hooks[0].timeout = 10;
+    settings.hooks.SessionStart.push({ hooks: [{ type: "command", command: "echo unrelated", timeout: 5 }] });
+    writeFileSync(fixture.settingsPath, JSON.stringify(settings));
+    installClaudeInteractiveHooks({ repository: fixture.root, cliEntry });
+    const updated = JSON.parse(readFileSync(fixture.settingsPath, "utf8"));
+    expect(updated.hooks.SessionStart).toHaveLength(2);
+    expect(updated.hooks.SessionStart[0].hooks[0].timeout).toBe(60);
+    expect(updated.hooks.SessionStart[1].hooks[0].timeout).toBe(5);
+  });
+
+  it("returns a visible nonblocking notice when Bridge authentication fails", async () => {
+    const fixture = repository();
+    const bridge = await startBridgeServer({ port: 0, token: "actual-token", dataDirectory: fixture.dataDirectory });
+    running.push(bridge);
+    const warnings: string[] = [];
+    const result = await handleClaudeInteractiveHook({
+      bridgeUrl: bridge.url, bridgeToken: "incorrect-token", onWarning: (message) => warnings.push(message),
+      input: { hook_event_name: "UserPromptSubmit", session_id: "unavailable", cwd: fixture.root, prompt: "Check memory" },
+    });
+    expect(result).toMatchObject({ systemMessage: expect.stringContaining("RepoMind memory is unavailable") });
+    expect(result).not.toHaveProperty("decision");
+    expect(warnings).toHaveLength(1);
+  });
   it.each([
     [LEGACY_ROUTE, true],
     ["http://localhost:8096/claude-code/team-a", true],

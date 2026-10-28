@@ -1029,21 +1029,27 @@ export class RepositoryMemoryCore {
     if (!query.trim()) return { strategy: "fts5-with-substring-fallback", memories: [], fallbackReason: "Query is empty" };
     const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
     const candidateOptions = { ...options, limit: 20 };
-    const lexical = this.search(query, candidateOptions);
     const fallback = (reason: string): HybridSearchResult => ({
       strategy: "fts5-with-substring-fallback",
-      memories: lexical.slice(0, limit),
+      // Embedding may have failed after another client changed or forgot a
+      // memory. Never return a snapshot captured before that asynchronous work.
+      memories: this.search(query, { ...options, limit }),
       fallbackReason: reason,
     });
     if (!this.embeddingProvider) return fallback(this.embeddingConfigError ?? "No embedding provider is configured");
     if (!this.context.database.vector.available) return fallback(this.context.database.vector.error ?? "sqlite-vec is unavailable");
     try {
       const vectorHits = await new VectorIndex(this.context, this.embeddingProvider).search(query, candidateOptions);
-      const scores = new Map<string, number>();
-      lexical.forEach((memory, index) => scores.set(memory.id, (scores.get(memory.id) ?? 0) + 0.65 / (60 + index + 1)));
-      vectorHits.forEach((hit, index) => scores.set(hit.id, (scores.get(hit.id) ?? 0) + 0.35 / (60 + index + 1)));
-      const ids = [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([id]) => id);
-      return { strategy: "hybrid-fts5-vector", memories: this.memoryResultsByIds(ids, scores) };
+      return this.context.database.transaction(() => {
+        // Refresh file validity and lexical candidates after the last await.
+        // Keep filtering and materialization in the same database snapshot.
+        const lexical = this.search(query, candidateOptions);
+        const scores = new Map<string, number>();
+        lexical.forEach((memory, index) => scores.set(memory.id, (scores.get(memory.id) ?? 0) + 0.65 / (60 + index + 1)));
+        vectorHits.forEach((hit, index) => scores.set(hit.id, (scores.get(hit.id) ?? 0) + 0.35 / (60 + index + 1)));
+        const ids = [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+        return { strategy: "hybrid-fts5-vector", memories: this.memoryResultsByIds(ids, scores, options).slice(0, limit) };
+      });
     } catch (error) {
       return fallback(error instanceof Error ? error.message : String(error));
     }
@@ -1399,11 +1405,15 @@ export class RepositoryMemoryCore {
     return { memories: rows.length, moduleNarratives: new ModuleNarrativeStore(this.context).reindex() };
   }
 
-  private memoryResultsByIds(ids: string[], scores: Map<string, number>): MemoryResult[] {
+  private memoryResultsByIds(ids: string[], scores: Map<string, number>, options: {
+    types?: MemoryType[]; statuses?: Array<"active" | "uncertain">;
+  }): MemoryResult[] {
     const statement = this.context.database.raw.prepare("SELECT m.*, 100.0 AS rank FROM memories m WHERE id=? AND repository_id=?");
     return ids.flatMap((id) => {
       const row = statement.get(id, this.context.marker.projectId) as Record<string, unknown> | undefined;
-      return row ? [this.memoryResult(row, scores.get(id))] : [];
+      if (!row || !(options.statuses ?? ["active", "uncertain"]).includes(row.status as "active" | "uncertain")
+        || (options.types?.length && !options.types.includes(row.type as MemoryType))) return [];
+      return [this.memoryResult(row, scores.get(id))];
     });
   }
 

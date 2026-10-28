@@ -84,6 +84,48 @@ describe("vector and hybrid retrieval", () => {
     core.close();
   });
 
+  it.each([false, true])("rechecks concurrent memory changes after embedding (provider fails: %s)", async (fails) => {
+    const delegate = new CountingProvider();
+    let reached!: () => void;
+    let resume!: () => void;
+    const waiting = new Promise<void>((done) => { reached = done; });
+    const released = new Promise<void>((done) => { resume = done; });
+    let pause = false;
+    const provider: EmbeddingProvider = {
+      id: delegate.id, model: delegate.model, dimensions: delegate.dimensions, remote: false,
+      async embed(texts) {
+        if (pause) {
+          reached();
+          await released;
+          if (fails) throw new Error("embedding unavailable");
+        }
+        return delegate.embed(texts);
+      },
+    };
+    const reader = new RepositoryMemoryCore(repository, { embeddingProvider: provider });
+    const writer = new RepositoryMemoryCore(repository);
+    try {
+      const retired = writer.record({ type: "decision", title: "Cache policy", content: "Cache policy uses disk." });
+      const forgotten = writer.record({ type: "decision", title: "Cache policy reminder", content: "Cache policy reminder uses disk." });
+      await reader.reindexVectors();
+      pause = true;
+      const pending = reader.searchHybrid("Cache policy", { types: ["decision"], statuses: ["active"], limit: 1 });
+      await waiting;
+      writer.invalidateMemory({ memoryId: retired.id, reason: "Policy replaced while embedding runs." });
+      writer.forgetMemory({ memoryId: forgotten.id, reason: "Delete outdated policy." });
+      const replacement = writer.record({ type: "decision", title: "Cache policy", content: "Cache policy now uses Redis." });
+      resume();
+      const result = await pending;
+      expect(result.strategy).toBe(fails ? "fts5-with-substring-fallback" : "hybrid-fts5-vector");
+      expect(result.memories.map((memory) => memory.id)).toEqual([replacement.id]);
+      expect(result.memories[0]?.content).toContain("Redis");
+    } finally {
+      resume();
+      reader.close();
+      writer.close();
+    }
+  });
+
   it("redacts query credentials before remote embedding across retrieval entry points", async () => {
     const requests: string[][] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {

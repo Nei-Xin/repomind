@@ -1,14 +1,22 @@
 import { DatabaseSync } from "node:sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { migrations } from "./migrations.js";
+import { acquireDatabaseAccess } from "./access.js";
 
 export class Database {
   readonly raw: DatabaseSync;
   readonly vector: { available: boolean; version: string | null; error: string | null };
   private transactionDepth = 0;
+  private readonly releaseAccess: () => void;
 
-  constructor(readonly path: string) {
-    this.raw = new DatabaseSync(path, { allowExtension: true });
+  constructor(readonly path: string, options: { restoreOwnsAccess?: boolean } = {}) {
+    this.releaseAccess = options.restoreOwnsAccess ? () => {} : acquireDatabaseAccess(path);
+    try {
+      this.raw = new DatabaseSync(path, { allowExtension: true });
+    } catch (error) {
+      this.releaseAccess();
+      throw error;
+    }
     try {
       this.raw.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
       this.configureJournalMode();
@@ -16,6 +24,7 @@ export class Database {
       this.migrate();
     } catch (error) {
       this.raw.close();
+      this.releaseAccess();
       throw error;
     }
   }
@@ -94,5 +103,6 @@ export class Database {
 
   close(): void {
     this.raw.close();
+    this.releaseAccess();
   }
 }

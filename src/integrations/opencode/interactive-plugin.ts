@@ -1,4 +1,4 @@
-import { readBridgeToken } from "../../bridge/token.js";
+import { postBridgeJson, bridgeUnavailableMessage } from "../../bridge/client.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -18,6 +18,9 @@ interface OpenCodeClient {
     log(options: {
       body: { service: string; level: "warn"; message: string; extra?: Record<string, unknown> };
     }): Promise<unknown>;
+  };
+  tui?: {
+    showToast(options: { body: { title: string; message: string; variant: "warning"; duration: number } }): Promise<unknown>;
   };
 }
 
@@ -86,10 +89,6 @@ function objectValue(value: unknown): JsonObject {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function bridgeBase(value: string | undefined): string {
-  return (value ?? process.env.REPOMIND_BRIDGE_URL ?? "http://127.0.0.1:7345").replace(/\/$/u, "");
 }
 
 function eventId(kind: string, sessionID: string, nativeID: string): string {
@@ -165,6 +164,7 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
     // one-shot `opencode run` cannot exit before the Bridge finish request.
     const inFlight = new Set<Promise<unknown>>();
     const sessionRoots = new Map<string, string>();
+    let lastWarningAt = 0;
 
     const track = <T>(work: () => Promise<T>): Promise<T> => {
       const promise = work();
@@ -189,27 +189,21 @@ export function createOpenCodeInteractivePlugin(options: OpenCodeInteractivePlug
       } catch {
         // Logging must never interrupt OpenCode.
       }
+      if (Date.now() - lastWarningAt >= 30_000) {
+        lastWarningAt = Date.now();
+        try {
+          await input.client.tui?.showToast({ body: {
+            title: "RepoMind memory unavailable", message, variant: "warning", duration: 10_000,
+          } });
+        } catch { /* A missing TUI must not interrupt headless runs. */ }
+      }
     };
 
     const postBridge = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
-      const token = options.bridgeToken ?? readBridgeToken();
       try {
-        const response = await fetch(`${bridgeBase(options.bridgeUrl)}${path}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-        const result = await response.json() as T & { error?: { message?: string } };
-        if (!response.ok) throw new Error(result.error?.message ?? `Bridge returned HTTP ${response.status}`);
-        return result;
-      } finally {
-        clearTimeout(timer);
+        return await postBridgeJson<T>(path, body, { ...options, timeoutMs: options.timeoutMs ?? 10_000 });
+      } catch (error) {
+        throw new Error(bridgeUnavailableMessage(error));
       }
     };
 

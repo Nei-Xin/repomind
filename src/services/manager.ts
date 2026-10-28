@@ -6,6 +6,8 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -56,6 +58,8 @@ export interface ServiceManagerOptions {
   cliEntry: string;
   repoMindRoot: string;
   dataDirectory?: string;
+  nodeExecutable?: string;
+  bridgePort?: number;
 }
 
 interface ServiceDefinition {
@@ -104,6 +108,12 @@ function processRunning(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
+    if (process.platform === "linux") {
+      // Detached children can remain zombies until the host's init reaps them.
+      // They cannot serve requests and must not block a subsequent recovery.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      if (/^\s*[ZX]\s/u.test(stat.slice(stat.lastIndexOf(")") + 1))) return false;
+    }
     return true;
   } catch {
     return false;
@@ -178,7 +188,9 @@ async function health(url: string, headers?: Record<string, string>): Promise<{ 
       signal: AbortSignal.timeout(1_000),
       ...(headers ? { headers } : {}),
     });
-    return { healthy: response.ok, status: response.status };
+    const body = await response.json().catch(() => null) as { status?: string; schemaVersion?: number } | null;
+    return { healthy: response.ok && body?.status === "ok"
+      && (!headers || body.schemaVersion === 1), status: response.status };
   } catch {
     return { healthy: false, status: null };
   }
@@ -192,12 +204,16 @@ function definitions(
   const proxyRoot = resolve(options.repoMindRoot, "services", "memory-proxy");
   const proxyEntry = join(proxyRoot, "src", "index.ts");
   const proxyConfig = join(proxyRoot, "config.yaml");
+  const bridgePort = options.bridgePort ?? 7345;
+  if (!Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65535) {
+    throw new RepoMindError("INVALID_INPUT", "Bridge service port must be between 1 and 65535");
+  }
   return {
     bridge: {
       name: "bridge",
-      url: BRIDGE_URL,
+      url: `http://127.0.0.1:${bridgePort}`,
       cwd: resolve(options.repoMindRoot),
-      args: [cliEntry, "bridge", "--host", "127.0.0.1", "--port", "7345"],
+      args: [cliEntry, "bridge", "--host", "127.0.0.1", "--port", String(bridgePort)],
       commandSignature: cliEntry,
       logName: "bridge.log",
       ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
@@ -271,7 +287,7 @@ function spawnService(definition: ServiceDefinition, options: ServiceManagerOpti
   const output = openSync(logPath, "a");
   let child;
   try {
-    child = spawn(process.execPath, definition.args, {
+    child = spawn(options.nodeExecutable ?? process.execPath, definition.args, {
       cwd: definition.cwd,
       detached: true,
       windowsHide: true,
@@ -317,11 +333,79 @@ async function stopRecord(record: ServiceRecord, definition: ServiceDefinition):
 }
 
 export async function startServices(options: ServiceManagerOptions): Promise<ServicesResult> {
-  return startSelectedServices(options, ["bridge", "memoryProxy"]);
+  return withServiceLock(options, () => startSelectedServices(options, ["bridge", "memoryProxy"]));
 }
 
 export async function startBridgeService(options: ServiceManagerOptions): Promise<ServicesResult> {
-  return startSelectedServices(options, ["bridge"]);
+  return withServiceLock(options, () => startSelectedServices(options, ["bridge"]));
+}
+
+/** Reuse an authenticated Bridge, including one started by another installation. */
+export async function ensureBridgeService(options: ServiceManagerOptions): Promise<void> {
+  await withServiceLock(options, async () => {
+    const definition = definitions(options).bridge;
+    if (definition.headers && (await health(definition.url, definition.headers)).healthy) return;
+    await startSelectedServices(options, ["bridge"]);
+  });
+}
+
+/** Serialize starts and stops across hook processes and plugin instances. */
+async function withServiceLock<T>(options: ServiceManagerOptions, work: () => Promise<T>): Promise<T> {
+  const directory = serviceDirectory(options.dataDirectory);
+  mkdirSync(directory, { recursive: true });
+  const lock = join(directory, "lifecycle.lock");
+  const owner = join(lock, "owner.json");
+  const deadline = Date.now() + 20_000;
+  const staleOwner = (modifiedAt?: number): boolean => {
+    let pid: number | undefined;
+    try { pid = (JSON.parse(readFileSync(owner, "utf8")) as { pid?: number }).pid; } catch { /* incomplete lock */ }
+    return pid !== undefined ? !processRunning(pid) : Date.now() - (modifiedAt ?? statSync(lock).mtimeMs) > 30_000;
+  };
+  for (;;) {
+    try {
+      mkdirSync(lock, { mode: 0o700 });
+      try {
+        writeFileSync(owner, JSON.stringify({ pid: process.pid }), { flag: "wx" });
+      } catch (error) {
+        rmSync(lock, { recursive: true, force: true });
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    // Only one contender may reclaim a dead owner's directory. Re-read the
+    // owner after acquiring this guard so a replacement lock is never removed.
+    const reaper = join(lock, "reaping");
+    try {
+      if (staleOwner()) {
+        const previous = statSync(lock);
+        mkdirSync(reaper);
+        // Creating the guard changes directory mtime; use the original age
+        // for an incomplete owner file. A live replacement must be left alone.
+        const current = statSync(lock);
+        if (current.ino === previous.ino && current.birthtimeMs === previous.birthtimeMs && staleOwner(previous.mtimeMs)) {
+          rmSync(lock, { recursive: true, force: true });
+        } else {
+          rmSync(reaper, { recursive: true, force: true });
+        }
+      }
+    } catch (error) {
+      if (!["EEXIST", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      // A process killed during synchronous stale-lock reclamation may leave
+      // the guard behind. Give it a grace period before permitting a retry.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        try {
+          if (Date.now() - statSync(reaper).mtimeMs > 30_000) rmSync(reaper, { recursive: true, force: true });
+        } catch (cleanupError) {
+          if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError;
+        }
+      }
+    }
+    if (Date.now() >= deadline) throw new RepoMindError("STORAGE_UNAVAILABLE", "Timed out waiting for RepoMind service startup; run 'repomind doctor' to inspect the Bridge");
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  try { return await work(); } finally { rmSync(lock, { recursive: true, force: true }); }
 }
 
 async function startSelectedServices(
@@ -369,6 +453,10 @@ async function startSelectedServices(
 export async function stopServices(options: ServiceManagerOptions): Promise<ServicesResult & {
   actions: Record<ServiceName, "stopped" | "not-running" | "refused">;
 }> {
+  return withServiceLock(options, () => stopServicesUnlocked(options));
+}
+
+async function stopServicesUnlocked(options: ServiceManagerOptions): ReturnType<typeof stopServices> {
   const state = readState(options.dataDirectory);
   const serviceDefinitions = definitions(options);
   const actions: Record<ServiceName, "stopped" | "not-running" | "refused"> = {

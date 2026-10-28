@@ -122,12 +122,15 @@ export function installClaudeInteractiveHooks(options: InstallClaudeHooksOptions
     const existing = Array.isArray(hooks[event.name]) ? hooks[event.name] as HookDefinition[] : [];
     const present = existing.some((definition) => definition.hooks?.some((hook) => hook.command === command));
     if (present) {
+      for (const definition of existing) for (const hook of definition.hooks ?? []) {
+        if (hook.command === command) hook.timeout = Math.max(hook.timeout ?? 0, 60);
+      }
       unchanged++;
       continue;
     }
     const definition: HookDefinition = {
       ...(event.matcher ? { matcher: event.matcher } : {}),
-      hooks: [{ type: "command", command, timeout: 10 }],
+      hooks: [{ type: "command", command, timeout: 60 }],
     };
     hooks[event.name] = [...existing, definition];
     added++;

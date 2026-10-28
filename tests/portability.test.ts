@@ -191,6 +191,24 @@ describe("repository export, import, backup, and restore", () => {
     reopened.close();
   });
 
+  it("refuses physical replacement while an idle connection is still open", () => {
+    const backupPath = join(artifacts, "idle-connection.db");
+    const seed = new RepositoryMemoryCore(sourceRepository);
+    try { backupRepository(seed.context, backupPath); } finally { seed.close(); }
+    const first = new RepositoryMemoryCore(sourceRepository);
+    const second = new RepositoryMemoryCore(sourceRepository);
+    try {
+      const newer = second.record({ type: "decision", title: "Newer fact", content: "Must survive a refused restore." });
+      expect(restoreRepository(sourceRepository, backupPath, { dryRun: true }).restored).toBe(false);
+      expect(() => restoreRepository(sourceRepository, backupPath)).toThrow(/database is in use/u);
+      expect(first.inspect(newer.id).title).toBe("Newer fact");
+    } finally {
+      first.close();
+      second.close();
+    }
+    expect(restoreRepository(sourceRepository, backupPath).restored).toBe(true);
+  });
+
   it("blocks a logical export when stored data matches a sensitive pattern", () => {
     const core = new RepositoryMemoryCore(sourceRepository);
     const memory = core.record({ type: "decision", title: "Credential rotation", content: "Credential was already redacted." });

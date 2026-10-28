@@ -20,6 +20,7 @@ import type { RepositoryContext } from "../repository.js";
 import { searchTokens } from "../search/lexical.js";
 import { redactDeep } from "../security/redaction.js";
 import { Database } from "../storage/database.js";
+import { acquireDatabaseAccess } from "../storage/access.js";
 import { migrations } from "../storage/migrations.js";
 import {
   createEncryptedArchive,
@@ -645,6 +646,22 @@ function restoreRepositoryPlain(
   repositoryPath: string,
   inputPath: string,
   options: Omit<RestoreRepositoryOptions, "passphrase"> = {},
+): ReturnType<typeof restoreRepositoryUnlocked> {
+  if (options.dryRun) return restoreRepositoryUnlocked(repositoryPath, inputPath, options);
+  const root = locateGitRoot(repositoryPath);
+  const path = databasePath(readProjectMarker(root).projectId);
+  const release = acquireDatabaseAccess(path, true);
+  try {
+    return restoreRepositoryUnlocked(repositoryPath, inputPath, options);
+  } finally {
+    release();
+  }
+}
+
+function restoreRepositoryUnlocked(
+  repositoryPath: string,
+  inputPath: string,
+  options: Omit<RestoreRepositoryOptions, "passphrase"> = {},
 ): {
   restored: boolean;
   projectId: string;
@@ -713,7 +730,7 @@ function restoreRepositoryPlain(
   let liveDisplaced = false;
   try {
     if (previousDatabase === "ready" && preRestoreBackup) {
-      const snapshot = new Database(livePath);
+      const snapshot = new Database(livePath, { restoreOwnsAccess: true });
       try {
         snapshot.raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
         snapshot.raw.exec(`VACUUM INTO ${sqlPath(preRestoreBackup)}`);
@@ -727,7 +744,7 @@ function restoreRepositoryPlain(
     }
 
     copyFileSync(input, staged);
-    const stagedDatabase = new Database(staged);
+    const stagedDatabase = new Database(staged, { restoreOwnsAccess: true });
     try {
       const stagedMetadata = databaseMetadata(staged);
       if (!stagedMetadata.projectIds.includes(marker.projectId)) throw new Error("staged backup lost the target project");
@@ -742,7 +759,7 @@ function restoreRepositoryPlain(
       moveIfExists(liveShm, displacedShm);
     }
     renameSync(staged, livePath);
-    const restored = new Database(livePath);
+    const restored = new Database(livePath, { restoreOwnsAccess: true });
     restored.close();
     rmSync(displaced, { force: true });
     rmSync(displacedWal, { force: true });

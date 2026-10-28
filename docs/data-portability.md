@@ -124,6 +124,18 @@ Keep the database and manifest together. Editing either makes restore fail.
 
 ## Physical restore
 
+Before applying a restore, close RepoMind MCP clients and finish active tasks;
+stop the Bridge with `repomind services stop`. RepoMind refuses to replace the
+database while another current-version connection is open, including idle MCP
+connections. New connections are refused during the replacement. Retry after
+closing clients; `--allow-unreadable` does not bypass this protection. Dry-run
+still validates the archive without acquiring exclusive access.
+
+After upgrading, restart existing RepoMind processes so they participate in
+this coordination. External SQLite tools must also be closed before restore.
+Keep the adjacent `repomind.db.access.sqlite` coordination file in place while
+clients are running; it contains no repository memories and is not an archive.
+
 ```powershell
 repomind restore --input D:\backups\repomind.db --dry-run --json
 repomind restore --input D:\backups\repomind.db --yes --json

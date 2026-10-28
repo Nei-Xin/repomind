@@ -94,6 +94,19 @@ header), non-JSON writes, and non-loopback `Host` headers.
 Each `UserPromptSubmit -> Stop` pair is one RepoMind task. Every activity has an
 idempotent event ID and is redacted before it reaches SQLite.
 
+If the default local Bridge is stopped (for example after a reboot), the next
+hook starts it automatically and retries the refused connection. Concurrent
+hooks share a startup lock. Re-run `repomind claude setup --repo <path>` after
+upgrading to give existing managed hooks the 60-second recovery budget.
+Authentication failures, request timeouts, custom endpoints, and requests that
+may already have reached the Bridge are not automatically retried. If recovery
+fails, Claude receives a nonblocking notice with repair guidance. That operation's
+memory recall or recording is skipped; there is no offline queue.
+
+Claude may not emit a `Stop` hook when Esc interrupts a turn. In that case the
+task stays open until the next prompt marks it `partial`, or `SessionEnd`
+abandons it. The interrupted turn is not treated as successfully completed.
+
 Claude Code reports no exit status for shell commands; a non-zero exit fires
 `PostToolUseFailure` instead of `PostToolUse`. RepoMind therefore records a
 completed, foreground, uninterrupted `Bash`/`PowerShell` `PostToolUse` as an

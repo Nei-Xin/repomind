@@ -80,7 +80,7 @@ export function databasePath(projectId: string, rootDirectory = dataRoot()): str
 
   const path = resolve(canonicalProjectDirectory, "repomind.db");
   assertStrictChild(canonicalRepositoriesRoot, path);
-  for (const sqlitePath of [path, `${path}-wal`, `${path}-shm`]) rejectLink(sqlitePath);
+  for (const sqlitePath of [path, `${path}-wal`, `${path}-shm`, `${path}.access.sqlite`, `${path}.access.sqlite-journal`]) rejectLink(sqlitePath);
   if (existsSync(path)) {
     assertStrictChild(canonicalRepositoriesRoot, realpathSync.native(path));
   }
