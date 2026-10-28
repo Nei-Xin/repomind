@@ -59,6 +59,8 @@ npm link
 
 A versioned RC.2 tarball is also available through [GitHub Releases](https://github.com/Nei-Xin/repomind/releases/tag/v1.0.0-rc.2). The unscoped npm package `repomind` belongs to another project; use this repository's source or release artifact.
 
+RC.3 publication is being prepared. See the [RC.3 release notes](docs/release-notes-v1.0.0-rc.3.md) for upgrade instructions and known limits, and [release readiness](docs/release-readiness-v1.0.md) for the remaining CI gates.
+
 Inside the Git repository you want RepoMind to remember:
 
 ```bash

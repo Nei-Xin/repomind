@@ -8,6 +8,8 @@ period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - Unreleased candidate
+
 ### Added
 
 - Native Gemini CLI Hooks integration with `gemini setup|status` and
@@ -21,16 +23,6 @@ period; every behavioral change is listed with its migration impact.
 - Optional task identity guards in activity, finish and abort Bridge requests
   reject events for completed or superseded turns. Existing clients remain
   compatible; no database migration is required.
-
-### Fixed
-
-- Resolve Gemini model Hooks from the installed package when the CLI is invoked
-  through a global npm symlink. Re-run `repomind gemini setup` after upgrading.
-- Recognize the same managed Bridge through symlink and canonical CLI paths,
-  including services launched by automatic recovery and legacy symlink launches.
-- Prune Gemini replay receipts at turn boundaries while retaining timestamps and
-  unresolved tool correlations needed to reject stale events. No repository
-  database migration is required; session marker files remain on disk.
 
 ### Changed
 
@@ -73,6 +65,14 @@ period; every behavioral change is listed with its migration impact.
   fenced code, and dangling lead-ins; overlong titles use a complete fallback.
 
 ### Fixed
+
+- Resolve Gemini model Hooks from the installed package when the CLI is invoked
+  through a global npm symlink. Re-run `repomind gemini setup` after upgrading.
+- Recognize the same managed Bridge through symlink and canonical CLI paths,
+  including services launched by automatic recovery and legacy symlink launches.
+- Prune Gemini replay receipts at turn boundaries while retaining timestamps and
+  unresolved tool correlations needed to reject stale events. No repository
+  database migration is required; session marker files remain on disk.
 
 - OpenCode interactive plugins handle both `session.status: idle` and the legacy
   `session.idle` event, and drain in-flight hooks and queued Bridge writes during

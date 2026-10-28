@@ -2,22 +2,21 @@
 
 ## Decision
 
-`v1.0.0-rc.2` is the latest published release candidate for RepoMind's local,
-single-user product. The current source is preparing `v1.0.0-rc.3`, which adds
-Schema 12 Agent activity capture and must be published as a distinct immutable
-artifact. RC.2 preserves the v1.0 storage and portability contracts
-while adding the registered OpenCode/Claude Host lifecycle and the
-release-blocking installation corrections found after RC.1. All 28
-final-product criteria in section 24 of
-`REPOMIND_FINAL_PRODUCT_SPEC.md` have implementation and retained acceptance
-evidence. RC.2 changes Host and CLI behavior, but does not change storage,
-protocol, or archive formats from v0.18.0.
+The current source prepares **`v1.0.0-rc.3`** for the local, single-user product.
+As checked on 2026-10-29, the latest GitHub release is `v1.0.0-rc.2`; the
+`v1.0.0-rc.3` tag does not yet exist. This document records preparation, not a
+published release or a completed cross-platform CI run.
 
-During the RC period, only release-blocking correctness, data-safety, security,
-installation, compatibility, and documentation defects may change the product.
-New capabilities move to a later version.
+RC.3 expands the earlier RC scope with explicit native integrations for Claude
+Code, OpenCode, Pi, Codex CLI and Gemini CLI, plus Schema 12 activity capture.
+The earlier RC.1/RC.2 feature-freeze statement is therefore superseded by this
+listed RC.3 scope. New scope requires its own acceptance evidence; historical
+28/28 product-criteria results do not by themselves validate these integrations.
 
-## Frozen product scope
+See [RC.3 release notes](release-notes-v1.0.0-rc.3.md) for upgrade steps and
+client-specific limitations. Stable promotion still requires the gates below.
+
+## RC.3 product scope
 
 The v1.0 candidate includes:
 
@@ -28,7 +27,9 @@ The v1.0 candidate includes:
 - deterministic L2 Module Narratives, L3 Repository Profile, and review-only
   L4 Skill Candidates;
 - CLI and 24-tool MCP access tested with Claude Code and OpenCode;
-- Host-managed OpenCode lifecycle, run artifacts, and reproducible evaluation;
+- Host-managed OpenCode/Claude lifecycle, run artifacts, and reproducible evaluation;
+- native Claude/OpenCode/Pi/Codex/Gemini recall and activity capture through
+  their documented hooks or extensions, with an authenticated local Bridge;
 - replace-only logical import, same-Project-ID physical restore, and optional
   encrypted logical and physical archives; and
 - versioned Migration, package, scale, cross-platform, and recovery evidence.
@@ -44,15 +45,18 @@ of the live local SQLite database.
 | --- | --- |
 | Runtime | Node.js 22.5 or newer and Git |
 | Operating systems | Windows, Linux, and macOS through the GitHub CI matrix |
-| Database | Schema 11; every published Schema from v0.4.0 upgrades through immutable Migration hashes |
+| Database | Schema 12; every published Schema from v0.4.0 upgrades through immutable Migration hashes |
 | Logical export | Writes format 2 and reads formats 1 and 2; import remains explicit replace semantics |
 | Physical backup | Format 1; restore requires the same Project ID and retains a rollback snapshot |
 | Encryption | Envelope format 1 using AES-256-GCM and scrypt; plaintext remains the default |
 | CLI and MCP | Existing commands, JSON fields, error codes, and the 24 registered MCP tools form the v1.0 compatibility baseline |
 | Providers | Deterministic extraction and FTS remain defaults; remote LLM, Embedding, and encryption are explicit opt-ins |
 
-`v1.0.0-rc.2` maps to Schema 11. No Migration or archive conversion is needed
-from v0.18.0. A future incompatible CLI or MCP change requires a major version
+RC.2 and v0.18.0 use Schema 11. Opening their repository with RC.3 applies
+Migration 12. Back up with the old version before upgrading; do not open a
+migrated database with RC.2. Logical/physical archive format versions remain
+unchanged, but schema and contents are validated, so this is not a promise of
+backward-compatible import into older code. A future incompatible CLI or MCP change requires a major version
 or a documented compatibility period; patch releases must continue to open all
 published databases.
 
@@ -72,6 +76,37 @@ The v0.18 tag run completed on 2026-07-30 in 7 minutes 17 seconds. Ubuntu,
 Windows, macOS, source coverage, and comparison all passed. Each platform also
 ran the installed-tarball acceptance, including encrypted export, import,
 backup, and restore.
+
+## RC.3 preparation evidence
+
+The final runtime changes are committed at `2dc602d`. On 2026-10-28, the user’s
+Debian 13.7 x86_64 server passed build, typecheck and **901 tests across 75 files**;
+two Windows-specific tests were skipped. The tested source files were compared
+by SHA-256 with the local changes before commit.
+
+An installed `npm pack` artifact passed global npm symlink setup and idempotence.
+Gemini CLI 0.66.0 completed real TUI multi-turn recall, cancellation followed by
+a new prompt, native session resume, forced Bridge recovery and service shutdown
+through the global executable. The final run had five committed tasks and one
+abandoned task. Pi 1.4.0 and Codex CLI 0.165.0 native/cross-agent acceptance was
+completed separately; see the retained [Pi/Codex](../docs-zh-CN/pi-codex-validation.md)
+and [Gemini](../docs-zh-CN/gemini-validation.md) reports.
+
+Model calls used the requested GPT relay. Gemini required a temporary external
+protocol converter; the official Gemini model endpoint and token-by-token
+upstream streaming were not tested. Provider secrets and test services were
+removed after validation. Tests ran outside the source checkout's user data.
+
+On 2026-10-29, the same server also passed `bench:agent-fixtures`,
+`bench:cross-session-agent-fixtures`, `bench:layered-consumption-fixtures`, and
+all 17 `bench:package-smoke` checks in a fresh external workspace. Reports are
+retained under `/home/debian/repomind-validation/rc3-package-smoke` with the
+`rc3-*-fixtures.log` files alongside it.
+
+These results do not replace PR, merged-main or tag CI. The CI workflow checks
+Ubuntu, Windows and macOS; MemoryProxy on Node 22 and 24; coverage; and the full
+comparison benchmark. The release workflow separately runs regression, Agent,
+cross-session/layered fixtures and installed-package smoke checks before packing.
 
 ## Local RC.2 preparation result
 
@@ -116,23 +151,25 @@ D:\data\code\project\repomind-test\v100-rc1-package-precommit-20260730-01
 This is pre-commit validation of the metadata and documentation worktree. It
 does not replace the required clean-commit main and tag CI runs.
 
-## RC.2 creation gates
+## RC.3 creation gates
 
-Before creating the `v1.0.0-rc.2` tag:
+1. Version metadata, CLI/MCP version, Changelog and release notes agree on
+   `1.0.0-rc.3`; the current database migration is 12. The historical released
+   schema manifest must keep the immutable RC.1/RC.2 mapping to Schema 11.
+2. Push the reviewed branch and open a PR against `main`; pass all configured
+   CI jobs at its final head, including cross-platform package checks.
+3. Merge the PR and verify CI on the resulting main commit. Do not infer its
+   result from a different branch revision or earlier server run.
+4. Verify the release tag is unused, then create an annotated `v1.0.0-rc.3` tag
+   at that tested main commit. Never move a published tag or replace its assets.
+5. Verify both tag CI and the Release workflow. The latter publishes a GitHub
+   **prerelease** with a tarball and `SHA256SUMS`; verify the downloaded checksum
+   and attach the prepared release notes before declaring release complete.
 
-1. the RC preparation commit is clean and contains no product behavior change;
-2. package metadata, CLI banner, MCP handshake, Changelog, and released-Schema
-   fixture agree on `1.0.0-rc.2` and Schema 11;
-3. local typecheck, build, full regression, version/Migration tests, and package
-   content inspection pass;
-4. the preparation commit passes Ubuntu, Windows, macOS, coverage, and
-   comparison jobs on its first clean push; and
-5. only then is an annotated `v1.0.0-rc.2` tag created and pushed, after which
-   the independent tag-triggered five-job CI must also pass.
-
-Passwords and provider keys remain environment-only throughout every gate.
-Acceptance workspaces stay outside the repository under
-`D:\data\code\project\repomind-test`.
+No npm Registry publication is part of this workflow. The unscoped npm package
+`repomind` belongs to another publisher; install only this project's GitHub
+artifact or source. A registry release would require a separately chosen,
+owned package name and its own publication setup.
 
 ## Stable promotion gates
 
@@ -145,7 +182,7 @@ Promotion from RC to `v1.0.0` requires all of the following:
 - fresh-install and v0.18-to-RC upgrade checks using the packed artifact;
 - plaintext and encrypted logical/physical recovery checks with zero-write
   authenticated failure behavior and temporary plaintext cleanup;
-- a final clean commit and annotated tag passing the same five GitHub CI jobs;
+- a final clean commit and annotated tag passing all configured GitHub CI jobs;
   and
 - release notes that list the frozen compatibility contract, security boundary,
   supported runtime, recovery procedure, and deferred capabilities.
