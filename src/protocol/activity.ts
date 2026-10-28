@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const codingAgentSchema = z.enum(["claude", "opencode"]);
-export const activitySourceSchema = z.enum(["claude-hook", "memory-proxy", "opencode-plugin"]);
+export const codingAgentSchema = z.enum(["claude", "opencode", "codex", "pi"]);
+export const activitySourceSchema = z.enum(["claude-hook", "memory-proxy", "opencode-plugin", "codex-hook", "pi-extension"]);
 export const activityTypeSchema = z.enum([
   "user_message",
   "assistant_message",
@@ -38,6 +38,7 @@ export const startInteractiveTaskSchema = z.object({
 export const recordActivitySchema = z.object({
   schemaVersion: z.literal(1),
   eventId: eventIdSchema,
+  taskStartEventId: eventIdSchema.optional(),
   agent: codingAgentSchema,
   agentSessionId: externalSessionIdSchema,
   repositoryPath: repositoryPathSchema.optional(),
@@ -51,6 +52,7 @@ export const recordActivitySchema = z.object({
 export const finishInteractiveTaskSchema = z.object({
   schemaVersion: z.literal(1),
   eventId: eventIdSchema,
+  taskStartEventId: eventIdSchema.optional(),
   agent: codingAgentSchema,
   agentSessionId: externalSessionIdSchema,
   repositoryPath: repositoryPathSchema,
@@ -62,6 +64,7 @@ export const finishInteractiveTaskSchema = z.object({
 export const abortInteractiveTaskSchema = z.object({
   schemaVersion: z.literal(1),
   eventId: eventIdSchema,
+  taskStartEventId: eventIdSchema.optional(),
   agent: codingAgentSchema,
   agentSessionId: externalSessionIdSchema,
   repositoryPath: repositoryPathSchema,

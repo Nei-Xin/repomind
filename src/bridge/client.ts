@@ -9,6 +9,8 @@ export interface BridgeClientOptions {
   bridgeUrl?: string;
   bridgeToken?: string;
   timeoutMs?: number;
+  /** Short shutdown hooks cannot wait for managed service recovery. */
+  recover?: boolean;
 }
 
 function connectionRefused(error: unknown): boolean {
@@ -51,7 +53,7 @@ export async function postBridgeJson<T>(path: string, body: Record<string, unkno
     return result;
   };
   try { return await request(); } catch (error) {
-    if (!managedEndpoint(base) || options.bridgeToken !== undefined || !connectionRefused(error)) throw error;
+    if (options.recover === false || !managedEndpoint(base) || options.bridgeToken !== undefined || !connectionRefused(error)) throw error;
     await recoverBridge();
     return request();
   }

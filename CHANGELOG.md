@@ -8,6 +8,17 @@ period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Native Pi extension and Codex Hooks integration with `pi|codex setup|status`
+  and `doctor pi|codex`, automatic recall, activity capture and cancellation.
+  First validated versions: Pi 1.4.0 and Codex CLI 0.165.0. Model configuration
+  remains owned by each client. Codex's current stdout-only Bash hook output
+  remains unverified activity; it cannot establish passing test evidence.
+- Optional task identity guards in activity, finish and abort Bridge requests
+  reject events for completed or superseded turns. Existing clients remain
+  compatible; no database migration is required.
+
 ### Changed
 
 - Advances the source version to `1.0.0-rc.3`; the published

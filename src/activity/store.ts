@@ -10,6 +10,7 @@ import { RepoMindError } from "../errors.js";
 import type {
   AbortInteractiveTaskRequest,
   CodingAgent,
+  ActivitySource,
   FinishInteractiveTaskRequest,
   RecordActivityRequest,
   RecallInteractiveContextRequest,
@@ -89,12 +90,12 @@ function interactiveClientName(agent: CodingAgent): string {
   return `${agent}-interactive`;
 }
 
-function interactiveActivitySource(agent: CodingAgent): "claude-hook" | "opencode-plugin" {
-  return agent === "claude" ? "claude-hook" : "opencode-plugin";
+function interactiveActivitySource(agent: CodingAgent): ActivitySource {
+  return { claude: "claude-hook", opencode: "opencode-plugin", codex: "codex-hook", pi: "pi-extension" }[agent] as ActivitySource;
 }
 
 function agentDisplayName(agent: CodingAgent): string {
-  return agent === "claude" ? "Claude" : "OpenCode";
+  return { claude: "Claude", opencode: "OpenCode", codex: "Codex", pi: "Pi" }[agent];
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -295,6 +296,7 @@ export class InteractiveActivityStore {
 
   record(input: RecordActivityRequest): ActivityRecordResult {
     const row = this.agentSession(input.agent, input.agentSessionId);
+    this.checkTaskIdentity(row, input.taskStartEventId);
     const sessionId = row.current_session_id ?? (input.source === "memory-proxy" ? row.last_session_id : null);
     const result = this.insertActivity(row.id, sessionId, input);
     this.touch(row.id, input.timestamp ?? Date.now());
@@ -304,6 +306,7 @@ export class InteractiveActivityStore {
   finish(input: FinishInteractiveTaskRequest): InteractiveTaskFinishResult {
     const registered = this.register(input);
     const current = this.agentSession(input.agent, input.agentSessionId);
+    this.checkTaskIdentity(current, input.taskStartEventId);
     const prior = this.core.context.database.raw.prepare(
       "SELECT session_id FROM activity_events WHERE id=? AND repository_id=?",
     ).get(input.eventId, this.core.context.marker.projectId) as { session_id: string | null } | undefined;
@@ -371,6 +374,7 @@ export class InteractiveActivityStore {
   private abortInTransaction(input: AbortInteractiveTaskRequest): { sessionId: string | null; status: "abandoned" | "idle" } {
     const registered = this.register(input);
     const current = this.agentSession(input.agent, input.agentSessionId);
+    this.checkTaskIdentity(current, input.taskStartEventId);
     if (!current.current_session_id) {
       this.endAgentSession(registered.agentSessionId, input.timestamp ?? Date.now());
       return { sessionId: null, status: "idle" };
@@ -444,6 +448,12 @@ export class InteractiveActivityStore {
       source: interactiveActivitySource(input.agent), type: "session_event",
       payload: { kind: "recall", recall },
     });
+  }
+
+  private checkTaskIdentity(row: AgentSessionRow, expected: string | undefined): void {
+    if (expected !== undefined && row.current_task_event_id !== expected) {
+      throw new RepoMindError("SESSION_NOT_OPEN", "Event belongs to a completed or superseded interactive task");
+    }
   }
 
   private agentSession(agent: string, externalId: string): AgentSessionRow {

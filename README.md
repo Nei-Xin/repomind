@@ -2,7 +2,7 @@
 
 **Evidence-backed repository memory for coding agents.**
 
-RepoMind helps coding agents carry useful repository knowledge from one task to the next. It captures task evidence, turns reusable findings into memories, and retrieves relevant context when a new task begins. OpenCode, Claude Code, and MCP clients can work with the same repository memory.
+RepoMind helps coding agents carry useful repository knowledge from one task to the next. It captures task evidence, turns reusable findings into memories, and retrieves relevant context when a new task begins. OpenCode, Claude Code, Pi, Codex, and MCP clients can work with the same repository memory.
 
 A later session can recall why a module was designed a certain way, which command verified a change, or how a previous issue was resolved—and inspect the evidence behind that knowledge.
 
@@ -13,7 +13,7 @@ Working in an existing repository means learning more than its source code. Agen
 RepoMind makes that knowledge reusable:
 
 - **Continue across sessions.** Retrieve relevant findings when starting a new task.
-- **Share context across agents.** OpenCode and Claude Code can use the same project memory on the same machine.
+- **Share context across agents.** OpenCode, Claude Code, Pi and Codex can use the same project memory on the same machine.
 - **Keep conclusions traceable.** Memories link back to task evidence, Git changes, and command results.
 - **Keep context focused.** Retrieve compact facts and module summaries within a context budget.
 - **Maintain knowledge as code changes.** File changes flag linked memories for review; corrections and invalidations retain their history.
@@ -86,7 +86,7 @@ Omit `--model` to use the selected agent's default. Use `--context-budget` to co
 
 See the [daily workflow guide](docs/daily-workflow.md) for task history, memory review, and ongoing use.
 
-### Work interactively in OpenCode or Claude Code
+### Work interactively in your native agent
 
 Configure OpenCode once for the target repository, then launch it normally:
 
@@ -107,6 +107,21 @@ repomind doctor claude --repo D:\path\to\repository
 ```
 
 See [OpenCode integration](docs/opencode-integration.md) and [Claude Code integration](docs/claude-integration.md) for the available workflows and setup details.
+
+Pi and Codex also support automatic native recall and activity capture:
+
+```bash
+repomind pi setup --repo /path/to/repository
+repomind codex setup --repo /path/to/repository
+```
+
+Then use `pi` or `codex` normally. Trust the project extension in Pi; in Codex,
+trust the project and review RepoMind definitions with `/hooks`. Validated with
+Pi 1.4.0 and Codex CLI 0.165.0. Codex Bash hooks currently omit exit codes, so
+their raw output cannot establish verified-command evidence. See
+[Pi integration](docs/pi-integration.md) and [Codex integration](docs/codex-integration.md)
+for setup, lifecycle and evidence limits. These native integrations do not add
+new `repomind run --runner` targets.
 
 ### Connect an MCP client
 
