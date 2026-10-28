@@ -10,6 +10,9 @@ period; every behavioral change is listed with its migration impact.
 
 ### Added
 
+- Native Gemini CLI Hooks integration with `gemini setup|status` and
+  `doctor gemini`, automatic recall, tool activity and conservative terminal
+  model outcome tracking. First validated version: Gemini CLI 0.66.0.
 - Native Pi extension and Codex Hooks integration with `pi|codex setup|status`
   and `doctor pi|codex`, automatic recall, activity capture and cancellation.
   First validated versions: Pi 1.4.0 and Codex CLI 0.165.0. Model configuration
@@ -18,6 +21,16 @@ period; every behavioral change is listed with its migration impact.
 - Optional task identity guards in activity, finish and abort Bridge requests
   reject events for completed or superseded turns. Existing clients remain
   compatible; no database migration is required.
+
+### Fixed
+
+- Resolve Gemini model Hooks from the installed package when the CLI is invoked
+  through a global npm symlink. Re-run `repomind gemini setup` after upgrading.
+- Recognize the same managed Bridge through symlink and canonical CLI paths,
+  including services launched by automatic recovery and legacy symlink launches.
+- Prune Gemini replay receipts at turn boundaries while retaining timestamps and
+  unresolved tool correlations needed to reject stale events. No repository
+  database migration is required; session marker files remain on disk.
 
 ### Changed
 

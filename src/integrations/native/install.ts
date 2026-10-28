@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { RepoMindError } from "../../errors.js";
@@ -56,7 +56,8 @@ function expected(options: NativeInstallOptions) {
   const command = [options.nodeExecutable ?? process.execPath, resolve(options.cliEntry), `${options.agent}-hook`].map(quoteShell).join(" ");
   const piSource = `${PI_MARKER}\n// Native import avoids transpiler copies of RepoMind's ESM dependency graph.\n`
     + `export default async function repomind(pi) {\n  const { default: install } = await import(${JSON.stringify(pathToFileURL(resolve(options.extensionEntry)).href)});\n  install(pi);\n}\n`;
-  const modelHookEntry = options.modelHookEntry ?? resolve(dirname(options.cliEntry), "../integrations/gemini/model-hook.js");
+  const cliEntry = existsSync(options.cliEntry) ? realpathSync(options.cliEntry) : resolve(options.cliEntry);
+  const modelHookEntry = options.modelHookEntry ?? resolve(dirname(cliEntry), "../integrations/gemini/model-hook.js");
   const modelCommand = [options.nodeExecutable ?? process.execPath, modelHookEntry].map(quoteShell).join(" ");
   const events = options.agent === "gemini" ? GEMINI_EVENTS : CODEX_EVENTS;
   const handler = (event: string) => options.agent === "gemini"

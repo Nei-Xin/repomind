@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -125,6 +126,52 @@ describe("Gemini native hooks", () => {
     await f.hook("SessionEnd", { reason: "exit" });
     expect(f.query("SELECT status FROM sessions")).toEqual([{ status: "abandoned" }]);
     expect(f.warnings).toHaveLength(1);
+  });
+  it("prunes completed receipts while retaining replay and delayed-tool protection", async () => {
+    const f = await fixture();
+    const start = f.input("BeforeAgent", { prompt: "Cache cleanup" });
+    await handleGeminiInteractiveHook({ ...f.options, input: start });
+    const tool = { tool_name: "run_shell_command", tool_input: { command: "npm test" } };
+    const beforeTool = f.input("BeforeTool", tool);
+    await handleGeminiInteractiveHook({ ...f.options, input: beforeTool });
+    await f.hook("SessionEnd");
+    const path = join(f.dataDirectory, "gemini-hooks", readdirSync(join(f.dataDirectory, "gemini-hooks"))[0]!);
+    const db = new DatabaseSync(path);
+    try { expect(db.prepare("SELECT count(*) n FROM receipts").get()).toEqual({ n: 0 }); }
+    finally { db.close(); }
+    await handleGeminiInteractiveHook({ ...f.options, input: start });
+    await handleGeminiInteractiveHook({ ...f.options, input: beforeTool });
+    expect(f.query("SELECT status FROM sessions")).toEqual([{ status: "abandoned" }]);
+    await f.hook("BeforeAgent", { prompt: "Next task" });
+    await f.hook("BeforeTool", tool);
+    const ambiguous = f.input("AfterTool", { ...tool, tool_response: { data: { exitCode: 0 } } });
+    await handleGeminiInteractiveHook({ ...f.options, input: ambiguous });
+    await f.hook("BeforeTool", tool);
+    // A previously ignored result replay must not consume this new invocation.
+    await handleGeminiInteractiveHook({ ...f.options, input: ambiguous });
+    expect(f.query("SELECT id FROM activity_events WHERE event_type='tool_result'")).toEqual([]);
+    await f.model(); await f.hook("AfterAgent", { prompt: "Next task", prompt_response: "Done" });
+    expect(f.query("SELECT status FROM sessions")).toEqual([{ status: "abandoned" }, { status: "partial" }]);
+    expect(f.query("SELECT id FROM evidence WHERE kind='test_result'")).toEqual([]);
+    expect(f.warnings).toEqual([]);
+  });
+  it.skipIf(process.platform === "win32")("finds the model hook behind a global npm executable symlink", async () => {
+    const f = await fixture();
+    const prefix = join(f.repository, "global prefix");
+    const packageRoot = join(prefix, "lib/node_modules/repomind");
+    const cli = join(packageRoot, "dist/cli/entry.js");
+    const model = join(packageRoot, "dist/integrations/gemini/model-hook.js");
+    mkdirSync(join(packageRoot, "dist/cli"), { recursive: true });
+    mkdirSync(join(packageRoot, "dist/integrations/gemini"), { recursive: true });
+    mkdirSync(join(prefix, "bin"), { recursive: true });
+    writeFileSync(cli, ""); writeFileSync(model, "");
+    const bin = join(prefix, "bin/repomind");
+    symlinkSync(cli, bin);
+    const options = { agent: "gemini" as const, repository: f.repository, cliEntry: bin, extensionEntry: cli };
+    expect(installNativeIntegration(options).configured).toBe(true);
+    const settings = JSON.parse(readFileSync(join(f.repository, ".gemini/settings.json"), "utf8"));
+    expect(settings.hooks.AfterModel[0].hooks[0].command).toContain(model);
+    expect(installNativeIntegration(options).changed).toBe(false);
   });
   it("preserves configuration and disabled hooks, repairs paths and installs idempotently", async () => {
     const f = await fixture();

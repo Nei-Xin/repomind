@@ -60,6 +60,9 @@ export function planGeminiHook(input: GeminiInput): GeminiReceipt {
     if (event === "BeforeAgent" && str(input.prompt).trim() && (!turn || at > turn.at)) {
       if (turn && !turn.closed) receipt.previous = turn.start;
       receipt.start = id;
+      // The persisted turn timestamp rejects older starts after receipt pruning.
+      // Keep pending tool signatures: a late result must not match a new call.
+      db.exec("DELETE FROM receipts");
       state.turn = { start: id, at, prompt: hash(input.prompt), closed: false, unsafe: !!turn && !turn.closed && turn.prompt === hash(input.prompt) };
     } else if (turn && !turn.closed && at >= turn.at) {
       if (event === "BeforeModel" && (!turn.model || at > turn.model.at)) {
@@ -92,10 +95,16 @@ export function planGeminiHook(input: GeminiInput): GeminiReceipt {
       }
     }
     // Model chunks need no replay receipts: their updates are already idempotent.
-    if (event !== "BeforeModel" && event !== "AfterModel") db.prepare("INSERT INTO receipts VALUES (?,?)").run(id, JSON.stringify(receipt));
+    if (state.turn && !state.turn.closed && at >= state.turn.at && event !== "BeforeModel" && event !== "AfterModel") db.prepare("INSERT INTO receipts VALUES (?,?)").run(id, JSON.stringify(receipt));
     return receipt;
   });
 }
 export function closeGeminiTurn(input: GeminiInput, start: string): void {
-  transaction(input, state => { if (state.turn?.start === start) state.turn.closed = true; });
+  transaction(input, (state, db) => {
+    if (state.turn?.start !== start) return;
+    state.turn.closed = true;
+    // Completed turns need only their high-water mark and unresolved tool keys.
+    // Retain the SQLite file so delayed BeforeAgent replays cannot reopen tasks.
+    db.exec("DELETE FROM receipts");
+  });
 }

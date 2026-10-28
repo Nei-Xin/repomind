@@ -13,7 +13,8 @@ export interface NativeSetupOptions extends ServiceManagerOptions {
   runnerExecutable?: string;
 }
 function installOptions(options: NativeSetupOptions) {
-  return { ...options, extensionEntry: resolve(options.repoMindRoot, "dist/integrations/pi/extension.js") };
+  return { ...options, extensionEntry: resolve(options.repoMindRoot, "dist/integrations/pi/extension.js"),
+    modelHookEntry: resolve(options.repoMindRoot, "dist/integrations/gemini/model-hook.js") };
 }
 // Conservative minimums: these are the first versions validated by RepoMind.
 export const NATIVE_MINIMUM_VERSIONS = { codex: "0.165.0", pi: "1.4.0", gemini: "0.66.0" } as const;

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -167,15 +168,21 @@ function normalizeCommand(value: string): string {
   return value.replaceAll("\\", "/").toLowerCase();
 }
 
+function canonicalEntry(path: string): string {
+  try { return realpathSync(path); } catch { return resolve(path); }
+}
+
 function ownedProcess(record: ServiceRecord, definition: ServiceDefinition): boolean {
   if (!processRunning(record.pid)) return false;
-  if (normalizeCommand(record.commandSignature) !== normalizeCommand(definition.commandSignature)) return false;
+  if (normalizeCommand(canonicalEntry(record.commandSignature)) !== normalizeCommand(canonicalEntry(definition.commandSignature))) return false;
   const identity = processIdentity(record.pid);
   if (record.processStartedAt !== undefined && identity && record.processStartedAt !== identity.startedAt) return false;
   if (record.executable !== undefined && identity
     && normalizeCommand(record.executable) !== normalizeCommand(identity.executable)) return false;
   const commandLine = processCommandLine(record.pid);
-  if (commandLine !== null) return normalizeCommand(commandLine).includes(normalizeCommand(definition.commandSignature));
+  // Legacy records may have launched through a symlink. Compare the actual
+  // command against that recorded spelling after checking canonical ownership.
+  if (commandLine !== null) return normalizeCommand(commandLine).includes(normalizeCommand(record.commandSignature));
   return identity !== null
     && record.processStartedAt === identity.startedAt
     && record.executable !== undefined
@@ -200,7 +207,7 @@ function definitions(
   options: ServiceManagerOptions,
   token: string | undefined = readBridgeToken({ dataDirectory: options.dataDirectory }),
 ): Record<ServiceName, ServiceDefinition> {
-  const cliEntry = resolve(options.cliEntry);
+  const cliEntry = canonicalEntry(options.cliEntry);
   const proxyRoot = resolve(options.repoMindRoot, "services", "memory-proxy");
   const proxyEntry = join(proxyRoot, "src", "index.ts");
   const proxyConfig = join(proxyRoot, "config.yaml");
