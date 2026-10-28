@@ -65,6 +65,7 @@ describe("hooks-only Claude integration", () => {
     running.push(bridge);
     const warnings: string[] = [];
     const result = await handleClaudeInteractiveHook({
+      timeoutMs: 15_000,
       bridgeUrl: bridge.url, bridgeToken: "incorrect-token", onWarning: (message) => warnings.push(message),
       input: { hook_event_name: "UserPromptSubmit", session_id: "unavailable", cwd: fixture.root, prompt: "Check memory" },
     });
@@ -179,6 +180,8 @@ describe("Claude hook sessions without MemoryProxy", () => {
     const warnings: string[] = [];
     const hook = (input: Record<string, unknown>) => handleClaudeInteractiveHook({
       bridgeUrl: bridge.url,
+      // Validate hook semantics independently of the production latency budget.
+      timeoutMs: 15_000,
       input: { session_id: id, cwd: fixture.root, ...input },
       onWarning: (warning) => warnings.push(warning),
     });
@@ -234,6 +237,7 @@ describe("Claude hook sessions without MemoryProxy", () => {
 
     const recalled = await handleClaudeInteractiveHook({
       bridgeUrl: bridge.url,
+      timeoutMs: 15_000,
       input: {
         hook_event_name: "UserPromptSubmit",
         session_id: "claude-2",
