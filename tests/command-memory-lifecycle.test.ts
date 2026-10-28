@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InteractiveActivityStore } from "../src/activity/store.js";
 import { RepositoryMemoryCore } from "../src/core.js";
@@ -28,14 +27,11 @@ describe("command memory lifecycle across sessions and collectors", () => {
     core = new RepositoryMemoryCore(repository, { dataDirectory });
     run = 0;
   });
-  afterEach(async () => {
+  afterEach(() => {
     core.close();
     vi.unstubAllEnvs();
     rmSync(repository, { recursive: true, force: true });
     rmSync(dataDirectory, { recursive: true, force: true });
-    // Synchronous Git/SQLite work can starve Vitest's IPC across the whole
-    // suite on Windows. Drain result messages between cases, not just at EOF.
-    await setImmediate();
   });
 
   function reopen() {
