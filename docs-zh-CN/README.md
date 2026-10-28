@@ -12,6 +12,7 @@
 - [Claude Code 集成](claude-integration.md)
 - [Pi 原生接入](pi-integration.md)
 - [Codex 原生接入](codex-integration.md)
+- [Gemini CLI 原生接入](gemini-integration.md)
 - [Pi / Codex 服务器验收记录](pi-codex-validation.md)
 - [Claude Code 无感交互集成](claude-interactive.md)
 - [Agent 基准测试](agent-benchmark.md)

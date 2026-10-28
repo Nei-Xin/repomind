@@ -47,6 +47,7 @@ import { backupRepository, exportRepository, importRepository, restoreRepository
 import { startBridgeServer } from "../bridge/server.js";
 import { ensureBridgeToken } from "../bridge/token.js";
 import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-hook.js";
+import { handleGeminiInteractiveHook } from "../integrations/gemini/interactive-hook.js";
 import { handleCodexInteractiveHook } from "../integrations/codex/interactive-hook.js";
 import { nativeIntegrationStatus, setupNativeIntegration, type NativeSetupOptions } from "../integrations/native/setup.js";
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
@@ -78,7 +79,7 @@ Usage:
   repomind skill-inspect <l4-id> [--repo <path>] [--json]
   repomind skill-review <l4-id> --action approve|reject --reason <text> [--repo <path>] [--json]
   repomind skill-export <l4-id> --output <new-SKILL.md> [--repo <path>] [--json]
-  repomind doctor [opencode|claude|codex|pi] [--repo <path>] [--json]
+  repomind doctor [opencode|claude|codex|pi|gemini] [--repo <path>] [--json]
   repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
@@ -108,6 +109,7 @@ Usage:
   repomind claude setup|status [--repo <path>] [--proxy-url <url>] [--json]
   repomind opencode setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind codex setup|status [--repo <path>] [--runner-executable <path>] [--json]
+  repomind gemini setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind pi setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
@@ -377,13 +379,19 @@ async function main(): Promise<void> {
     else throw new RepoMindError("INVALID_INPUT", `Unknown opencode action: ${action}`);
     return;
   }
-  if (command === "codex" || command === "pi") {
+  if (command === "codex" || command === "pi" || command === "gemini") {
     const action = required(positionals[1], `${command} action`);
     const options: NativeSetupOptions = { ...serviceManagerOptions(), agent: command, repository: repositoryPath(),
       ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}) };
     if (action === "setup") output(await setupNativeIntegration(options));
     else if (action === "status") output(await nativeIntegrationStatus(options));
     else throw new RepoMindError("INVALID_INPUT", `Unknown ${command} action: ${action}`);
+    return;
+  }
+  if (command === "gemini-hook") {
+    console.log(JSON.stringify(await handleGeminiInteractiveHook({
+      ...(values["bridge-url"] ? { bridgeUrl: values["bridge-url"] } : {}),
+    })));
     return;
   }
   if (command === "codex-hook") {
@@ -607,7 +615,7 @@ async function main(): Promise<void> {
   }
   if (command === "doctor") {
     const nativeAgent = values.runner ?? positionals[1];
-    if (nativeAgent === "codex" || nativeAgent === "pi") {
+    if (nativeAgent === "codex" || nativeAgent === "pi" || nativeAgent === "gemini") {
       if (values.runner && positionals[1] && values.runner !== positionals[1]) {
         throw new RepoMindError("INVALID_INPUT", "doctor positional target and --runner must match");
       }

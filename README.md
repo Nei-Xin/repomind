@@ -108,18 +108,19 @@ repomind doctor claude --repo D:\path\to\repository
 
 See [OpenCode integration](docs/opencode-integration.md) and [Claude Code integration](docs/claude-integration.md) for the available workflows and setup details.
 
-Pi and Codex also support automatic native recall and activity capture:
+Pi, Codex and Gemini CLI also support automatic native recall and activity capture:
 
 ```bash
 repomind pi setup --repo /path/to/repository
 repomind codex setup --repo /path/to/repository
+repomind gemini setup --repo /path/to/repository
 ```
 
-Then use `pi` or `codex` normally. Trust the project extension in Pi; in Codex,
+Then use `pi`, `codex` or `gemini` normally. Trust the project extension in Pi; in Codex,
 trust the project and review RepoMind definitions with `/hooks`. Validated with
-Pi 1.4.0 and Codex CLI 0.165.0. Codex Bash hooks currently omit exit codes, so
+Pi 1.4.0, Codex CLI 0.165.0 and Gemini CLI 0.66.0. Codex Bash hooks currently omit exit codes, so
 their raw output cannot establish verified-command evidence. See
-[Pi integration](docs/pi-integration.md) and [Codex integration](docs/codex-integration.md)
+[Pi integration](docs/pi-integration.md), [Codex integration](docs/codex-integration.md) and [Gemini CLI integration](docs/gemini-integration.md)
 for setup, lifecycle and evidence limits. These native integrations do not add
 new `repomind run --runner` targets.
 

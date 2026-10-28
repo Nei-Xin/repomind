@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const codingAgentSchema = z.enum(["claude", "opencode", "codex", "pi"]);
-export const activitySourceSchema = z.enum(["claude-hook", "memory-proxy", "opencode-plugin", "codex-hook", "pi-extension"]);
+export const codingAgentSchema = z.enum(["claude", "opencode", "codex", "pi", "gemini"]);
+export const activitySourceSchema = z.enum(["claude-hook", "memory-proxy", "opencode-plugin", "codex-hook", "pi-extension", "gemini-hook"]);
 export const activityTypeSchema = z.enum([
   "user_message",
   "assistant_message",

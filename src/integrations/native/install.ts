@@ -11,9 +11,11 @@ export interface NativeInstallOptions {
   cliEntry: string;
   extensionEntry: string;
   nodeExecutable?: string;
+  modelHookEntry?: string;
 }
 const PI_MARKER = "// Managed by RepoMind: Pi native memory integration.";
 const CODEX_MARKER = "RepoMind native memory";
+const GEMINI_EVENTS = ["SessionStart", "BeforeAgent", "BeforeTool", "AfterTool", "BeforeModel", "AfterModel", "AfterAgent", "SessionEnd"];
 const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Interrupt", "SessionEnd"];
 
 function quoteShell(value: string): string {
@@ -45,19 +47,25 @@ function loadHooks(path: string): JsonObject {
     }
     return config;
   } catch (error) {
-    throw new RepoMindError("INVALID_INPUT", `Invalid Codex hooks file ${path}: ${String(error)}`);
+    throw new RepoMindError("INVALID_INPUT", `Invalid native hooks file ${path}: ${String(error)}`);
   }
 }
 function expected(options: NativeInstallOptions) {
   const root = locateGitRoot(options.repository);
-  const path = options.agent === "pi" ? join(root, ".pi", "extensions", "repomind.ts") : join(root, ".codex", "hooks.json");
-  const command = [options.nodeExecutable ?? process.execPath, resolve(options.cliEntry), "codex-hook"].map(quoteShell).join(" ");
+  const path = options.agent === "gemini" ? join(root, ".gemini", "settings.json") : options.agent === "pi" ? join(root, ".pi", "extensions", "repomind.ts") : join(root, ".codex", "hooks.json");
+  const command = [options.nodeExecutable ?? process.execPath, resolve(options.cliEntry), `${options.agent}-hook`].map(quoteShell).join(" ");
   const piSource = `${PI_MARKER}\n// Native import avoids transpiler copies of RepoMind's ESM dependency graph.\n`
     + `export default async function repomind(pi) {\n  const { default: install } = await import(${JSON.stringify(pathToFileURL(resolve(options.extensionEntry)).href)});\n  install(pi);\n}\n`;
-  const handler = (event: string) => ({ type: "command", command, statusMessage: CODEX_MARKER,
+  const modelHookEntry = options.modelHookEntry ?? resolve(dirname(options.cliEntry), "../integrations/gemini/model-hook.js");
+  const modelCommand = [options.nodeExecutable ?? process.execPath, modelHookEntry].map(quoteShell).join(" ");
+  const events = options.agent === "gemini" ? GEMINI_EVENTS : CODEX_EVENTS;
+  const handler = (event: string) => options.agent === "gemini"
+    ? { type: "command", command: event === "BeforeModel" || event === "AfterModel" ? modelCommand : command,
+      name: `repomind-${event}`, description: CODEX_MARKER, timeout: event === "SessionEnd" ? 2_000 : 60_000 }
+    : ({ type: "command", command, statusMessage: CODEX_MARKER,
     timeout: event === "Interrupt" || event === "SessionEnd" ? 3 : 60,
     ...(event === "UserPromptSubmit" ? { additionalContextLimit: 24_000 } : {}) });
-  return { path, command, piSource, handler };
+  return { path, command, piSource, handler, events, modelHookEntry };
 }
 export function inspectNativeIntegration(options: NativeInstallOptions) {
   const target = expected(options);
@@ -66,18 +74,23 @@ export function inspectNativeIntegration(options: NativeInstallOptions) {
     path: target.path, installed: exists, configured: exists && readFileSync(target.path, "utf8") === target.piSource,
     missingEvents: [] as string[],
   };
-  const hooks = objectValue(loadHooks(target.path).hooks);
-  const missingEvents = CODEX_EVENTS.filter(event => !(Array.isArray(hooks[event]) ? hooks[event] as unknown[] : [])
+  const config = loadHooks(target.path);
+  const hooks = objectValue(config.hooks);
+  const missingEvents = target.events.filter(event => !(Array.isArray(hooks[event]) ? hooks[event] as unknown[] : [])
     .some(group => (objectValue(group).hooks as unknown[]).some(value => {
       const hook = objectValue(value);
       return objectValue(group).matcher === undefined && Object.entries(target.handler(event)).every(([key, expected]) => hook[key] === expected);
     })));
-  return { path: target.path, installed: exists, configured: missingEvents.length === 0, missingEvents };
+  const hooksConfig = objectValue(config.hooksConfig);
+  const disabled = options.agent === "gemini" && (hooksConfig.enabled === false
+    || (Array.isArray(hooksConfig.disabled) && target.events.some(event => (hooksConfig.disabled as unknown[]).includes(`repomind-${event}`))));
+  return { path: target.path, installed: exists, configured: missingEvents.length === 0 && !disabled, missingEvents, disabled };
 }
 export function installNativeIntegration(options: NativeInstallOptions) {
   const target = expected(options);
   const entry = options.agent === "pi" ? options.extensionEntry : options.cliEntry;
   if (!existsSync(entry)) throw new RepoMindError("INVALID_INPUT", `RepoMind build entry missing: ${entry}`);
+  if (options.agent === "gemini" && !existsSync(target.modelHookEntry)) throw new RepoMindError("INVALID_INPUT", `RepoMind build entry missing: ${target.modelHookEntry}`);
   const current = existsSync(target.path) ? readFileSync(target.path, "utf8") : null;
   let content = target.piSource;
   if (options.agent === "pi") {
@@ -87,10 +100,12 @@ export function installNativeIntegration(options: NativeInstallOptions) {
   } else {
     const config = loadHooks(target.path);
     const hooks = objectValue(config.hooks);
-    for (const event of CODEX_EVENTS) {
+    for (const event of target.events) {
       const groups = Array.isArray(hooks[event]) ? hooks[event] as JsonObject[] : [];
       const remaining = groups.map(group => ({ ...group, hooks: (group.hooks as JsonObject[])
-        .filter(hook => !(hook.statusMessage === CODEX_MARKER && typeof hook.command === "string" && /['"]codex-hook['"]/u.test(hook.command))) }))
+        .filter(hook => !(options.agent === "gemini"
+          ? hook.name === `repomind-${event}` && hook.description === CODEX_MARKER
+          : hook.statusMessage === CODEX_MARKER && typeof hook.command === "string" && /['"]codex-hook['"]/u.test(hook.command))) }))
         .filter(group => group.hooks.length > 0);
       hooks[event] = [...remaining, { hooks: [target.handler(event)] }];
     }

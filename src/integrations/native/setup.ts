@@ -16,7 +16,7 @@ function installOptions(options: NativeSetupOptions) {
   return { ...options, extensionEntry: resolve(options.repoMindRoot, "dist/integrations/pi/extension.js") };
 }
 // Conservative minimums: these are the first versions validated by RepoMind.
-export const NATIVE_MINIMUM_VERSIONS = { codex: "0.165.0", pi: "1.4.0" } as const;
+export const NATIVE_MINIMUM_VERSIONS = { codex: "0.165.0", pi: "1.4.0", gemini: "0.66.0" } as const;
 function supportedVersion(agent: NativeAgent, version: string | null): boolean {
   const match = version?.match(/\b(\d+)\.(\d+)\.(\d+)\b/u);
   if (!match) return false;
@@ -52,8 +52,10 @@ export async function nativeIntegrationStatus(options: NativeSetupOptions) {
     installation, bridge: services.bridge,
     trust: { verified: false, instruction: options.agent === "codex"
       ? "Trust this project in Codex, then review and trust RepoMind hooks with /hooks. Re-review after setup changes the definitions."
+      : options.agent === "gemini" ? "Trust this workspace in Gemini CLI and review RepoMind hooks with /hooks panel. Ensure hooksConfig.enabled is true and RepoMind hooks are not disabled in user/workspace settings."
       : "Trust the project-local Pi extension when prompted; restart Pi or run /reload after setup." },
     warnings: ["Readiness checks installation and Bridge health; client trust and actual model consumption require a native-client run.",
+      ...(options.agent === "gemini" ? ["Gemini 0.66 omits successful shell exit codes; test commands without structured exits remain unverified. Cancellation cleanup runs on the next prompt/resume or best-effort SessionEnd. User/system hook settings and trust are not verified by this status check."] : []),
       ...(options.agent === "codex" ? ["Codex 0.165 Bash hooks expose stdout without exit status. Such commands remain activity, not verified-command evidence; unresolved verification makes a task partial."] : [])],
     nextSteps,
   };

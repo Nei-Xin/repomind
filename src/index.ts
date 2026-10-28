@@ -27,6 +27,7 @@ export * from "./integrations/claude/interactive-hook.js";
 export * from "./integrations/claude/hook-installer.js";
 export * from "./integrations/claude/interactive-setup.js";
 export * from "./integrations/codex/interactive-hook.js";
+export * from "./integrations/gemini/interactive-hook.js";
 export * from "./integrations/pi/extension.js";
 export * from "./integrations/native/install.js";
 export * from "./integrations/native/setup.js";
