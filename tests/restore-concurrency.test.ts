@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -94,4 +94,18 @@ it("releases access when opening an unreadable database fails", () => {
   expect(() => new Database(path)).toThrow();
   const release = acquireDatabaseAccess(path, true);
   release();
+});
+
+it("coordinates access near the Windows SQLite path limit", () => {
+  const directory = join(data, "x".repeat(Math.max(1, 235 - join(data, "repomind.db").length - 1)));
+  mkdirSync(directory);
+  const path = join(directory, "repomind.db");
+  const database = new Database(path);
+  try {
+    expect(() => acquireDatabaseAccess(path, true)).toThrow(/database is in use/u);
+  } finally { database.close(); }
+  const release = acquireDatabaseAccess(path, true);
+  try {
+    expect(() => new Database(path)).toThrow(/being restored/u);
+  } finally { release(); }
 });

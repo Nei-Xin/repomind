@@ -44,6 +44,8 @@ async function task(
 ): Promise<Record<string, unknown> | null> {
   const hook = (input: Record<string, unknown>) => handleClaudeInteractiveHook({
     bridgeUrl: f.bridge.url,
+    // This suite checks memory semantics, not the interactive latency budget.
+    timeoutMs: 15_000,
     input: { session_id: id, cwd: f.root, ...input },
     onWarning: (warning) => { throw new Error(warning); },
   });

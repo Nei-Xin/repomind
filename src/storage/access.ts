@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, linkSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { RepoMindError } from "../errors.js";
 
 /**
@@ -18,7 +19,9 @@ export function acquireDatabaseAccess(path: string, exclusive = false): () => vo
     if (!existsSync(accessPath)) {
       // Publish a complete header without taking a write lock on a sidecar
       // another opener may already be reading. link() never replaces a winner.
-      const temporary = `${accessPath}.init-${process.pid}-${randomUUID()}`;
+      // Keep the seed and its journal shorter than the final sidecar journal:
+      // SQLite on Windows can reject a long seed even when the database fits.
+      const temporary = join(dirname(path), `.rm-${randomBytes(8).toString("hex")}`);
       try {
         const seed = new DatabaseSync(temporary);
         try { seed.exec("PRAGMA user_version = 1"); } finally { seed.close(); }
