@@ -300,7 +300,6 @@ MemoryProxy/
     credit-reporter.ts / pricing.ts   Credit 计费上报与定价
     report/ / logger.ts               结构化日志系统与 JSONL 用量日志
   gateway/                            可选负载均衡网关（keyId 一致性 hash）
-  docs/                               架构、设计文档与 e2e runbook
   scripts/                            冒烟、迁移、维护脚本
   config.example.yaml                 带注释的完整配置示例
   Dockerfile                          MemoryProxy 镜像
@@ -315,7 +314,7 @@ npm test              # vitest run（默认单元 + 集成）
 npm run test:watch
 ```
 
-`__tests__/` 分布在各子模块下：`session/__tests__`（会话流程）、`skill/__tests__`（归档触发、版本 pin）、`storage/__tests__`（各后端契约）、`db/__tests__`（Repo 一致性）等。`docs/` 还提供多份端到端 runbook（`e2e-runbook.md` / `e2e-full-coverage-runbook.md` 等），用于在真实 MemoryCore + Redis + Storage 后端上验证记忆链路。
+`__tests__/` 分布在各子模块下：`session/__tests__`（会话流程）、`skill/__tests__`（归档触发、版本 pin）、`storage/__tests__`（各后端契约）、`db/__tests__`（Repo 一致性）等。
 
 ## 安全与发布注意事项
 

@@ -48,8 +48,6 @@ These are load-bearing; a change that breaks one needs an ADR, not a patch.
   a persisted free-text column, redact it and add a test.
 - Only predefined read-only Git commands, never user-composed arguments.
 
-See [`docs/adr/`](docs/adr/) for the reasoning behind each rule.
-
 ## Tests
 
 New behavior needs a test that fails without the change. Bug fixes need a

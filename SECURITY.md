@@ -21,7 +21,6 @@ The security properties it aims to hold:
 - **Bounded Git access.** Only a fixed set of read-only Git commands runs, with
   timeouts and output caps. No user or model input is spliced into Git
   arguments. RepoMind never commits, pushes, checks out, resets, or cleans.
-  See [ADR-010](docs/adr/ADR-010-read-only-git-commands.md).
 - **Repository boundary.** Related-file paths pass both lexical containment and
   canonical `realpath` containment before RepoMind reads or hashes them, so an
   in-repository symlink or junction cannot expose an outside target. Missing,
@@ -90,8 +89,7 @@ guarantee:
   task and Evidence bodies, IDs, commit hashes, and metadata are sent to that
   provider. The operation is explicit and disabled by default, but pattern-
   based redaction cannot guarantee that every project-specific secret is
-  removed. Review the exact boundary in
-  [the remote extraction guide](docs/remote-llm-extraction.md) and the
+  removed. Review the
   provider's retention policy before enabling it.
 - Archive encryption does not encrypt the live SQLite database or persistent
   pre-restore rollback snapshots, hide envelope size/timestamps, manage keys,

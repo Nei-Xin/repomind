@@ -9,3 +9,7 @@ comparison-report.json
 
 # Local test data, external service runtime files, and temporary artifacts
 /tmp/
+
+# Local-only material kept out of the public repository
+_archive/
+.DS_Store

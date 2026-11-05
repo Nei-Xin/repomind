@@ -41,7 +41,7 @@ The memory model has five layers:
 | **L3 — Repository profile** | A compact overview derived from repository facts and module context | Orienting an agent at the start of a session |
 | **L4 — Skill candidates** | Repeated successful workflows proposed for review | Turning recurring work into reusable instructions |
 
-L2 and L3 retain links to their sources. L4 candidates require approval before export. See the [memory model](docs/memory-model.md) and [architecture](docs/architecture.md) for more detail.
+L2 and L3 retain links to their sources. L4 candidates require approval before export.
 
 ## Quick start
 
@@ -59,7 +59,7 @@ npm link
 
 A versioned RC.2 tarball is also available through [GitHub Releases](https://github.com/Nei-Xin/repomind/releases/tag/v1.0.0-rc.2). The unscoped npm package `repomind` belongs to another project; use this repository's source or release artifact.
 
-RC.3 publication is being prepared. See the [RC.3 release notes](docs/release-notes-v1.0.0-rc.3.md) for upgrade instructions and known limits, and [release readiness](docs/release-readiness-v1.0.md) for the remaining CI gates.
+RC.3 publication is being prepared; see the [changelog](CHANGELOG.md) for upgrade notes and known limits.
 
 Inside the Git repository you want RepoMind to remember:
 
@@ -86,8 +86,6 @@ Omit `--model` to use the selected agent's default. Use `--context-budget` to co
 
 `repomind run` manages retrieval, agent execution, evidence capture, and Session completion. This is the quickest way to try the complete workflow.
 
-See the [daily workflow guide](docs/daily-workflow.md) for task history, memory review, and ongoing use.
-
 ### Work interactively in your native agent
 
 Configure OpenCode once for the target repository, then launch it normally:
@@ -108,8 +106,6 @@ repomind claude setup --repo D:\path\to\repository
 repomind doctor claude --repo D:\path\to\repository
 ```
 
-See [OpenCode integration](docs/opencode-integration.md) and [Claude Code integration](docs/claude-integration.md) for the available workflows and setup details.
-
 Pi, Codex and Gemini CLI also support automatic native recall and activity capture:
 
 ```bash
@@ -121,10 +117,8 @@ repomind gemini setup --repo /path/to/repository
 Then use `pi`, `codex` or `gemini` normally. Trust the project extension in Pi; in Codex,
 trust the project and review RepoMind definitions with `/hooks`. Validated with
 Pi 1.4.0, Codex CLI 0.165.0 and Gemini CLI 0.66.0. Codex Bash hooks currently omit exit codes, so
-their raw output cannot establish verified-command evidence. See
-[Pi integration](docs/pi-integration.md), [Codex integration](docs/codex-integration.md) and [Gemini CLI integration](docs/gemini-integration.md)
-for setup, lifecycle and evidence limits. These native integrations do not add
-new `repomind run --runner` targets.
+their raw output cannot establish verified-command evidence. These native
+integrations do not add new `repomind run --runner` targets.
 
 ### Connect an MCP client
 
@@ -141,7 +135,7 @@ Add RepoMind to the client's MCP configuration:
 }
 ```
 
-The MCP tools cover Session management, memory search and inspection, memory maintenance, module narratives, repository profiles, and Skill candidates. See the [MCP guide](docs/mcp-integration.md) and [client examples](examples/) for repository selection and tool configuration.
+The MCP tools cover Session management, memory search and inspection, memory maintenance, module narratives, repository profiles, and Skill candidates. See the [client examples](examples/) for repository selection and tool configuration.
 
 ## Explore and maintain memory
 
@@ -167,9 +161,9 @@ repomind profile --json
 repomind skills --status pending --json
 ```
 
-You can validate, correct, invalidate, or forget memories through audited operations. A changed file marks related knowledge for review; you decide whether the conclusion still applies. [Memory governance](docs/memory-governance.md) explains these operations.
+You can validate, correct, invalidate, or forget memories through audited operations. A changed file marks related knowledge for review; you decide whether the conclusion still applies.
 
-For manual Session management, use `repomind start` and `repomind commit`. For an existing repository with no memory yet, the [bootstrap workflow](docs/daily-workflow.md) generates candidates for review before import.
+For manual Session management, use `repomind start` and `repomind commit`. For an existing repository with no memory yet, `repomind bootstrap` generates candidates from the README, contribution guide, ADRs and recent commit subjects for review before `repomind bootstrap-apply` imports them.
 
 ## Local storage and optional capabilities
 
@@ -177,12 +171,12 @@ RepoMind stores memory in a local SQLite database with FTS5 search. Repository i
 
 The default workflow uses deterministic memory extraction and local lexical search. Additional capabilities are opt-in:
 
-| Capability | Purpose | Documentation |
-| --- | --- | --- |
-| Vector search | Combine lexical and vector retrieval using a configured embedding provider | [Vector search](docs/vector-search.md) |
-| Remote LLM extraction | Generate structured memory candidates from a completed Session's evidence | [Remote extraction](docs/remote-llm-extraction.md) |
-| Export and backup | Move or recover repository memory, with optional encrypted archives | [Data portability](docs/data-portability.md) |
-| Skill candidates | Review and export repeated successful workflows | [Skill candidates](docs/skill-candidates.md) |
+| Capability | Purpose |
+| --- | --- |
+| Vector search | Combine lexical and vector retrieval (weighted reciprocal-rank fusion) using a configured embedding provider |
+| Remote LLM extraction | Generate structured memory candidates from a completed Session's evidence |
+| Export and backup | Move or recover repository memory, with optional encrypted archives |
+| Skill candidates | Review and export repeated successful workflows |
 
 Remote providers receive the relevant text after pattern-based secret redaction; vector queries are also redacted before embedding. See [SECURITY.md](SECURITY.md) for the data boundaries and redaction model.
 
@@ -194,14 +188,15 @@ npm test
 npm run build
 ```
 
-The project includes tests for memory lifecycle, retrieval, agent integrations, and data portability, plus retrieval benchmarks and cross-session agent experiments. Evaluation methods and results are documented separately:
+The project includes tests for memory lifecycle, retrieval, agent integrations, and data portability. `benchmarks/` holds the retrieval comparison fixtures used by `repomind eval` (`npm run bench`), the eight-task agent suite with out-of-repository hidden checks, cross-session fixtures, and scale and recovery acceptance runners.
 
-- [Retrieval benchmarks](docs/benchmark.md)
-- [Agent task benchmarks](docs/agent-benchmark.md)
-- [Cross-session experiments](docs/cross-session-agent-benchmark.md)
-- [Chinese project report and learning guide](project-report-zh-CN/README.md)
+Evaluation summary (detailed run records are not published in this repository):
 
-For deeper reading, see [architecture](docs/architecture.md), [design decisions](docs/adr/README.md), [contributing](CONTRIBUTING.md), and [troubleshooting](docs/troubleshooting.md). Version history is maintained in the [changelog](CHANGELOG.md).
+- **Three-arm agent benchmark** (8 tasks × no-memory / full-history / RepoMind × 3 repeats = 72 host-managed runs): RepoMind passed 24/24 hidden checks versus 12/24 without memory, with 39.7% lower wall time than no-memory and 12.7% lower than full-history. This run injected pre-seeded L1 memories, so it measures the benefit of correct retrieved knowledge rather than extraction quality.
+- **External cross-agent run** on `sindresorhus/p-limit` (Claude Code produced memory, a fresh OpenCode session consumed it; 3 paired tasks): both arms passed public and hidden checks; RepoMind reduced uncached input tokens by 41.1% and agent duration by 17.5%.
+- **Scale acceptance** at 10,000 memories: lexical search P95 80 ms and locally cached hybrid search P95 303 ms.
+
+See [contributing](CONTRIBUTING.md) for development rules. Version history is maintained in the [changelog](CHANGELOG.md).
 
 ## License
 

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { prepareExplicitHandoff, structuredHandoffSchema, validateStructuredHandoff } from "../src/extraction/structured-handoff.js";
 import { redactSecrets } from "../src/security/redaction.js";
 
-const examples = JSON.parse(readFileSync(new URL("../docs-zh-CN/structured-handoff-v1/examples.json", import.meta.url), "utf8")).cases as Array<{
+const examples = JSON.parse(readFileSync(new URL("./fixtures/structured-handoff-v1/examples.json", import.meta.url), "utf8")).cases as Array<{
   id: string; summary: string; handoff: unknown; remainingWork?: string[];
   expected: { schemaValid: boolean; accepted: boolean; reason?: string; title?: string; titleSource?: string };
 }>;

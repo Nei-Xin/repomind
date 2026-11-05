@@ -303,7 +303,6 @@ MemoryProxy/
     credit-reporter.ts / pricing.ts   Credit billing report and pricing
     report/ / logger.ts               structured logging system and JSONL usage log
   gateway/                            optional load-balancing gateway (keyId consistent hashing)
-  docs/                               architecture, design docs and e2e runbooks
   scripts/                            smoke, migration, maintenance scripts
   config.example.yaml                 fully-commented complete config example
   Dockerfile                          MemoryProxy image
@@ -318,7 +317,7 @@ npm test              # vitest run (unit + integration by default)
 npm run test:watch
 ```
 
-`__tests__/` live under each submodule: `session/__tests__` (session flow), `skill/__tests__` (archival trigger, version pin), `storage/__tests__` (backend contracts), `db/__tests__` (repo consistency), etc. `docs/` also provides several end-to-end runbooks (`e2e-runbook.md` / `e2e-full-coverage-runbook.md`, ...) for verifying the memory pipeline against a real MemoryCore + Redis + storage backend.
+`__tests__/` live under each submodule: `session/__tests__` (session flow), `skill/__tests__` (archival trigger, version pin), `storage/__tests__` (backend contracts), `db/__tests__` (repo consistency), etc.
 
 ## Security & release notes
 
