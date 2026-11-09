@@ -116,7 +116,9 @@ function invocationWords(command: string): string[] {
   const words = commandWords(command);
   while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? "")) words.shift();
   if (["npx", "bunx"].includes(words[0] ?? "")) words.shift();
-  else if (["pnpm", "yarn"].includes(words[0] ?? "") && ["exec", "dlx"].includes(words[1] ?? "")) words.splice(0, 2);
+  else if (words[0] === "npm" && words[1] === "exec") {
+    words.splice(0, words[2] === "--" ? 3 : 2);
+  } else if (["pnpm", "yarn"].includes(words[0] ?? "") && ["exec", "dlx"].includes(words[1] ?? "")) words.splice(0, 2);
   if (words[0]) words[0] = words[0].replace(/^['"]|['"]$/gu, "").replaceAll("\\", "/").split("/").pop()!.replace(/\.exe$/iu, "");
   return words;
 }

@@ -17,6 +17,9 @@ describe("test command recognition", () => {
     "node --import tsx --test a.ts",
     "pnpm test -- invoice",
     "npx vitest run",
+    "npm exec vitest run tests/dsh-native.test.ts",
+    "npm exec -- vitest run tests/dsh-native.test.ts",
+    "CI=1 npm exec -- jest --runInBand",
     "pytest -q",
     "go test ./...",
     "cargo test",
@@ -38,6 +41,10 @@ describe("test command recognition", () => {
     "ls tests/",
     "cat storage.test.mjs",
     "git log --oneline",
+    "npm exec -- echo vitest",
+    "npm exec -- node app.js --test",
+    "npm exec --package vitest -- echo done",
+    "npm exec --call 'vitest run'",
   ])("does not treat %s as a test", (command) => {
     expect(isVerifyingTestCommand(command)).toBe(false);
   });
@@ -59,6 +66,9 @@ describe("test command recognition", () => {
     ["npm test || true", false],
     ["npm test && echo ok || echo failed", false],
     ["npm test &", false],
+    ["npm exec vitest run | tail -5", false],
+    ["npm exec -- vitest run || true", false],
+    ["npm exec vitest run; echo done", false],
     ["cd missing; npm test", false],
     ["cd app && ls; npm test", false],
     ["npm test\necho done", false],
@@ -90,6 +100,7 @@ describe("test command recognition", () => {
     ["cd app && npm test > out.log 2>&1", "cd app && npm test"],
     ["npm test | tail", null],
     ["git status", null],
+    ["npm exec -- vitest run tests/dsh-native.test.ts", "npm exec -- vitest run tests/dsh-native.test.ts"],
   ])("extracts the verifying test from %j", (command, expected) => {
     expect(verifyingTestCommand(command)).toBe(expected);
   });
@@ -98,6 +109,7 @@ describe("test command recognition", () => {
     "npm run build", "pnpm build", "yarn typecheck", "npm run lint", "npx tsc --noEmit", "tsc -p .",
     "cargo build", "cargo clippy", "go vet ./...", "make", "make all", "./gradlew build", "mvn package",
     "dotnet build", "eslint src", "ruff check .", "mypy src",
+    "npm exec tsc --noEmit", "npm exec -- eslint src",
   ])("recognizes build step %s", (command) => {
     expect(isBuildInvocation(command)).toBe(true);
   });

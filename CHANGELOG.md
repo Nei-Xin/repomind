@@ -8,6 +8,23 @@ period; every behavioral change is listed with its migration impact.
 
 ## [Unreleased]
 
+### Added
+
+- Native DeepSeek Harness Cordis plugin, validated with DSH 0.2.2-rc.1 and
+  Node.js 24.9+. `dsh setup|status` and `doctor dsh` configure and inspect a
+  project-specific `--patch` overlay. Root user turns automatically recall
+  memory, capture canonical tool evidence, and finish through the local Bridge.
+  Interrupted tasks are abandoned; unknown exits and incomplete verification
+  remain partial. No MemoryProxy or additional model endpoint is required.
+  This does not add a `repomind run --runner dsh` target or change existing DSH
+  profiles. Subagents and background-job completion correlation are deferred.
+
+### Fixed
+
+- Recognize direct `npm exec [--]` test and build invocations as verification
+  evidence, preserving the original command and rejecting masked exit statuses.
+  This fixes missing verified-command memories observed in the DSH project trial.
+
 ## [1.0.0-rc.3] - Unreleased candidate
 
 ### Added

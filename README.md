@@ -120,6 +120,24 @@ Pi 1.4.0, Codex CLI 0.165.0 and Gemini CLI 0.66.0. Codex Bash hooks currently om
 their raw output cannot establish verified-command evidence. These native
 integrations do not add new `repomind run --runner` targets.
 
+DeepSeek Harness supports native repository memory through a Cordis plugin
+(validated with DSH **0.2.2-rc.1**, requiring **Node.js 24.9+**):
+
+```bash
+repomind dsh setup --repo /path/to/repository
+repomind doctor dsh --repo /path/to/repository
+cd /path/to/repository
+dsh web --patch .repomind/dsh/cordis.patch.yml
+```
+
+Keep the `--patch` option when launching DSH: it loads the generated project
+overlay without changing existing DSH profiles. The same overlay works with
+`dsh headless`. The plugin recalls memory before a root user turn, captures tool
+results, and closes the task at its recorded turn boundary. It uses the local
+Bridge; no model proxy or MCP lifecycle calls are required. See the
+[DSH guide](examples/dsh/README.md) for configuration, supported boundaries,
+and verification. This integration does not add a `--runner dsh` target.
+
 ### Connect an MCP client
 
 Add RepoMind to the client's MCP configuration:

@@ -50,6 +50,7 @@ import { handleClaudeInteractiveHook } from "../integrations/claude/interactive-
 import { handleGeminiInteractiveHook } from "../integrations/gemini/interactive-hook.js";
 import { handleCodexInteractiveHook } from "../integrations/codex/interactive-hook.js";
 import { nativeIntegrationStatus, setupNativeIntegration, type NativeSetupOptions } from "../integrations/native/setup.js";
+import { dshIntegrationStatus, setupDshIntegration } from "../integrations/dsh/setup.js";
 import { installClaudeInteractiveHooks } from "../integrations/claude/hook-installer.js";
 import {
   claudeInteractiveStatus,
@@ -79,7 +80,7 @@ Usage:
   repomind skill-inspect <l4-id> [--repo <path>] [--json]
   repomind skill-review <l4-id> --action approve|reject --reason <text> [--repo <path>] [--json]
   repomind skill-export <l4-id> --output <new-SKILL.md> [--repo <path>] [--json]
-  repomind doctor [opencode|claude|codex|pi|gemini] [--repo <path>] [--json]
+  repomind doctor [opencode|claude|codex|pi|gemini|dsh] [--repo <path>] [--json]
   repomind start --task <text> [--no-profile] [--repo <path>] [--json]
   repomind commit --input <result.json|-> [--repo <path>] [--json]
   repomind commit --session <id> --key <key> --summary <text> [--status success|partial|failed] [--repo <path>] [--json]
@@ -111,6 +112,7 @@ Usage:
   repomind codex setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind gemini setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind pi setup|status [--repo <path>] [--runner-executable <path>] [--json]
+  repomind dsh setup|status [--repo <path>] [--runner-executable <path>] [--json]
   repomind claude-hook-install [--repo <path>] [--bridge-url <url>] [--json]
   repomind eval (--dataset <path> | --scenarios | --compare | --agent | --agent-cross-session | --agent-summary | --agent-profile) [--limit <n>] [--json]
   repomind eval --compare [--fixtures <glob>] [--arms <csv>] [--budgets <csv>] [--repeat <1-100>] [--lint] [--strict] [--markdown]
@@ -379,6 +381,15 @@ async function main(): Promise<void> {
     else throw new RepoMindError("INVALID_INPUT", `Unknown opencode action: ${action}`);
     return;
   }
+  if (command === "dsh") {
+    const action = required(positionals[1], "dsh action");
+    const options = { ...serviceManagerOptions(), repository: repositoryPath(),
+      ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}) };
+    if (action === "setup") output(await setupDshIntegration(options));
+    else if (action === "status") output(await dshIntegrationStatus(options));
+    else throw new RepoMindError("INVALID_INPUT", `Unknown dsh action: ${action}`);
+    return;
+  }
   if (command === "codex" || command === "pi" || command === "gemini") {
     const action = required(positionals[1], `${command} action`);
     const options: NativeSetupOptions = { ...serviceManagerOptions(), agent: command, repository: repositoryPath(),
@@ -615,6 +626,14 @@ async function main(): Promise<void> {
   }
   if (command === "doctor") {
     const nativeAgent = values.runner ?? positionals[1];
+    if (nativeAgent === "dsh") {
+      if (values.runner && positionals[1] && values.runner !== positionals[1]) {
+        throw new RepoMindError("INVALID_INPUT", "doctor positional target and --runner must match");
+      }
+      output(await dshIntegrationStatus({ ...serviceManagerOptions(), repository: repositoryPath(),
+        ...(values["runner-executable"] ? { runnerExecutable: values["runner-executable"] } : {}) }));
+      return;
+    }
     if (nativeAgent === "codex" || nativeAgent === "pi" || nativeAgent === "gemini") {
       if (values.runner && positionals[1] && values.runner !== positionals[1]) {
         throw new RepoMindError("INVALID_INPUT", "doctor positional target and --runner must match");

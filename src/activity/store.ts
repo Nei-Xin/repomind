@@ -91,11 +91,11 @@ function interactiveClientName(agent: CodingAgent): string {
 }
 
 function interactiveActivitySource(agent: CodingAgent): ActivitySource {
-  return { claude: "claude-hook", opencode: "opencode-plugin", codex: "codex-hook", pi: "pi-extension", gemini: "gemini-hook" }[agent] as ActivitySource;
+  return { claude: "claude-hook", opencode: "opencode-plugin", codex: "codex-hook", pi: "pi-extension", gemini: "gemini-hook", dsh: "dsh-plugin" }[agent] as ActivitySource;
 }
 
 function agentDisplayName(agent: CodingAgent): string {
-  return { claude: "Claude", opencode: "OpenCode", codex: "Codex", pi: "Pi", gemini: "Gemini" }[agent];
+  return { claude: "Claude", opencode: "OpenCode", codex: "Codex", pi: "Pi", gemini: "Gemini", dsh: "DeepSeek Harness" }[agent];
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
